@@ -188,9 +188,12 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.94349, 1.8150091, 8.715817
 visible = false
 texture = ExtResource("6_3dxm6")
 
-[node name="OpenTrackClient" type="Node" parent="." unique_id=1912037640 node_paths=PackedStringArray("camera_node")]
+[node name="OpenTrackClient" type="Node" parent="." unique_id=1912037640 node_paths=PackedStringArray("camera_node", "player_node", "window_center", "screen_scaler")]
 script = ExtResource("7_lgr22")
 camera_node = NodePath("../Player/Head_Cam")
+player_node = NodePath("../Player")
+window_center = NodePath("../Box/Origin")
+screen_scaler = NodePath("../ScreenScaling")
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
 script = ExtResource("8_trn2v")
