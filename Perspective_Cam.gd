@@ -1,23 +1,17 @@
 extends Camera3D
 
-@export_category("Physical Monitor Calibration")
-@export var diagonal_inches: float = 26.5 
-@export var aspect_ratio_x: float = 16.0
-@export var aspect_ratio_y: float = 9.0
-@export var min_view_distance: float = 0.1
-
-@export_category("Node Links")
 @export var target_path: NodePath
 @export var window_center_path: NodePath
+@export var physical_window_height: float = 4.0
 
 var _target: Node3D
 var _window_center: Node3D
-var _physical_window_height: float = 0.0
 
 func _ready() -> void:
 	# Force the camera into frustum mode
 	projection = Camera3D.PROJECTION_FRUSTUM
 	
+	# Safely grab the target (fallback to parent) and window center
 	if not target_path.is_empty():
 		_target = get_node_or_null(target_path)
 	else:
@@ -25,29 +19,25 @@ func _ready() -> void:
 		
 	if not window_center_path.is_empty():
 		_window_center = get_node_or_null(window_center_path)
-		
-	# --- The Auto-Scaling Math ---
-	# 1. Convert diagonal inches to meters (1 inch = 0.0254 meters)
-	var diagonal_meters = diagonal_inches * 0.0254
-	
-	# 2. Use trigonometry to find the exact physical height
-	var angle = atan2(aspect_ratio_y, aspect_ratio_x)
-	_physical_window_height = sin(angle) * diagonal_meters
-	
-	print("Screen calibrated! Physical height is: ", _physical_window_height, " meters")
 
 func _process(_delta: float) -> void:
 	if not _target or not _window_center: 
 		return
 
+	# 1. Convert global positions to camera local space (handles all rotation automatically)
 	var t_local: Vector3 = to_local(_target.global_position)
 	var w_local: Vector3 = to_local(_window_center.global_position)
 
-	var target_z_dist: float = max(min_view_distance, abs(t_local.z - w_local.z))
-	
-	# Apply our dynamically calculated real-world height
-	size = _physical_window_height * (near / target_z_dist)
+	# 2. Handle Field of View (Z-Axis distance from target eye to window plane)
+	var target_z_dist: float = max(0.001, abs(t_local.z - w_local.z))
+	size = physical_window_height * (near / target_z_dist)
 
-	var window_depth: float = max(min_view_distance, -w_local.z) 
+	# 3. Handle Frustum Shear / Offset (X/Y-Axis movement)
+	# Godot's forward axis is -Z, so we negate w_local.z for positive depth
+	var window_depth: float = max(0.001, -w_local.z) 
+	
+	# The shift is the local X/Y difference between the Window Center and the Target Eye
 	var raw_shift: Vector2 = Vector2(w_local.x - t_local.x, w_local.y - t_local.y)
+	
+	# Apply similar triangles math to scale the world shift down to the tiny near plane
 	frustum_offset = raw_shift * (near / window_depth)
