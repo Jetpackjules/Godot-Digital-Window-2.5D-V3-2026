@@ -2,10 +2,13 @@ extends Camera3D
 
 @export var target_path: NodePath
 @export var window_center_path: NodePath
-@export var physical_window_height: float = 4.0
+@export var screen_scaling_path: NodePath
+
+var physical_window_height: float = 4.0
 
 var _target: Node3D
 var _window_center: Node3D
+var _screen_scaler: ScreenScaling
 
 func _ready() -> void:
 	# Force the camera into frustum mode
@@ -19,10 +22,16 @@ func _ready() -> void:
 		
 	if not window_center_path.is_empty():
 		_window_center = get_node_or_null(window_center_path)
+		
+	if not screen_scaling_path.is_empty():
+		_screen_scaler = get_node_or_null(screen_scaling_path)
 
 func _process(_delta: float) -> void:
 	if not _target or not _window_center: 
 		return
+		
+	if _screen_scaler:
+		physical_window_height = _screen_scaler.physical_height_meters
 
 	# 1. Convert global positions to camera local space (handles all rotation automatically)
 	var t_local: Vector3 = to_local(_target.global_position)

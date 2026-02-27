@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
 [ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
+[ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
 size = Vector2(20, 20)
@@ -190,3 +191,6 @@ texture = ExtResource("6_3dxm6")
 [node name="OpenTrackClient" type="Node" parent="." unique_id=1912037640 node_paths=PackedStringArray("camera_node")]
 script = ExtResource("7_lgr22")
 camera_node = NodePath("../Player/Head_Cam")
+
+[node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
+script = ExtResource("8_trn2v")
