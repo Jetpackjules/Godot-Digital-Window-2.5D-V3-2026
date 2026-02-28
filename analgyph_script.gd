@@ -24,6 +24,10 @@ func _ready() -> void:
 		
 	var actual_window_center = base_camera.get_node_or_null(base_camera.window_center_path)
 	var absolute_window_path = actual_window_center.get_path() if actual_window_center else NodePath("")
+	
+	var actual_scaler = base_camera.get_node_or_null(base_camera.screen_scaling_path)
+	var absolute_scaler_path = actual_scaler.get_path() if actual_scaler else NodePath("")
+	
 	base_camera.clear_current()
 	
 	# --- Setup Left Eye ---
@@ -35,7 +39,8 @@ func _ready() -> void:
 	
 	left_cam = base_camera.duplicate()
 	left_cam.target_path = NodePath(".") 
-	left_cam.window_center_path = absolute_window_path 
+	left_cam.window_center_path = absolute_window_path
+	left_cam.screen_scaling_path = absolute_scaler_path
 	left_vp.add_child(left_cam)
 	
 	# --- Setup Right Eye ---
@@ -48,6 +53,7 @@ func _ready() -> void:
 	right_cam = base_camera.duplicate()
 	right_cam.target_path = NodePath(".")
 	right_cam.window_center_path = absolute_window_path
+	right_cam.screen_scaling_path = absolute_scaler_path
 	right_vp.add_child(right_cam)
 
 	_build_shader_overlay(left_vp.get_texture(), right_vp.get_texture())

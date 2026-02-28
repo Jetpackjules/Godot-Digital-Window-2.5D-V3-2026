@@ -4,7 +4,7 @@ extends Camera3D
 @export var window_center_path: NodePath
 @export var screen_scaling_path: NodePath
 
-var physical_window_height: float = 4.0
+var virtual_window_height: float = 4.0
 
 var _target: Node3D
 var _window_center: Node3D
@@ -31,7 +31,7 @@ func _process(_delta: float) -> void:
 		return
 		
 	if _screen_scaler:
-		physical_window_height = _screen_scaler.physical_height_meters
+		virtual_window_height = _screen_scaler.virtual_window_height
 
 	# 1. Convert global positions to camera local space (handles all rotation automatically)
 	var t_local: Vector3 = to_local(_target.global_position)
@@ -39,7 +39,7 @@ func _process(_delta: float) -> void:
 
 	# 2. Handle Field of View (Z-Axis distance from target eye to window plane)
 	var target_z_dist: float = max(0.001, abs(t_local.z - w_local.z))
-	size = physical_window_height * (near / target_z_dist)
+	size = virtual_window_height * (near / target_z_dist)
 
 	# 3. Handle Frustum Shear / Offset (X/Y-Axis movement)
 	# Godot's forward axis is -Z, so we negate w_local.z for positive depth

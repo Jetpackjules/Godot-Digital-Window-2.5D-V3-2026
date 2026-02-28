@@ -65,13 +65,13 @@ func _setup_debug_view():
 	debug_cam.position = Vector3(0, 15, 0)
 	debug_cam.rotation_degrees = Vector3(-90, 0, 0)
 	debug_cam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	debug_cam.size = 20.0 # 20 meters tall to match the new 1:2 height ratio
+	debug_cam.size = 15.0 # 15 meters to fit the new 8x4.5m scale beautifully
 	vp.add_child(debug_cam)
 	
 	head_dot = MeshInstance3D.new()
 	var sphere = SphereMesh.new()
-	sphere.radius = 0.2
-	sphere.height = 0.4
+	sphere.radius = 0.25 # Cleanly sized for 4.5m height
+	sphere.height = 0.5
 	var mat = StandardMaterial3D.new()
 	mat.albedo_color = Color.RED
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED

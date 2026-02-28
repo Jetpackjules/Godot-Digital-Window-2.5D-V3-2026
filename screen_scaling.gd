@@ -30,7 +30,7 @@ class_name ScreenScaling
 		_update_from_width_height()
 
 @export_group("Virtual Window Size")
-@export var virtual_window_height: float = 4.0 :
+@export var virtual_window_height: float = 9.0 :
 	set(value):
 		virtual_window_height = value
 		_update_scale_multiplier()
@@ -39,6 +39,11 @@ class_name ScreenScaling
 var tracking_scale_multiplier: float = 1.0
 
 var _is_updating: bool = false
+
+func _enter_tree() -> void:
+	# This ensures the values calculate the moment the node is loaded in the editor
+	if Engine.is_editor_hint():
+		_update_from_diagonal()
 
 func _ready() -> void:
 	# Whether inside the editor or running the game, we must force a calculation
