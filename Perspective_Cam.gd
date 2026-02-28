@@ -14,11 +14,11 @@ func _ready() -> void:
 	# Force the camera into frustum mode
 	projection = Camera3D.PROJECTION_FRUSTUM
 	
-	# Safely grab the target (fallback to parent) and window center
+	# Safely grab the target (fallback to self) and window center
 	if not target_path.is_empty():
 		_target = get_node_or_null(target_path)
 	else:
-		_target = get_parent() as Node3D
+		_target = self
 		
 	if not window_center_path.is_empty():
 		_window_center = get_node_or_null(window_center_path)

@@ -26,20 +26,29 @@ albedo_texture = ExtResource("3_cm0pq")
 material = SubResource("StandardMaterial3D_3dxm6")
 height = 1.0
 
-[sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
-flip_faces = true
-size = Vector3(7.111, 4, 4)
-
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_r0du0"]
 albedo_color = Color(1, 0, 0, 1)
 
 [sub_resource type="QuadMesh" id="QuadMesh_cm0pq"]
 material = SubResource("StandardMaterial3D_r0du0")
-size = Vector2(1, 4)
+size = Vector2(0.25, 4)
 
 [sub_resource type="QuadMesh" id="QuadMesh_fos0i"]
 material = SubResource("StandardMaterial3D_r0du0")
-size = Vector2(1, 7.111)
+size = Vector2(0.25, 7.111)
+
+[sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
+flip_faces = true
+size = Vector3(7.111, 4, 4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_glv2v"]
+size = Vector3(7.111, 4, 4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fos0i"]
+albedo_texture = ExtResource("3_cm0pq")
+
+[sub_resource type="BoxMesh" id="BoxMesh_3dxm6"]
+material = SubResource("StandardMaterial3D_fos0i")
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_cm0pq"]
 albedo_color = Color(1, 0, 1, 1)
@@ -54,23 +63,11 @@ material = SubResource("StandardMaterial3D_cm0pq")
 text = "58.5x33"
 font_size = 127
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_glv2v"]
-size = Vector3(7.111, 4, 4)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fos0i"]
-albedo_texture = ExtResource("3_cm0pq")
-
-[sub_resource type="BoxMesh" id="BoxMesh_3dxm6"]
-material = SubResource("StandardMaterial3D_fos0i")
-
 [node name="Main" type="Node3D" unique_id=1224428574]
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1530683237]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.293, 1.049, 36.171)
-projection = 2
-fov = 37.849285
+transform = Transform3D(0.42269444, -0.6785141, 0.60078955, 0.0672123, 0.6845684, 0.7258434, -0.9037766, -0.2664295, 0.33496776, 3.6386428, 6.196581, 3.492539)
 frustum_offset = Vector2(0.605, 0.355)
-near = 8.733
 
 [node name="Floor" type="MeshInstance3D" parent="." unique_id=238342708]
 visible = false
@@ -104,60 +101,28 @@ window_center_path = NodePath("../../Box/Origin")
 transform = Transform3D(0.7409745, 0.6031311, -0.29527903, -0.068698704, 0.5054832, 0.8600973, 0.66801006, -0.6170249, 0.41598445, -6.9478498, 7.8566256, 9.535605)
 shadow_enabled = true
 
+[node name="Red_Border" type="Node3D" parent="." unique_id=1379736672]
+
+[node name="Border_R" type="MeshInstance3D" parent="Red_Border" unique_id=430316341]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 3.556, 2, 0.125)
+mesh = SubResource("QuadMesh_cm0pq")
+
+[node name="Border_L" type="MeshInstance3D" parent="Red_Border" unique_id=1990355786]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -3.556, 2, 0.125)
+mesh = SubResource("QuadMesh_cm0pq")
+
+[node name="Border_U" type="MeshInstance3D" parent="Red_Border" unique_id=1073289249]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 4.01, 0.125)
+mesh = SubResource("QuadMesh_fos0i")
+
+[node name="Border_D" type="MeshInstance3D" parent="Red_Border" unique_id=441872831]
+transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, -0.01, 0.125)
+mesh = SubResource("QuadMesh_fos0i")
+
 [node name="Box" type="MeshInstance3D" parent="." unique_id=1103599304]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, -2)
+visible = false
 mesh = SubResource("BoxMesh_glv2v")
-
-[node name="Red_Border" type="Node3D" parent="Box" unique_id=1379736672]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2, 2)
-
-[node name="Border_R" type="MeshInstance3D" parent="Box/Red_Border" unique_id=430316341]
-transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 3.556, 2, 0)
-mesh = SubResource("QuadMesh_cm0pq")
-
-[node name="Border_L" type="MeshInstance3D" parent="Box/Red_Border" unique_id=1990355786]
-transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -3.556, 2, 0)
-mesh = SubResource("QuadMesh_cm0pq")
-
-[node name="Border_U" type="MeshInstance3D" parent="Box/Red_Border" unique_id=1073289249]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 4.01, 0)
-mesh = SubResource("QuadMesh_fos0i")
-
-[node name="Border_D" type="MeshInstance3D" parent="Box/Red_Border" unique_id=441872831]
-transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, -0.01, 0)
-mesh = SubResource("QuadMesh_fos0i")
-
-[node name="Text_R" type="MeshInstance3D" parent="Box/Red_Border" unique_id=1174738789]
-transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 3.556, 2.201692, -1.7679038)
-mesh = SubResource("TextMesh_fos0i")
-
-[node name="Text_L" type="MeshInstance3D" parent="Box/Red_Border" unique_id=303982327]
-transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -3.556, 2.202, -2.2865548)
-mesh = SubResource("TextMesh_cm0pq")
-
-[node name="Text_B1" type="MeshInstance3D" parent="Box/Red_Border" unique_id=876497444]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, -2.7166965, -4.7683716e-07, -1.7641284)
-mesh = SubResource("TextMesh_fos0i")
-
-[node name="Text_B2" type="MeshInstance3D" parent="Box/Red_Border" unique_id=570019679]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 2.9399369, -4.7683716e-07, -1.7641284)
-mesh = SubResource("TextMesh_fos0i")
-
-[node name="Text_B3" type="MeshInstance3D" parent="Box/Red_Border" unique_id=314764847]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0.10589433, -4.7683716e-07, -1.7641284)
-mesh = SubResource("TextMesh_fos0i")
-
-[node name="Text_U1" type="MeshInstance3D" parent="Box/Red_Border" unique_id=1465208727]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, -2.7166965, 4, -1.7641284)
-mesh = SubResource("TextMesh_fos0i")
-
-[node name="Text_U2" type="MeshInstance3D" parent="Box/Red_Border" unique_id=2057390036]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 2.9399369, 4, -1.7641284)
-mesh = SubResource("TextMesh_fos0i")
-
-[node name="Text_U3" type="MeshInstance3D" parent="Box/Red_Border" unique_id=1337228151]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0.10589433, 4, -1.7641284)
-mesh = SubResource("TextMesh_fos0i")
 
 [node name="RigidBody3D" type="RigidBody3D" parent="Box" unique_id=655573897]
 
@@ -171,8 +136,40 @@ mesh = SubResource("BoxMesh_3dxm6")
 [node name="Origin" type="Node3D" parent="Box" unique_id=355665941]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2)
 
+[node name="Text_R" type="MeshInstance3D" parent="Box" unique_id=1174738789]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 3.556, 0.2016921, 0.2320962)
+mesh = SubResource("TextMesh_fos0i")
+
+[node name="Text_L" type="MeshInstance3D" parent="Box" unique_id=303982327]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -3.556, 0.2019999, -0.2865548)
+mesh = SubResource("TextMesh_cm0pq")
+
+[node name="Text_B1" type="MeshInstance3D" parent="Box" unique_id=876497444]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, -2.7166965, -2.0000005, 0.23587155)
+mesh = SubResource("TextMesh_fos0i")
+
+[node name="Text_B2" type="MeshInstance3D" parent="Box" unique_id=570019679]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 2.9399369, -2.0000005, 0.23587155)
+mesh = SubResource("TextMesh_fos0i")
+
+[node name="Text_B3" type="MeshInstance3D" parent="Box" unique_id=314764847]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0.10589433, -2.0000005, 0.23587155)
+mesh = SubResource("TextMesh_fos0i")
+
+[node name="Text_U1" type="MeshInstance3D" parent="Box" unique_id=1465208727]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, -2.7166965, 2, 0.23587155)
+mesh = SubResource("TextMesh_fos0i")
+
+[node name="Text_U2" type="MeshInstance3D" parent="Box" unique_id=2057390036]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 2.9399369, 2, 0.23587155)
+mesh = SubResource("TextMesh_fos0i")
+
+[node name="Text_U3" type="MeshInstance3D" parent="Box" unique_id=1337228151]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0.10589433, 2, 0.23587155)
+mesh = SubResource("TextMesh_fos0i")
+
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1472641536]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -21.097393, 2.1811008, -10.688255)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.9971695, 0.9877353, -2.4551353)
 
 [node name="Dancing3" parent="." unique_id=1605361915 instance=ExtResource("4_cm0pq")]
 transform = Transform3D(1.087, 0, 0, 0, 1.087, 0, 0, 0, 1.087, -0.023734689, 2.3841858e-07, -0.7662306)

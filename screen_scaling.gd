@@ -41,10 +41,10 @@ var tracking_scale_multiplier: float = 1.0
 var _is_updating: bool = false
 
 func _ready() -> void:
-	if Engine.is_editor_hint():
-		_update_from_diagonal()
-	else:
-		_update_scale_multiplier()
+	# Whether inside the editor or running the game, we must force a calculation
+	# based on the saved inspector variables to populate physical_height_meters, 
+	# which then inherently cascades to update tracking_scale_multiplier.
+	_update_from_diagonal()
 
 func _update_from_diagonal() -> void:
 	if _is_updating: return

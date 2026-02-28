@@ -13,6 +13,8 @@ extends Node
 
 var left_cam: Camera3D
 var right_cam: Camera3D
+var left_vp: SubViewport
+var right_vp: SubViewport
 var _anaglyph_enabled: bool = true
 var _shader_canvas: CanvasLayer
 var _shader_mat: ShaderMaterial # Keep a reference to update it live
@@ -22,10 +24,10 @@ func _ready() -> void:
 		
 	var actual_window_center = base_camera.get_node_or_null(base_camera.window_center_path)
 	var absolute_window_path = actual_window_center.get_path() if actual_window_center else NodePath("")
-	base_camera.current = false
+	base_camera.clear_current()
 	
 	# --- Setup Left Eye ---
-	var left_vp = SubViewport.new()
+	left_vp = SubViewport.new()
 	left_vp.size = get_viewport().get_visible_rect().size
 	left_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	left_vp.world_3d = get_viewport().world_3d 
@@ -37,7 +39,7 @@ func _ready() -> void:
 	left_vp.add_child(left_cam)
 	
 	# --- Setup Right Eye ---
-	var right_vp = SubViewport.new()
+	right_vp = SubViewport.new()
 	right_vp.size = left_vp.size
 	right_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	right_vp.world_3d = get_viewport().world_3d 
@@ -73,7 +75,23 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_T:
 			_anaglyph_enabled = not _anaglyph_enabled
 			if _shader_canvas: _shader_canvas.visible = _anaglyph_enabled
-			if base_camera: base_camera.current = not _anaglyph_enabled
+			
+			if not _anaglyph_enabled:
+				if left_cam: left_cam.clear_current()
+				if right_cam: right_cam.clear_current()
+				
+				if left_vp and left_vp.get_parent(): remove_child(left_vp)
+				if right_vp and right_vp.get_parent(): remove_child(right_vp)
+				
+				if base_camera: base_camera.make_current()
+			else:
+				if not left_vp.get_parent(): add_child(left_vp)
+				if not right_vp.get_parent(): add_child(right_vp)
+				
+				if base_camera: base_camera.clear_current()
+				if left_cam: left_cam.make_current()
+				if right_cam: right_cam.make_current()
+				
 		elif event.keycode == KEY_EQUAL: ipd += 0.005
 		elif event.keycode == KEY_MINUS: ipd = max(0.0, ipd - 0.005)
 
