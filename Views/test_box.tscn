@@ -37,6 +37,7 @@ mesh = SubResource("BoxMesh_glv2v")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="RigidBody3D" unique_id=823212873]
 shape = SubResource("BoxShape3D_glv2v")
+disabled = true
 
 [node name="Cube" type="MeshInstance3D" parent="." unique_id=61684400]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.8177159, -1.1439391)

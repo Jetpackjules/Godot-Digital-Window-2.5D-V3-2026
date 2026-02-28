@@ -1,0 +1,128 @@
+[remap]
+
+importer="scene"
+importer_version=1
+type="PackedScene"
+uid="uid://d2y6b7r3qkj4p"
+path="res://.godot/imported/Outside.glb-a9ad26bdc2d8d9428de2fb5355fd4c63.scn"
+
+[deps]
+
+source_file="res://Views/Spaceship/Models/Outside.glb"
+dest_files=["res://.godot/imported/Outside.glb-a9ad26bdc2d8d9428de2fb5355fd4c63.scn"]
+
+[params]
+
+nodes/root_type="Node3D"
+nodes/root_name="Scene Root"
+nodes/root_script=null
+nodes/apply_root_scale=true
+nodes/root_scale=1.0
+nodes/import_as_skeleton_bones=false
+nodes/use_name_suffixes=true
+nodes/use_node_type_suffixes=true
+meshes/ensure_tangents=true
+meshes/generate_lods=true
+meshes/create_shadow_meshes=true
+meshes/light_baking=2
+meshes/lightmap_texel_size=0.5
+meshes/force_disable_compression=false
+skins/use_named_skins=true
+animation/import=true
+animation/fps=30
+animation/trimming=false
+animation/remove_immutable_tracks=true
+animation/import_rest_as_RESET=false
+import_script/path=""
+materials/extract=0
+materials/extract_format=0
+materials/extract_path=""
+_subresources={
+"materials": {
+"Concrete": {
+"use_external/enabled": true,
+"use_external/fallback_path": "res://Views/Spaceship/Materials/Utrim_Concrete/utrim_concrete_recolored.tres",
+"use_external/path": "uid://six1wvwnxaxk"
+},
+"Ground": {
+"use_external/enabled": true,
+"use_external/fallback_path": "res://Views/Spaceship/Materials/Outside/OutsideGround.tres",
+"use_external/path": "uid://d1r8knfnhwjje"
+},
+"Vegetation": {
+"use_external/enabled": true,
+"use_external/fallback_path": "res://Views/Spaceship/Materials/Vegetation/Vegetation.tres",
+"use_external/path": "uid://cnnemxdoblqc7"
+}
+},
+"meshes": {
+"Outside_Fern_Low": {
+"generate/lightmap_uv": 0,
+"generate/lods": 0,
+"generate/shadow_meshes": 0,
+"lods/normal_merge_angle": 60.0,
+"lods/normal_split_angle": 25.0,
+"save_to_file/enabled": true,
+"save_to_file/fallback_path": "res://Views/Spaceship/Models/Outside/Meshes/Outside_Fern_Low.res",
+"save_to_file/make_streamable": "",
+"save_to_file/path": "uid://cx1y8hdgfv83m"
+},
+"Outside_OuterWall": {
+"generate/lightmap_uv": 0,
+"generate/lods": 0,
+"generate/shadow_meshes": 0,
+"lods/normal_merge_angle": 60.0,
+"lods/normal_split_angle": 25.0,
+"save_to_file/enabled": true,
+"save_to_file/fallback_path": "res://Views/Spaceship/Models/Outside/Meshes/Outside_OuterWall.res",
+"save_to_file/make_streamable": "",
+"save_to_file/path": "uid://bsmi6j1yg60ii"
+},
+"Outside_OuterWall_Small": {
+"generate/lightmap_uv": 0,
+"generate/lods": 0,
+"generate/shadow_meshes": 0,
+"lods/normal_merge_angle": 60.0,
+"lods/normal_split_angle": 25.0,
+"save_to_file/enabled": true,
+"save_to_file/fallback_path": "res://Views/Spaceship/Models/Outside/Meshes/Outside_OuterWall_Small.res",
+"save_to_file/make_streamable": "",
+"save_to_file/path": "uid://cst2wnfqhxert"
+},
+"Outside_OutsideGround": {
+"generate/lightmap_uv": 0,
+"generate/lods": 0,
+"generate/shadow_meshes": 0,
+"lods/normal_merge_angle": 60.0,
+"lods/normal_split_angle": 25.0,
+"save_to_file/enabled": true,
+"save_to_file/fallback_path": "res://Views/Spaceship/Models/Outside/Meshes/Outside_OutsideGround.res",
+"save_to_file/make_streamable": "",
+"save_to_file/path": "uid://cnocf3vyr8ktj"
+},
+"Outside_Tree": {
+"generate/lightmap_uv": 0,
+"generate/lods": 0,
+"generate/shadow_meshes": 0,
+"lods/normal_merge_angle": 60.0,
+"lods/normal_split_angle": 25.0,
+"save_to_file/enabled": true,
+"save_to_file/fallback_path": "res://Views/Spaceship/Models/Outside/Meshes/Outside_Tree.res",
+"save_to_file/make_streamable": "",
+"save_to_file/path": "uid://duc4s6foegd4b"
+},
+"Outside_Tree_Low": {
+"generate/lightmap_uv": 0,
+"generate/lods": 0,
+"generate/shadow_meshes": 0,
+"lods/normal_merge_angle": 60.0,
+"lods/normal_split_angle": 25.0,
+"save_to_file/enabled": true,
+"save_to_file/fallback_path": "res://Views/Spaceship/Models/Outside/Meshes/Outside_Tree_Low.res",
+"save_to_file/make_streamable": "",
+"save_to_file/path": "uid://5res42ufn80h"
+}
+}
+}
+gltf/naming_version=2
+gltf/embedded_image_handling=1

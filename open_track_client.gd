@@ -122,11 +122,14 @@ func _process(_delta):
 		if diagnostics_label and diagnostics_label.visible:
 			var scale_mult = screen_scaler.tracking_scale_multiplier if screen_scaler else 1.0
 			var cam_pos = camera_node.global_position if camera_node else Vector3.ZERO
+			var player_pos = player_node.global_position if player_node else Vector3.ZERO
 			
 			diagnostics_label.text = """
 			--- DIAGNOSTICS ---
 			Raw Tracker Data (cm): X: %.2f | Y: %.2f | Z: %.2f
 			Tracking Scale Multiplier: %.3f x
+			
+			Player Drone Position: X: %.2f | Y: %.2f | Z: %.2f
 			
 			Godot Head Position:
 			X: %.3f m
@@ -135,6 +138,7 @@ func _process(_delta):
 			""" % [
 				_raw_x, _raw_y, _raw_z,
 				scale_mult,
+				player_pos.x, player_pos.y, player_pos.z,
 				cam_pos.x, cam_pos.y, cam_pos.z
 			]
 
@@ -143,8 +147,11 @@ func _apply_tracking_data():
 	if not _face_detected:
 		_face_detected = true
 		if player_node:
-			player_node.set_physics_process(false) # Disable WASD script from running
-			player_node.visible = false # Hide the player capsule mesh
+			# Hide the player's physical capsule body so it doesn't block the screen, 
+			# but keep the Player node itself visible so its physics and children continue ticking!
+			var mesh = player_node.get_node_or_null("MeshInstance3D")
+			if mesh:
+				mesh.visible = false
 	
 	if camera_node and window_center and screen_scaler:
 		var mult = screen_scaler.tracking_scale_multiplier
@@ -160,7 +167,16 @@ func _apply_tracking_data():
 			(_raw_z * z_dir) * sensitivity.z * mult
 		)
 		
-		# Move the camera relative to the Player's initial base position (the chair)
-		# instead of the Window Center, so we don't jump directly onto the glass.
+		# The Window Center sits perfectly at the origin of the Player
+		# So we can just mathematically offset the Camera local to the player's 
+		# current facing direction and flight position!
 		var base_pos = player_node.global_position if player_node else window_center.global_position
-		camera_node.global_position = base_pos + (window_center.global_transform.basis * scaled_offset)
+		
+		# Move the camera natively within the player's local rotated basis
+		var final_pos = base_pos
+		if player_node:
+			final_pos += player_node.global_transform.basis * scaled_offset
+		else:
+			final_pos += window_center.global_transform.basis * scaled_offset
+			
+		camera_node.global_position = final_pos

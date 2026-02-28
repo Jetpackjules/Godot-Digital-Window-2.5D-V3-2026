@@ -43,7 +43,9 @@ func _process(_delta: float) -> void:
 
 	# 3. Handle Frustum Shear / Offset (X/Y-Axis movement)
 	# Godot's forward axis is -Z, so we negate w_local.z for positive depth
-	var window_depth: float = max(0.001, -w_local.z) 
+	# We also use absolute value so the projection matrix doesn't flip entirely inside out
+	# if the player flies "past" the window frame into the virtual scene!
+	var window_depth: float = max(0.001, abs(-w_local.z)) 
 	
 	# The shift is the local X/Y difference between the Window Center and the Target Eye
 	var raw_shift: Vector2 = Vector2(w_local.x - t_local.x, w_local.y - t_local.y)

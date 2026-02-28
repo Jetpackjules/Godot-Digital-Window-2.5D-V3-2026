@@ -55,30 +55,54 @@ physics_material_override = SubResource("PhysicsMaterial_noarx")
 shape = SubResource("WorldBoundaryShape3D_noarx")
 
 [node name="Player" type="CharacterBody3D" parent="." unique_id=628299438]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2723145, 4.0635076)
-visible = false
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("1_glv2v")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=1508845456]
 shape = SubResource("CapsuleShape3D_noarx")
+disabled = true
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Player" unique_id=782952007]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.00012737513, 0.00012683868, -1.9073486e-06)
 mesh = SubResource("CapsuleMesh_a0tk4")
 
 [node name="Head_Cam" type="Camera3D" parent="Player" unique_id=1849009951]
 projection = 2
 current = true
 script = ExtResource("2_r0du0")
-window_center_path = NodePath("../../View")
+window_center_path = NodePath("../MonitorFrame")
 screen_scaling_path = NodePath("../../ScreenScaling")
 
+[node name="MonitorFrame" type="Node3D" parent="Player" unique_id=123123123]
+
+[node name="Red_Border" type="Node3D" parent="Player/MonitorFrame" unique_id=1379736672]
+
+[node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=430316341]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 4, 0, 0.125)
+mesh = SubResource("QuadMesh_cm0pq")
+
+[node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1990355786]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -4, 0, 0.125)
+mesh = SubResource("QuadMesh_cm0pq")
+
+[node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1073289249]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 2.25, 0.125)
+mesh = SubResource("QuadMesh_fos0i")
+
+[node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=441872831]
+transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, -2.25, 0.125)
+mesh = SubResource("QuadMesh_fos0i")
+
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
-transform = Transform3D(0.7409745, 0.6031311, -0.29527903, -0.068698704, 0.5054832, 0.8600973, 0.66801006, -0.6170249, 0.41598445, -6.9478498, 7.8566256, 9.535605)
+transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.6245799, 0.77793354, 0.66801006, -0.5503635, 0.500862, -5.7581205, 7.6799498, 2.5738828)
 shadow_enabled = true
+shadow_blur = 0.655
+directional_shadow_split_1 = 0.03
 
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1472641536]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.9971695, 0.9877353, -2.4551353)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.35705173, 1.7418168, 1.8543689)
+visible = false
+light_energy = 1.25
+shadow_enabled = true
 
 [node name="Analgyph Script" type="Node" parent="." unique_id=503136632 node_paths=PackedStringArray("base_camera")]
 script = ExtResource("5_fos0i")
@@ -95,7 +119,7 @@ texture = ExtResource("6_3dxm6")
 script = ExtResource("7_lgr22")
 camera_node = NodePath("../Player/Head_Cam")
 player_node = NodePath("../Player")
-window_center = NodePath("../View")
+window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
 show_debug_view = true
 
@@ -110,23 +134,4 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
 current_view_name = "flat.tscn"
 
-[node name="Red_Border" type="Node3D" parent="View" unique_id=1379736672]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.25, 0)
-
-[node name="Border_R" type="MeshInstance3D" parent="View/Red_Border" unique_id=430316341]
-transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 4, 2.25, 0.125)
-mesh = SubResource("QuadMesh_cm0pq")
-
-[node name="Border_L" type="MeshInstance3D" parent="View/Red_Border" unique_id=1990355786]
-transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -4, 2.25, 0.125)
-mesh = SubResource("QuadMesh_cm0pq")
-
-[node name="Border_U" type="MeshInstance3D" parent="View/Red_Border" unique_id=1073289249]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 4.5, 0.125)
-mesh = SubResource("QuadMesh_fos0i")
-
-[node name="Border_D" type="MeshInstance3D" parent="View/Red_Border" unique_id=441872831]
-transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, 0, 0.125)
-mesh = SubResource("QuadMesh_fos0i")
-
-[node name="Flat" type="Node3D" parent="View" unique_id=783687752 instance=ExtResource("9_03owx")]
+[node name="Flat2" parent="View" unique_id=783687752 instance=ExtResource("9_03owx")]
