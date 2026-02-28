@@ -7,6 +7,7 @@
 [ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
+[ext_resource type="PackedScene" uid="uid://cckxouc8lsron" path="res://Views/Realistic City 1/View.tscn" id="9_03owx"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
@@ -130,4 +131,6 @@ virtual_window_height = 4.5
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
-current_view_name = "blank.tscn"
+current_view_name = "Realistic City 1"
+
+[node name="View" type="Node3D" parent="View" unique_id=1409909609 instance=ExtResource("9_03owx")]

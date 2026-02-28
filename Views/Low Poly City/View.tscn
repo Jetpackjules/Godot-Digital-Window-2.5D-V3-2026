@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://chp7psjus1a61"]
+
+[ext_resource type="PackedScene" uid="uid://dk3d3geh3hid1" path="res://Views/Low Poly City/low_poly_city.glb" id="1_goj6m"]
+
+[node name="View" type="Node3D" unique_id=1279291071]
+
+[node name="Sketchfab_Scene" parent="." unique_id=1598733055 instance=ExtResource("1_goj6m")]
+transform = Transform3D(0.034, 0, 0, 0, -1.4861873e-09, -0.034, 0, 0.034, -1.4861873e-09, -0.9332837, -1.3001163, 0)

@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://cckxouc8lsron"]
+
+[ext_resource type="PackedScene" uid="uid://6lyqv6ek1shw" path="res://Views/Realistic City 1/full_gameready_city_buildings_iv_hongkong.glb" id="1_spd4w"]
+[ext_resource type="Environment" uid="uid://bxd3l7wofnavr" path="res://Assets/Foggy.tres" id="2_ku1ww"]
+[ext_resource type="CameraAttributesPractical" uid="uid://dyd1etxfr81g1" path="res://Assets/Fog_cam.tres" id="3_50b3j"]
+
+[node name="View" type="Node3D" unique_id=1409909609]
+
+[node name="Sketchfab_Scene" parent="." unique_id=195416180 instance=ExtResource("1_spd4w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.5491085, 0, 0)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=517283767]
+environment = ExtResource("2_ku1ww")
+camera_attributes = ExtResource("3_50b3j")

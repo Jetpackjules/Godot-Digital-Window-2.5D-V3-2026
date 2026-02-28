@@ -58,7 +58,7 @@ func _refresh_views() -> void:
 				_available_views.append(file_name)
 			elif dir.current_is_dir() and not file_name.begins_with("."):
 				var sub_path = "res://Views/" + file_name
-				if FileAccess.file_exists(sub_path + "/Main.tscn") or FileAccess.file_exists(sub_path + "/main.tscn"):
+				if FileAccess.file_exists(sub_path + "/View.tscn") or FileAccess.file_exists(sub_path + "/View.tscn"):
 					_available_views.append(file_name) # Add just the folder name to the dropdown list
 			file_name = dir.get_next()
 	else:
@@ -72,12 +72,12 @@ func _load_view(view_file: String) -> void:
 	if view_file.ends_with(".tscn"):
 		scene_path = "res://Views/" + view_file
 	else:
-		if FileAccess.file_exists("res://Views/" + view_file + "/Main.tscn"):
-			scene_path = "res://Views/" + view_file + "/Main.tscn"
-		elif FileAccess.file_exists("res://Views/" + view_file + "/main.tscn"):
-			scene_path = "res://Views/" + view_file + "/main.tscn"
+		if FileAccess.file_exists("res://Views/" + view_file + "/View.tscn"):
+			scene_path = "res://Views/" + view_file + "/View.tscn"
+		elif FileAccess.file_exists("res://Views/" + view_file + "/View.tscn"):
+			scene_path = "res://Views/" + view_file + "/View.tscn"
 		else:
-			push_error("Could not find main.tscn inside " + view_file)
+			push_error("Could not find View.tscn inside " + view_file)
 			return
 	
 	var packed_scene = ResourceLoader.load(scene_path) as PackedScene
