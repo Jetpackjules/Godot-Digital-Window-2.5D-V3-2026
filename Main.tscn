@@ -3,11 +3,11 @@
 [ext_resource type="Script" uid="uid://dn26tpt4cuwss" path="res://Generic Code/Player.gd" id="1_glv2v"]
 [ext_resource type="Script" uid="uid://dinc44gw3mrvr" path="res://Perspective_Cam.gd" id="2_r0du0"]
 [ext_resource type="Texture2D" uid="uid://bxl8v6cotb4ak" path="res://icon.svg" id="3_cm0pq"]
-[ext_resource type="PackedScene" uid="uid://dk1sfjmbix8yc" path="res://Views/test_box.tscn" id="4_trn2v"]
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
 [ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
+[ext_resource type="PackedScene" uid="uid://delrmijg0sq27" path="res://Views/flat.tscn" id="9_03owx"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
@@ -37,10 +37,6 @@ size = Vector2(0.25, 4.5)
 [sub_resource type="QuadMesh" id="QuadMesh_fos0i"]
 material = SubResource("StandardMaterial3D_r0du0")
 size = Vector2(0.25, 8)
-
-[sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
-flip_faces = true
-size = Vector3(7.111, 4, 4)
 
 [node name="Main" type="Node3D" unique_id=1224428574]
 
@@ -112,7 +108,7 @@ virtual_window_height = 4.5
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
-current_view_name = "test_box.tscn"
+current_view_name = "flat.tscn"
 
 [node name="Red_Border" type="Node3D" parent="View" unique_id=1379736672]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.25, 0)
@@ -133,6 +129,4 @@ mesh = SubResource("QuadMesh_fos0i")
 transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, 0, 0.125)
 mesh = SubResource("QuadMesh_fos0i")
 
-[node name="Box" type="MeshInstance3D" parent="View" unique_id=666923875 instance=ExtResource("4_trn2v")]
-transform = Transform3D(1.125, 0, 0, 0, 1.125, 0, 0, 0, 1.125, 0, 0, -2.25)
-mesh = SubResource("BoxMesh_glv2v")
+[node name="Flat" type="Node3D" parent="View" unique_id=783687752 instance=ExtResource("9_03owx")]

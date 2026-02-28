@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://delrmijg0sq27"]
+
+[ext_resource type="PackedScene" uid="uid://iyk13aa885oo" path="res://Assets/silly_dancing.tscn" id="1_fbf4e"]
+
+[sub_resource type="QuadMesh" id="QuadMesh_5y7sw"]
+size = Vector2(8, 4.5)
+
+[node name="Flat" type="Node3D" unique_id=783687752]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=1395451366]
+mesh = SubResource("QuadMesh_5y7sw")
+
+[node name="Silly Dancing" parent="." unique_id=1605361915 instance=ExtResource("1_fbf4e")]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0, 0)
