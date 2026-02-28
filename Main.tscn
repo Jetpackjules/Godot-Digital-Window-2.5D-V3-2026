@@ -8,6 +8,7 @@
 [ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
+[ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
 size = Vector2(20, 20)
@@ -36,6 +37,10 @@ size = Vector2(0.25, 4.5)
 [sub_resource type="QuadMesh" id="QuadMesh_fos0i"]
 material = SubResource("StandardMaterial3D_r0du0")
 size = Vector2(0.25, 8)
+
+[sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
+flip_faces = true
+size = Vector3(7.111, 4, 4)
 
 [node name="Main" type="Node3D" unique_id=1224428574]
 
@@ -76,24 +81,6 @@ screen_scaling_path = NodePath("../../ScreenScaling")
 transform = Transform3D(0.7409745, 0.6031311, -0.29527903, -0.068698704, 0.5054832, 0.8600973, 0.66801006, -0.6170249, 0.41598445, -6.9478498, 7.8566256, 9.535605)
 shadow_enabled = true
 
-[node name="Red_Border" type="Node3D" parent="." unique_id=1379736672]
-
-[node name="Border_R" type="MeshInstance3D" parent="Red_Border" unique_id=430316341]
-transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 4, 2.25, 0.125)
-mesh = SubResource("QuadMesh_cm0pq")
-
-[node name="Border_L" type="MeshInstance3D" parent="Red_Border" unique_id=1990355786]
-transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -4, 2.25, 0.125)
-mesh = SubResource("QuadMesh_cm0pq")
-
-[node name="Border_U" type="MeshInstance3D" parent="Red_Border" unique_id=1073289249]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 4.5, 0.125)
-mesh = SubResource("QuadMesh_fos0i")
-
-[node name="Border_D" type="MeshInstance3D" parent="Red_Border" unique_id=441872831]
-transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, 0, 0.125)
-mesh = SubResource("QuadMesh_fos0i")
-
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1472641536]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.9971695, 0.9877353, -2.4551353)
 
@@ -124,5 +111,28 @@ virtual_window_height = 4.5
 
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
+script = ExtResource("9_vs123")
+current_view_name = "test_box.tscn"
 
-[node name="Box" parent="View" unique_id=666923875 instance=ExtResource("4_trn2v")]
+[node name="Red_Border" type="Node3D" parent="View" unique_id=1379736672]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.25, 0)
+
+[node name="Border_R" type="MeshInstance3D" parent="View/Red_Border" unique_id=430316341]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 4, 2.25, 0.125)
+mesh = SubResource("QuadMesh_cm0pq")
+
+[node name="Border_L" type="MeshInstance3D" parent="View/Red_Border" unique_id=1990355786]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -4, 2.25, 0.125)
+mesh = SubResource("QuadMesh_cm0pq")
+
+[node name="Border_U" type="MeshInstance3D" parent="View/Red_Border" unique_id=1073289249]
+transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 4.5, 0.125)
+mesh = SubResource("QuadMesh_fos0i")
+
+[node name="Border_D" type="MeshInstance3D" parent="View/Red_Border" unique_id=441872831]
+transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, 0, 0.125)
+mesh = SubResource("QuadMesh_fos0i")
+
+[node name="Box" type="MeshInstance3D" parent="View" unique_id=666923875 instance=ExtResource("4_trn2v")]
+transform = Transform3D(1.125, 0, 0, 0, 1.125, 0, 0, 0, 1.125, 0, 0, -2.25)
+mesh = SubResource("BoxMesh_glv2v")
