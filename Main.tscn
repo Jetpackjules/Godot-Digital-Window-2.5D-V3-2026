@@ -7,7 +7,6 @@
 [ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
-[ext_resource type="PackedScene" uid="uid://delrmijg0sq27" path="res://Views/flat.tscn" id="9_03owx"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
@@ -63,6 +62,7 @@ shape = SubResource("CapsuleShape3D_noarx")
 disabled = true
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Player" unique_id=782952007]
+visible = false
 mesh = SubResource("CapsuleMesh_a0tk4")
 
 [node name="Head_Cam" type="Camera3D" parent="Player" unique_id=1849009951]
@@ -95,8 +95,6 @@ mesh = SubResource("QuadMesh_fos0i")
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
 transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.6245799, 0.77793354, 0.66801006, -0.5503635, 0.500862, -5.7581205, 7.6799498, 2.5738828)
 shadow_enabled = true
-shadow_blur = 0.655
-directional_shadow_split_1 = 0.03
 
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1472641536]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.35705173, 1.7418168, 1.8543689)
@@ -132,6 +130,4 @@ virtual_window_height = 4.5
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
-current_view_name = "flat.tscn"
-
-[node name="Flat2" parent="View" unique_id=783687752 instance=ExtResource("9_03owx")]
+current_view_name = "blank.tscn"

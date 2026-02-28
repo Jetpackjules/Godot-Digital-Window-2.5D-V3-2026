@@ -8,8 +8,6 @@ metallic_specular = 0.49
 roughness = 0.15
 clearcoat_enabled = true
 clearcoat_roughness = 1.0
-refraction_enabled = true
-refraction_scale = 0.23
 
 [node name="Silly Dancing" unique_id=1605361915 instance=ExtResource("1_34ytt")]
 
