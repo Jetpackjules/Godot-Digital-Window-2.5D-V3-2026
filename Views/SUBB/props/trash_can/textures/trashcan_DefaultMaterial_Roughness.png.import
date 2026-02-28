@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cmdwiqlnditjr"
 path.bptc="res://.godot/imported/trashcan_DefaultMaterial_Roughness.png-5606eaa9bc93042c9b2fe94176cd50cb.bptc.ctex"
+path.astc="res://.godot/imported/trashcan_DefaultMaterial_Roughness.png-5606eaa9bc93042c9b2fe94176cd50cb.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/trash_can/textures/trashcan_DefaultMaterial_Roughness.png"
-dest_files=["res://.godot/imported/trashcan_DefaultMaterial_Roughness.png-5606eaa9bc93042c9b2fe94176cd50cb.bptc.ctex"]
+dest_files=["res://.godot/imported/trashcan_DefaultMaterial_Roughness.png-5606eaa9bc93042c9b2fe94176cd50cb.bptc.ctex", "res://.godot/imported/trashcan_DefaultMaterial_Roughness.png-5606eaa9bc93042c9b2fe94176cd50cb.astc.ctex"]
 
 [params]
 

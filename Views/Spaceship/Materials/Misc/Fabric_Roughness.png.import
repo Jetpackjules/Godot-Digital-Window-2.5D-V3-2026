@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dbpv28pw8xbew"
 path.s3tc="res://.godot/imported/Fabric_Roughness.png-67972a3522983fdf9e1851939bb0fef2.s3tc.ctex"
+path.etc2="res://.godot/imported/Fabric_Roughness.png-67972a3522983fdf9e1851939bb0fef2.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Misc/Fabric_Roughness.png"
-dest_files=["res://.godot/imported/Fabric_Roughness.png-67972a3522983fdf9e1851939bb0fef2.s3tc.ctex"]
+dest_files=["res://.godot/imported/Fabric_Roughness.png-67972a3522983fdf9e1851939bb0fef2.s3tc.ctex", "res://.godot/imported/Fabric_Roughness.png-67972a3522983fdf9e1851939bb0fef2.etc2.ctex"]
 
 [params]
 

@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cpberkn7lp5ur"
 path.s3tc="res://.godot/imported/cinder_block_albedo.png-6fd7259fc8611b2f2175ccb7ee88fc1a.s3tc.ctex"
+path.etc2="res://.godot/imported/cinder_block_albedo.png-6fd7259fc8611b2f2175ccb7ee88fc1a.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/cinder_blocks/textures/cinder_block_albedo.png"
-dest_files=["res://.godot/imported/cinder_block_albedo.png-6fd7259fc8611b2f2175ccb7ee88fc1a.s3tc.ctex"]
+dest_files=["res://.godot/imported/cinder_block_albedo.png-6fd7259fc8611b2f2175ccb7ee88fc1a.s3tc.ctex", "res://.godot/imported/cinder_block_albedo.png-6fd7259fc8611b2f2175ccb7ee88fc1a.etc2.ctex"]
 
 [params]
 

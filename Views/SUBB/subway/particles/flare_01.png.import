@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cqccmgb2dd0m5"
 path.s3tc="res://.godot/imported/flare_01.png-e7d114010c3dec462a7955c9af91fda3.s3tc.ctex"
+path.etc2="res://.godot/imported/flare_01.png-e7d114010c3dec462a7955c9af91fda3.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/particles/flare_01.png"
-dest_files=["res://.godot/imported/flare_01.png-e7d114010c3dec462a7955c9af91fda3.s3tc.ctex"]
+dest_files=["res://.godot/imported/flare_01.png-e7d114010c3dec462a7955c9af91fda3.s3tc.ctex", "res://.godot/imported/flare_01.png-e7d114010c3dec462a7955c9af91fda3.etc2.ctex"]
 
 [params]
 

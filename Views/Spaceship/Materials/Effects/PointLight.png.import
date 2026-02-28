@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://c6hf8nd1ebknf"
 path.s3tc="res://.godot/imported/PointLight.png-790f637391fca92e6c9c7e96a6edbfee.s3tc.ctex"
+path.etc2="res://.godot/imported/PointLight.png-790f637391fca92e6c9c7e96a6edbfee.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Effects/PointLight.png"
-dest_files=["res://.godot/imported/PointLight.png-790f637391fca92e6c9c7e96a6edbfee.s3tc.ctex"]
+dest_files=["res://.godot/imported/PointLight.png-790f637391fca92e6c9c7e96a6edbfee.s3tc.ctex", "res://.godot/imported/PointLight.png-790f637391fca92e6c9c7e96a6edbfee.etc2.ctex"]
 
 [params]
 

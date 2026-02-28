@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://jtvy8cp6phgb"
 path.s3tc="res://.godot/imported/LensFlare1.png-8e4896b8d33e7865f4127dadd2854ca2.s3tc.ctex"
+path.etc2="res://.godot/imported/LensFlare1.png-8e4896b8d33e7865f4127dadd2854ca2.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Effects/LensFlare1.png"
-dest_files=["res://.godot/imported/LensFlare1.png-8e4896b8d33e7865f4127dadd2854ca2.s3tc.ctex"]
+dest_files=["res://.godot/imported/LensFlare1.png-8e4896b8d33e7865f4127dadd2854ca2.s3tc.ctex", "res://.godot/imported/LensFlare1.png-8e4896b8d33e7865f4127dadd2854ca2.etc2.ctex"]
 
 [params]
 

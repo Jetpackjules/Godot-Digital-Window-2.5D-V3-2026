@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://byp4gnpv7f10q"
 path.s3tc="res://.godot/imported/ArcadeStickers.png-9f096016cac65393cc8cbedf250dfc9d.s3tc.ctex"
+path.etc2="res://.godot/imported/ArcadeStickers.png-9f096016cac65393cc8cbedf250dfc9d.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Misc/ArcadeStickers.png"
-dest_files=["res://.godot/imported/ArcadeStickers.png-9f096016cac65393cc8cbedf250dfc9d.s3tc.ctex"]
+dest_files=["res://.godot/imported/ArcadeStickers.png-9f096016cac65393cc8cbedf250dfc9d.s3tc.ctex", "res://.godot/imported/ArcadeStickers.png-9f096016cac65393cc8cbedf250dfc9d.etc2.ctex"]
 
 [params]
 

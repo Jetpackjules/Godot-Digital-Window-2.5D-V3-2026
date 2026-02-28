@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bqbbajw1mlc4f"
 path.bptc="res://.godot/imported/Concrete026_4K_Color.png-29e8eb6319779aaf4e7465cdeb357b3b.bptc.ctex"
+path.astc="res://.godot/imported/Concrete026_4K_Color.png-29e8eb6319779aaf4e7465cdeb357b3b.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/mossy_concrete/Concrete026_4K_Color.png"
-dest_files=["res://.godot/imported/Concrete026_4K_Color.png-29e8eb6319779aaf4e7465cdeb357b3b.bptc.ctex"]
+dest_files=["res://.godot/imported/Concrete026_4K_Color.png-29e8eb6319779aaf4e7465cdeb357b3b.bptc.ctex", "res://.godot/imported/Concrete026_4K_Color.png-29e8eb6319779aaf4e7465cdeb357b3b.astc.ctex"]
 
 [params]
 

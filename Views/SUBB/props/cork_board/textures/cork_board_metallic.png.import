@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://s4cjcl0vcik8"
 path.s3tc="res://.godot/imported/cork_board_metallic.png-f2d6d568c7167aefe25c0162be307432.s3tc.ctex"
+path.etc2="res://.godot/imported/cork_board_metallic.png-f2d6d568c7167aefe25c0162be307432.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/cork_board/textures/cork_board_metallic.png"
-dest_files=["res://.godot/imported/cork_board_metallic.png-f2d6d568c7167aefe25c0162be307432.s3tc.ctex"]
+dest_files=["res://.godot/imported/cork_board_metallic.png-f2d6d568c7167aefe25c0162be307432.s3tc.ctex", "res://.godot/imported/cork_board_metallic.png-f2d6d568c7167aefe25c0162be307432.etc2.ctex"]
 
 [params]
 

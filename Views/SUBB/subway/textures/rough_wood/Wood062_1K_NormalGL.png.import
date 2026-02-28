@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://clrmxos7tcnf5"
 path.bptc="res://.godot/imported/Wood062_1K_NormalGL.png-b53fef1e79c308f14501d4a6c078c081.bptc.ctex"
+path.astc="res://.godot/imported/Wood062_1K_NormalGL.png-b53fef1e79c308f14501d4a6c078c081.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/rough_wood/Wood062_1K_NormalGL.png"
-dest_files=["res://.godot/imported/Wood062_1K_NormalGL.png-b53fef1e79c308f14501d4a6c078c081.bptc.ctex"]
+dest_files=["res://.godot/imported/Wood062_1K_NormalGL.png-b53fef1e79c308f14501d4a6c078c081.bptc.ctex", "res://.godot/imported/Wood062_1K_NormalGL.png-b53fef1e79c308f14501d4a6c078c081.astc.ctex"]
 
 [params]
 

@@ -2,20 +2,22 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://tqiak77omdnr"
-path="res://.godot/imported/icon_density.svg-11d741d53ad938345715b79ead4b8cda.ctex"
+uid="uid://c4ggdp0kg5wjk"
+path.s3tc="res://.godot/imported/grassbushcc008.png-7110abc2a2a9dc117662bb95ed60be39.s3tc.ctex"
+path.etc2="res://.godot/imported/grassbushcc008.png-7110abc2a2a9dc117662bb95ed60be39.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
-source_file="res://Views/SUBB/addons/simplegrasstextured/images/icon_density.svg"
-dest_files=["res://.godot/imported/icon_density.svg-11d741d53ad938345715b79ead4b8cda.ctex"]
+source_file="res://addons/simplegrasstextured/textures/grassbushcc008.png"
+dest_files=["res://.godot/imported/grassbushcc008.png-7110abc2a2a9dc117662bb95ed60be39.s3tc.ctex", "res://.godot/imported/grassbushcc008.png-7110abc2a2a9dc117662bb95ed60be39.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -23,7 +25,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
@@ -37,7 +39,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
-svg/scale=1.0
-editor/scale_with_editor_scale=false
-editor/convert_colors_with_editor_theme=false
+detect_3d/compress_to=0

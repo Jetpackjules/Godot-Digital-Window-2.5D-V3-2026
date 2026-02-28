@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://c3qplgk7xlkch"
 path.bptc="res://.godot/imported/utrim_spaceship_1_Albedo.png-48d229dab57f72d9aeb891ef6ab20c8a.bptc.ctex"
+path.astc="res://.godot/imported/utrim_spaceship_1_Albedo.png-48d229dab57f72d9aeb891ef6ab20c8a.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Utrim_SpaceShip/utrim_spaceship_1_Albedo.png"
-dest_files=["res://.godot/imported/utrim_spaceship_1_Albedo.png-48d229dab57f72d9aeb891ef6ab20c8a.bptc.ctex"]
+dest_files=["res://.godot/imported/utrim_spaceship_1_Albedo.png-48d229dab57f72d9aeb891ef6ab20c8a.bptc.ctex", "res://.godot/imported/utrim_spaceship_1_Albedo.png-48d229dab57f72d9aeb891ef6ab20c8a.astc.ctex"]
 
 [params]
 

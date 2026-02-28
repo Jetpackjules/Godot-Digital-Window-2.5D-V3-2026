@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://b7gty6sqg3ks0"
 path.bptc="res://.godot/imported/brown_mud_rocks_01_rough_2k.png-535b0c286c41c84317b840cecd6cff9b.bptc.ctex"
+path.astc="res://.godot/imported/brown_mud_rocks_01_rough_2k.png-535b0c286c41c84317b840cecd6cff9b.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/dirty_gravel/brown_mud_rocks_01_rough_2k.png"
-dest_files=["res://.godot/imported/brown_mud_rocks_01_rough_2k.png-535b0c286c41c84317b840cecd6cff9b.bptc.ctex"]
+dest_files=["res://.godot/imported/brown_mud_rocks_01_rough_2k.png-535b0c286c41c84317b840cecd6cff9b.bptc.ctex", "res://.godot/imported/brown_mud_rocks_01_rough_2k.png-535b0c286c41c84317b840cecd6cff9b.astc.ctex"]
 
 [params]
 

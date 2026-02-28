@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://jkrpbjdgd8ad"
 path.bptc="res://.godot/imported/utrim_spaceship_1_ORM.png-2247a109dec5db1d87b84a3b4b1dff37.bptc.ctex"
+path.astc="res://.godot/imported/utrim_spaceship_1_ORM.png-2247a109dec5db1d87b84a3b4b1dff37.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Utrim_SpaceShip/utrim_spaceship_1_ORM.png"
-dest_files=["res://.godot/imported/utrim_spaceship_1_ORM.png-2247a109dec5db1d87b84a3b4b1dff37.bptc.ctex"]
+dest_files=["res://.godot/imported/utrim_spaceship_1_ORM.png-2247a109dec5db1d87b84a3b4b1dff37.bptc.ctex", "res://.godot/imported/utrim_spaceship_1_ORM.png-2247a109dec5db1d87b84a3b4b1dff37.astc.ctex"]
 
 [params]
 

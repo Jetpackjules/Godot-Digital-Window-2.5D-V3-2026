@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://8mnhwwfmhw70"
 path.s3tc="res://.godot/imported/full_gameready_city_buildings_iv_hongkong_34.png-b502aad0f918ef6125b29b7048cef4f5.s3tc.ctex"
+path.etc2="res://.godot/imported/full_gameready_city_buildings_iv_hongkong_34.png-b502aad0f918ef6125b29b7048cef4f5.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://Views/Realistic City 1/full_gameready_city_buildings_iv_hongkong_34.png"
-dest_files=["res://.godot/imported/full_gameready_city_buildings_iv_hongkong_34.png-b502aad0f918ef6125b29b7048cef4f5.s3tc.ctex"]
+dest_files=["res://.godot/imported/full_gameready_city_buildings_iv_hongkong_34.png-b502aad0f918ef6125b29b7048cef4f5.s3tc.ctex", "res://.godot/imported/full_gameready_city_buildings_iv_hongkong_34.png-b502aad0f918ef6125b29b7048cef4f5.etc2.ctex"]
 
 [params]
 

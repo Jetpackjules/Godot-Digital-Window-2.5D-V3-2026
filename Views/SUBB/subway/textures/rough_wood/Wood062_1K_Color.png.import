@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dtn6nmcixksgs"
 path.bptc="res://.godot/imported/Wood062_1K_Color.png-34a82e1c5498bdf22c520633a44fdfd9.bptc.ctex"
+path.astc="res://.godot/imported/Wood062_1K_Color.png-34a82e1c5498bdf22c520633a44fdfd9.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/rough_wood/Wood062_1K_Color.png"
-dest_files=["res://.godot/imported/Wood062_1K_Color.png-34a82e1c5498bdf22c520633a44fdfd9.bptc.ctex"]
+dest_files=["res://.godot/imported/Wood062_1K_Color.png-34a82e1c5498bdf22c520633a44fdfd9.bptc.ctex", "res://.godot/imported/Wood062_1K_Color.png-34a82e1c5498bdf22c520633a44fdfd9.astc.ctex"]
 
 [params]
 

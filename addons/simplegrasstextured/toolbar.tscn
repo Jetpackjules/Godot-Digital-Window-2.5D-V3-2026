@@ -1,6 +1,6 @@
-[gd_scene load_steps=10 format=3 uid="uid://dsim5cbhc6kwm"]
+[gd_scene format=3 uid="uid://dsim5cbhc6kwm"]
 
-[ext_resource type="Script" path="res://addons/simplegrasstextured/toolbar.gd" id="1_aa1o6"]
+[ext_resource type="Script" uid="uid://dorv7r6dsw8b4" path="res://addons/simplegrasstextured/toolbar.gd" id="1_aa1o6"]
 [ext_resource type="Texture2D" uid="uid://bsmcpupaj02v8" path="res://addons/simplegrasstextured/icon.svg" id="2_2ni6b"]
 [ext_resource type="Texture2D" uid="uid://clm6vd2es8xm7" path="res://addons/simplegrasstextured/images/icon_radius.svg" id="3_sf2nv"]
 [ext_resource type="Texture2D" uid="uid://tqiak77omdnr" path="res://addons/simplegrasstextured/images/icon_density.svg" id="4_4c5wp"]

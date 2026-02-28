@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bmwwajst0wnnq"
 path.s3tc="res://.godot/imported/Smoke30Frames_0.png-7a6e41b146c5f11b196d637c778f516d.s3tc.ctex"
+path.etc2="res://.godot/imported/Smoke30Frames_0.png-7a6e41b146c5f11b196d637c778f516d.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/barrel/textures/fire/Smoke30Frames_0.png"
-dest_files=["res://.godot/imported/Smoke30Frames_0.png-7a6e41b146c5f11b196d637c778f516d.s3tc.ctex"]
+dest_files=["res://.godot/imported/Smoke30Frames_0.png-7a6e41b146c5f11b196d637c778f516d.s3tc.ctex", "res://.godot/imported/Smoke30Frames_0.png-7a6e41b146c5f11b196d637c778f516d.etc2.ctex"]
 
 [params]
 

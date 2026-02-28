@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://c6r6pnmsu1ugh"
 path.s3tc="res://.godot/imported/Grunge.png-9cf7c9ee802cc17f2927b7d00be14414.s3tc.ctex"
+path.etc2="res://.godot/imported/Grunge.png-9cf7c9ee802cc17f2927b7d00be14414.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Misc/Grunge.png"
-dest_files=["res://.godot/imported/Grunge.png-9cf7c9ee802cc17f2927b7d00be14414.s3tc.ctex"]
+dest_files=["res://.godot/imported/Grunge.png-9cf7c9ee802cc17f2927b7d00be14414.s3tc.ctex", "res://.godot/imported/Grunge.png-9cf7c9ee802cc17f2927b7d00be14414.etc2.ctex"]
 
 [params]
 

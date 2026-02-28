@@ -332,6 +332,7 @@ surface_material_override/0 = SubResource("StandardMaterial3D_7plhq")
 
 [node name="GPUParticles3D" type="GPUParticles3D" parent="." unique_id=1779743107]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.60853, 6.40538, 0)
+visible = false
 material_override = SubResource("StandardMaterial3D_jwrkb")
 cast_shadow = 0
 amount = 3000
@@ -1247,6 +1248,7 @@ transform = Transform3D(1.31134e-07, 0, -1, 0, 1, 0, 1, 0, 1.31134e-07, 8.95348,
 transform = Transform3D(1.31134e-07, 0, -1, 0, 1, 0, 1, 0, 1.31134e-07, 8.95348, 4.61402, 38.2974)
 
 [node name="soft_bodies" type="Node3D" parent="." unique_id=1372398227]
+visible = false
 
 [node name="tunnel_door" type="SoftBody3D" parent="soft_bodies" unique_id=2140795174]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.9722, 2.87265, 48.5152)

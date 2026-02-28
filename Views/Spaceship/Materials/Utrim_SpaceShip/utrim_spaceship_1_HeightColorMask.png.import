@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cfy4x0c5o6ajh"
 path.bptc="res://.godot/imported/utrim_spaceship_1_HeightColorMask.png-3bf3d32a6ccfc53a3761694f68223260.bptc.ctex"
+path.astc="res://.godot/imported/utrim_spaceship_1_HeightColorMask.png-3bf3d32a6ccfc53a3761694f68223260.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Utrim_SpaceShip/utrim_spaceship_1_HeightColorMask.png"
-dest_files=["res://.godot/imported/utrim_spaceship_1_HeightColorMask.png-3bf3d32a6ccfc53a3761694f68223260.bptc.ctex"]
+dest_files=["res://.godot/imported/utrim_spaceship_1_HeightColorMask.png-3bf3d32a6ccfc53a3761694f68223260.bptc.ctex", "res://.godot/imported/utrim_spaceship_1_HeightColorMask.png-3bf3d32a6ccfc53a3761694f68223260.astc.ctex"]
 
 [params]
 

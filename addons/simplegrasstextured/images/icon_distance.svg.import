@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://clm6vd2es8xm7"
-path="res://.godot/imported/icon_radius.svg-6015afc3f6910b511c5c843a9b5080a3.ctex"
+uid="uid://d28dlfkm62t6e"
+path="res://.godot/imported/icon_distance.svg-6f60df3e00656181a46cdec0eba1538f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Views/SUBB/addons/simplegrasstextured/images/icon_radius.svg"
-dest_files=["res://.godot/imported/icon_radius.svg-6015afc3f6910b511c5c843a9b5080a3.ctex"]
+source_file="res://addons/simplegrasstextured/images/icon_distance.svg"
+dest_files=["res://.godot/imported/icon_distance.svg-6f60df3e00656181a46cdec0eba1538f.ctex"]
 
 [params]
 

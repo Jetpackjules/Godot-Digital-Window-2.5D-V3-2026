@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://b2yfn5flogn85"
 path.s3tc="res://.godot/imported/forest_leaves_03_nor_gl_1k.jpg-f74e9688e92a1b0144479af119e5133c.s3tc.ctex"
+path.etc2="res://.godot/imported/forest_leaves_03_nor_gl_1k.jpg-f74e9688e92a1b0144479af119e5133c.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/Spaceship/Materials/Outside/forest_leaves_03_nor_gl_1k.jpg"
-dest_files=["res://.godot/imported/forest_leaves_03_nor_gl_1k.jpg-f74e9688e92a1b0144479af119e5133c.s3tc.ctex"]
+dest_files=["res://.godot/imported/forest_leaves_03_nor_gl_1k.jpg-f74e9688e92a1b0144479af119e5133c.s3tc.ctex", "res://.godot/imported/forest_leaves_03_nor_gl_1k.jpg-f74e9688e92a1b0144479af119e5133c.etc2.ctex"]
 
 [params]
 

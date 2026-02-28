@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cijsjb2cdspo8"
 path.bptc="res://.godot/imported/concrete_wall_006_rough_2k.png-0dfbad9f6a653488f0a5f3479c6238a9.bptc.ctex"
+path.astc="res://.godot/imported/concrete_wall_006_rough_2k.png-0dfbad9f6a653488f0a5f3479c6238a9.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/old_concrete/concrete_wall_006_rough_2k.png"
-dest_files=["res://.godot/imported/concrete_wall_006_rough_2k.png-0dfbad9f6a653488f0a5f3479c6238a9.bptc.ctex"]
+dest_files=["res://.godot/imported/concrete_wall_006_rough_2k.png-0dfbad9f6a653488f0a5f3479c6238a9.bptc.ctex", "res://.godot/imported/concrete_wall_006_rough_2k.png-0dfbad9f6a653488f0a5f3479c6238a9.astc.ctex"]
 
 [params]
 

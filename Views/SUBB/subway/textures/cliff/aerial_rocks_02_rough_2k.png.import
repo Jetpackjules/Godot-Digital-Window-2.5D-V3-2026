@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://3rc7fob8f31h"
 path.bptc="res://.godot/imported/aerial_rocks_02_rough_2k.png-373803cbbad2c7c084c136674555c65f.bptc.ctex"
+path.astc="res://.godot/imported/aerial_rocks_02_rough_2k.png-373803cbbad2c7c084c136674555c65f.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/cliff/aerial_rocks_02_rough_2k.png"
-dest_files=["res://.godot/imported/aerial_rocks_02_rough_2k.png-373803cbbad2c7c084c136674555c65f.bptc.ctex"]
+dest_files=["res://.godot/imported/aerial_rocks_02_rough_2k.png-373803cbbad2c7c084c136674555c65f.bptc.ctex", "res://.godot/imported/aerial_rocks_02_rough_2k.png-373803cbbad2c7c084c136674555c65f.astc.ctex"]
 
 [params]
 

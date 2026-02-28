@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://csaquumuxocxp"
 path.bptc="res://.godot/imported/Rope001_1K_Roughness.png-de97f6c54fd92ee63adbbfa0facb3eb9.bptc.ctex"
+path.astc="res://.godot/imported/Rope001_1K_Roughness.png-de97f6c54fd92ee63adbbfa0facb3eb9.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/rope/Rope001_1K_Roughness.png"
-dest_files=["res://.godot/imported/Rope001_1K_Roughness.png-de97f6c54fd92ee63adbbfa0facb3eb9.bptc.ctex"]
+dest_files=["res://.godot/imported/Rope001_1K_Roughness.png-de97f6c54fd92ee63adbbfa0facb3eb9.bptc.ctex", "res://.godot/imported/Rope001_1K_Roughness.png-de97f6c54fd92ee63adbbfa0facb3eb9.astc.ctex"]
 
 [params]
 

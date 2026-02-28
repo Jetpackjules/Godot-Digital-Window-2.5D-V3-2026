@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bdtsndtvgqr8v"
 path.bptc="res://.godot/imported/trashcan_DefaultMaterial_BaseColor.png-d7f96c1dc02e29c80484f100f9c1a78e.bptc.ctex"
+path.astc="res://.godot/imported/trashcan_DefaultMaterial_BaseColor.png-d7f96c1dc02e29c80484f100f9c1a78e.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/trash_can/textures/trashcan_DefaultMaterial_BaseColor.png"
-dest_files=["res://.godot/imported/trashcan_DefaultMaterial_BaseColor.png-d7f96c1dc02e29c80484f100f9c1a78e.bptc.ctex"]
+dest_files=["res://.godot/imported/trashcan_DefaultMaterial_BaseColor.png-d7f96c1dc02e29c80484f100f9c1a78e.bptc.ctex", "res://.godot/imported/trashcan_DefaultMaterial_BaseColor.png-d7f96c1dc02e29c80484f100f9c1a78e.astc.ctex"]
 
 [params]
 

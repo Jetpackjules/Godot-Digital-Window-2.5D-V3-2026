@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dcf8kw4180dj6"
 path.s3tc="res://.godot/imported/barrel-convcol_roughness.png-8cb6ddb377e6c4aed53d4dbd675326a4.s3tc.ctex"
+path.etc2="res://.godot/imported/barrel-convcol_roughness.png-8cb6ddb377e6c4aed53d4dbd675326a4.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/barrel/textures/barrel-convcol_roughness.png"
-dest_files=["res://.godot/imported/barrel-convcol_roughness.png-8cb6ddb377e6c4aed53d4dbd675326a4.s3tc.ctex"]
+dest_files=["res://.godot/imported/barrel-convcol_roughness.png-8cb6ddb377e6c4aed53d4dbd675326a4.s3tc.ctex", "res://.godot/imported/barrel-convcol_roughness.png-8cb6ddb377e6c4aed53d4dbd675326a4.etc2.ctex"]
 
 [params]
 

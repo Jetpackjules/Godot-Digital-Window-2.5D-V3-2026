@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bifx118qyugnm"
 path.s3tc="res://.godot/imported/cinder_blocks_normal.png-1b78a938b95ea5198ede8473c9fc41dc.s3tc.ctex"
+path.etc2="res://.godot/imported/cinder_blocks_normal.png-1b78a938b95ea5198ede8473c9fc41dc.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/cinder_blocks/textures/cinder_blocks_normal.png"
-dest_files=["res://.godot/imported/cinder_blocks_normal.png-1b78a938b95ea5198ede8473c9fc41dc.s3tc.ctex"]
+dest_files=["res://.godot/imported/cinder_blocks_normal.png-1b78a938b95ea5198ede8473c9fc41dc.s3tc.ctex", "res://.godot/imported/cinder_blocks_normal.png-1b78a938b95ea5198ede8473c9fc41dc.etc2.ctex"]
 
 [params]
 

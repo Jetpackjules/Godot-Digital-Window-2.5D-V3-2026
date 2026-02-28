@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cgtbmq0rmd74a"
 path.s3tc="res://.godot/imported/Ground023_2K_Color.png-d5ebd97908b6b976543ec0318bbf8e71.s3tc.ctex"
+path.etc2="res://.godot/imported/Ground023_2K_Color.png-d5ebd97908b6b976543ec0318bbf8e71.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/dirt_chunks/textures/Ground023_2K_Color.png"
-dest_files=["res://.godot/imported/Ground023_2K_Color.png-d5ebd97908b6b976543ec0318bbf8e71.s3tc.ctex"]
+dest_files=["res://.godot/imported/Ground023_2K_Color.png-d5ebd97908b6b976543ec0318bbf8e71.s3tc.ctex", "res://.godot/imported/Ground023_2K_Color.png-d5ebd97908b6b976543ec0318bbf8e71.etc2.ctex"]
 
 [params]
 

@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://j4124illraho"
 path.bptc="res://.godot/imported/Tiles085_1K_NormalGL.png-16bd2b599da63759d70c56c404d21fb6.bptc.ctex"
+path.astc="res://.godot/imported/Tiles085_1K_NormalGL.png-16bd2b599da63759d70c56c404d21fb6.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/small_tiles/Tiles085_1K_NormalGL.png"
-dest_files=["res://.godot/imported/Tiles085_1K_NormalGL.png-16bd2b599da63759d70c56c404d21fb6.bptc.ctex"]
+dest_files=["res://.godot/imported/Tiles085_1K_NormalGL.png-16bd2b599da63759d70c56c404d21fb6.bptc.ctex", "res://.godot/imported/Tiles085_1K_NormalGL.png-16bd2b599da63759d70c56c404d21fb6.astc.ctex"]
 
 [params]
 

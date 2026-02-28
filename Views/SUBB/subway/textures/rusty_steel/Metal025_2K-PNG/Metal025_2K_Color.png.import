@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dij7xhhyd3hyc"
 path.bptc="res://.godot/imported/Metal025_2K_Color.png-c0d0066a953d50f14d6a623879e5dfe6.bptc.ctex"
+path.astc="res://.godot/imported/Metal025_2K_Color.png-c0d0066a953d50f14d6a623879e5dfe6.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/rusty_steel/Metal025_2K-PNG/Metal025_2K_Color.png"
-dest_files=["res://.godot/imported/Metal025_2K_Color.png-c0d0066a953d50f14d6a623879e5dfe6.bptc.ctex"]
+dest_files=["res://.godot/imported/Metal025_2K_Color.png-c0d0066a953d50f14d6a623879e5dfe6.bptc.ctex", "res://.godot/imported/Metal025_2K_Color.png-c0d0066a953d50f14d6a623879e5dfe6.astc.ctex"]
 
 [params]
 

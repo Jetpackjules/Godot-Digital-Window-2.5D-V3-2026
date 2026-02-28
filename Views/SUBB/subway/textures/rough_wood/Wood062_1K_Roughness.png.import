@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cd0muvdbfawm3"
 path.bptc="res://.godot/imported/Wood062_1K_Roughness.png-e27f461026361bbc70ac002d0d86567a.bptc.ctex"
+path.astc="res://.godot/imported/Wood062_1K_Roughness.png-e27f461026361bbc70ac002d0d86567a.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/rough_wood/Wood062_1K_Roughness.png"
-dest_files=["res://.godot/imported/Wood062_1K_Roughness.png-e27f461026361bbc70ac002d0d86567a.bptc.ctex"]
+dest_files=["res://.godot/imported/Wood062_1K_Roughness.png-e27f461026361bbc70ac002d0d86567a.bptc.ctex", "res://.godot/imported/Wood062_1K_Roughness.png-e27f461026361bbc70ac002d0d86567a.astc.ctex"]
 
 [params]
 

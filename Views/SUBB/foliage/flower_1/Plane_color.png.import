@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dtploy0h2os71"
 path.s3tc="res://.godot/imported/Plane_color.png-844798374d52f2bd929da8b6cd4cb662.s3tc.ctex"
+path.etc2="res://.godot/imported/Plane_color.png-844798374d52f2bd929da8b6cd4cb662.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/foliage/flower_1/Plane_color.png"
-dest_files=["res://.godot/imported/Plane_color.png-844798374d52f2bd929da8b6cd4cb662.s3tc.ctex"]
+dest_files=["res://.godot/imported/Plane_color.png-844798374d52f2bd929da8b6cd4cb662.s3tc.ctex", "res://.godot/imported/Plane_color.png-844798374d52f2bd929da8b6cd4cb662.etc2.ctex"]
 
 [params]
 

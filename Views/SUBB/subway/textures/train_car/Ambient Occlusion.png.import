@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bu1begrx6ct7n"
 path.bptc="res://.godot/imported/Ambient Occlusion.png-254561cbad59554ab6214e158db4bf6a.bptc.ctex"
+path.astc="res://.godot/imported/Ambient Occlusion.png-254561cbad59554ab6214e158db4bf6a.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/train_car/Ambient Occlusion.png"
-dest_files=["res://.godot/imported/Ambient Occlusion.png-254561cbad59554ab6214e158db4bf6a.bptc.ctex"]
+dest_files=["res://.godot/imported/Ambient Occlusion.png-254561cbad59554ab6214e158db4bf6a.bptc.ctex", "res://.godot/imported/Ambient Occlusion.png-254561cbad59554ab6214e158db4bf6a.astc.ctex"]
 
 [params]
 

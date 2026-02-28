@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dcjd1spppvwi"
 path.s3tc="res://.godot/imported/graffiti_wall2.png-1000a1ab3507331cccfda42721804e47.s3tc.ctex"
+path.etc2="res://.godot/imported/graffiti_wall2.png-1000a1ab3507331cccfda42721804e47.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/props/decals/graffiti_wall2.png"
-dest_files=["res://.godot/imported/graffiti_wall2.png-1000a1ab3507331cccfda42721804e47.s3tc.ctex"]
+dest_files=["res://.godot/imported/graffiti_wall2.png-1000a1ab3507331cccfda42721804e47.s3tc.ctex", "res://.godot/imported/graffiti_wall2.png-1000a1ab3507331cccfda42721804e47.etc2.ctex"]
 
 [params]
 

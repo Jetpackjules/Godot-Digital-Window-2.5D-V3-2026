@@ -4,8 +4,9 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://brxsja2gk3dko"
 path.s3tc="res://.godot/imported/low_poly_city_1.png-afa94ef24fea22e95c94db714849e68f.s3tc.ctex"
+path.etc2="res://.godot/imported/low_poly_city_1.png-afa94ef24fea22e95c94db714849e68f.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 generator_parameters={
@@ -15,7 +16,7 @@ generator_parameters={
 [deps]
 
 source_file="res://Views/Low Poly City/low_poly_city_1.png"
-dest_files=["res://.godot/imported/low_poly_city_1.png-afa94ef24fea22e95c94db714849e68f.s3tc.ctex"]
+dest_files=["res://.godot/imported/low_poly_city_1.png-afa94ef24fea22e95c94db714849e68f.s3tc.ctex", "res://.godot/imported/low_poly_city_1.png-afa94ef24fea22e95c94db714849e68f.etc2.ctex"]
 
 [params]
 

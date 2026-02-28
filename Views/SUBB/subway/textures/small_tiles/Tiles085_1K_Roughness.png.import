@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://b7khpdlb5xhr6"
 path.bptc="res://.godot/imported/Tiles085_1K_Roughness.png-fd62e6dcff7029c02c26d0158b19122b.bptc.ctex"
+path.astc="res://.godot/imported/Tiles085_1K_Roughness.png-fd62e6dcff7029c02c26d0158b19122b.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/small_tiles/Tiles085_1K_Roughness.png"
-dest_files=["res://.godot/imported/Tiles085_1K_Roughness.png-fd62e6dcff7029c02c26d0158b19122b.bptc.ctex"]
+dest_files=["res://.godot/imported/Tiles085_1K_Roughness.png-fd62e6dcff7029c02c26d0158b19122b.bptc.ctex", "res://.godot/imported/Tiles085_1K_Roughness.png-fd62e6dcff7029c02c26d0158b19122b.astc.ctex"]
 
 [params]
 

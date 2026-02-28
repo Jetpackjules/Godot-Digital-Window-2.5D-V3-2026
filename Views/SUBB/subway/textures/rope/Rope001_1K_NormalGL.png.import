@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://b5i3nf2jxirq5"
 path.bptc="res://.godot/imported/Rope001_1K_NormalGL.png-cf1e231daefa09d4373213d1f1f37ba1.bptc.ctex"
+path.astc="res://.godot/imported/Rope001_1K_NormalGL.png-cf1e231daefa09d4373213d1f1f37ba1.astc.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://Views/SUBB/subway/textures/rope/Rope001_1K_NormalGL.png"
-dest_files=["res://.godot/imported/Rope001_1K_NormalGL.png-cf1e231daefa09d4373213d1f1f37ba1.bptc.ctex"]
+dest_files=["res://.godot/imported/Rope001_1K_NormalGL.png-cf1e231daefa09d4373213d1f1f37ba1.bptc.ctex", "res://.godot/imported/Rope001_1K_NormalGL.png-cf1e231daefa09d4373213d1f1f37ba1.astc.ctex"]
 
 [params]
 

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://35qfdmr0xvq3"
-path="res://.godot/imported/pointer.png-1c0095e3b06ed47ca371512f8b32f2d7.ctex"
+uid="uid://tqiak77omdnr"
+path="res://.godot/imported/icon_density.svg-7b089b052c26d4ee2c77b8ad63ad16e0.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Views/SUBB/addons/simplegrasstextured/images/pointer.png"
-dest_files=["res://.godot/imported/pointer.png-1c0095e3b06ed47ca371512f8b32f2d7.ctex"]
+source_file="res://addons/simplegrasstextured/images/icon_density.svg"
+dest_files=["res://.godot/imported/icon_density.svg-7b089b052c26d4ee2c77b8ad63ad16e0.ctex"]
 
 [params]
 
@@ -38,3 +38,6 @@ process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
 detect_3d/compress_to=1
+svg/scale=1.0
+editor/scale_with_editor_scale=false
+editor/convert_colors_with_editor_theme=false
