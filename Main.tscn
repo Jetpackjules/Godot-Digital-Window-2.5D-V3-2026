@@ -7,8 +7,9 @@
 [ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
+[ext_resource type="PackedScene" uid="uid://delrmijg0sq27" path="res://Views/flat.tscn" id="9_03owx"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
-[ext_resource type="PackedScene" uid="uid://uovrmjl7bkr1" path="res://Views/SUBB/View.tscn" id="10_wkp8b"]
+[ext_resource type="PackedScene" uid="uid://dk1sfjmbix8yc" path="res://Views/test_box.tscn" id="10_wkp8b"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
 size = Vector2(20, 20)
@@ -37,6 +38,10 @@ size = Vector2(0.25, 4.5)
 [sub_resource type="QuadMesh" id="QuadMesh_fos0i"]
 material = SubResource("StandardMaterial3D_r0du0")
 size = Vector2(0.25, 8)
+
+[sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
+flip_faces = true
+size = Vector3(7.111, 4, 4)
 
 [node name="Main" type="Node3D" unique_id=1224428574]
 
@@ -95,12 +100,13 @@ mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
 transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.6245799, 0.77793354, 0.66801006, -0.5503635, 0.500862, -5.7581205, 7.6799498, 2.5738828)
+shadow_enabled = true
+directional_shadow_mode = 0
 
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1472641536]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.35705173, 1.7418168, 1.8543689)
 visible = false
 light_energy = 1.25
-shadow_enabled = true
 
 [node name="Analgyph Script" type="Node" parent="." unique_id=503136632 node_paths=PackedStringArray("base_camera")]
 script = ExtResource("5_fos0i")
@@ -120,16 +126,23 @@ player_node = NodePath("../Player")
 window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
 show_debug_view = true
+port = 4243
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
 script = ExtResource("8_trn2v")
-physical_width_meters = 0.5866574940385341
-physical_height_meters = 0.3299948403966754
+screen_diagonal_inches = 10.0
+physical_width_meters = 0.22138018642963553
+physical_height_meters = 0.12452635486666998
 virtual_window_height = 4.5
 
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
-current_view_name = "SUBB"
+current_view_name = "test_box.tscn"
 
-[node name="subway" type="Node3D" parent="View" unique_id=571893588 instance=ExtResource("10_wkp8b")]
+[node name="Flat2" parent="View" unique_id=783687752 instance=ExtResource("9_03owx")]
+visible = false
+
+[node name="Box" type="MeshInstance3D" parent="View" unique_id=666923875 instance=ExtResource("10_wkp8b")]
+transform = Transform3D(1.125, 0, 0, 0, 1.125, 0, 0, 0, 1.125, 0, 0, -2.25)
+mesh = SubResource("BoxMesh_glv2v")

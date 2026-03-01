@@ -1,11 +1,11 @@
-[gd_scene load_steps=23 format=3 uid="uid://c1dih214ogm2k"]
+[gd_scene format=3 uid="uid://c1dih214ogm2k"]
 
-[ext_resource type="PackedScene" uid="uid://bvcuhiuj4acbu" path="res://props/barrel/barrel.blend" id="1_uj8ef"]
-[ext_resource type="Script" path="res://props/barrel/barrel.gd" id="2_55n3j"]
-[ext_resource type="Texture2D" uid="uid://bmwwajst0wnnq" path="res://props/barrel/textures/fire/Smoke30Frames_0.png" id="2_s3tmb"]
-[ext_resource type="Shader" path="res://props/barrel/heat_wave.gdshader" id="3_763pt"]
-[ext_resource type="AudioStream" uid="uid://gc6uyh8d47iq" path="res://props/barrel/fire_sfx.mp3" id="4_avaux"]
-[ext_resource type="Texture2D" uid="uid://cqccmgb2dd0m5" path="res://subway/particles/flare_01.png" id="4_ux4h6"]
+[ext_resource type="PackedScene" uid="uid://bvcuhiuj4acbu" path="res://Views/SUBB/props/barrel/barrel.blend" id="1_uj8ef"]
+[ext_resource type="Script" uid="uid://bk03s3mnj133r" path="res://Views/SUBB/props/barrel/barrel.gd" id="2_55n3j"]
+[ext_resource type="Texture2D" uid="uid://bmwwajst0wnnq" path="res://Views/SUBB/props/barrel/textures/fire/Smoke30Frames_0.png" id="2_s3tmb"]
+[ext_resource type="Shader" path="res://Views/SUBB/props/barrel/heat_wave.gdshader" id="3_763pt"]
+[ext_resource type="AudioStream" uid="uid://gc6uyh8d47iq" path="res://Views/SUBB/props/barrel/fire_sfx.mp3" id="4_avaux"]
+[ext_resource type="Texture2D" uid="uid://cqccmgb2dd0m5" path="res://Views/SUBB/subway/particles/flare_01.png" id="4_ux4h6"]
 
 [sub_resource type="Gradient" id="Gradient_atpg3"]
 offsets = PackedFloat32Array(0, 0.175, 0.227778, 0.283333, 1)

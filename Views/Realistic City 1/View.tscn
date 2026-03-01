@@ -7,7 +7,7 @@
 [node name="View" type="Node3D" unique_id=1409909609]
 
 [node name="Sketchfab_Scene" parent="." unique_id=195416180 instance=ExtResource("1_spd4w")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.5491085, 0, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.697083, 0.021517277, 0.21187067)
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=517283767]
 environment = ExtResource("2_ku1ww")

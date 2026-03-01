@@ -18,11 +18,11 @@ extends Node
 @export var diagnostics_toggle_key: Key = KEY_R
 
 var udp := PacketPeerUDP.new()
-var port := 4242
+@export var port := 4242
 var _face_detected: bool = false
 var _raw_x: float = 0.0
 var _raw_y: float = 0.0
-var _raw_z: float = 60.0 # Default resting distance of 60cm if OpenTrack hasn't connected yet!
+var _raw_z: float = 0.0
 
 var debug_canvas: CanvasLayer
 var debug_cam: Camera3D
@@ -110,18 +110,8 @@ func _process(_delta):
 			_raw_z = packet.decode_double(16)
 			has_new_data = true
 			
-	if has_new_data and not _face_detected:
-		_face_detected = true
-		if player_node:
-			# Hide the player's physical capsule body so it doesn't block the screen, 
-			# but keep the Player node itself visible so its physics and children continue ticking!
-			var mesh = player_node.get_node_or_null("MeshInstance3D")
-			if mesh:
-				mesh.visible = false
-				
-	# Always apply tracking data every frame, even if we didn't receive a UDP packet
-	# this frame, so the camera doesn't get left behind when moving via WASD
-	_apply_tracking_data()
+	if has_new_data:
+		_apply_tracking_data()
 
 	if debug_canvas and debug_canvas.visible:
 		if camera_node:
@@ -153,6 +143,16 @@ func _process(_delta):
 			]
 
 func _apply_tracking_data():
+	# The first time we successfully get a tracking packet:
+	if not _face_detected:
+		_face_detected = true
+		if player_node:
+			# Hide the player's physical capsule body so it doesn't block the screen, 
+			# but keep the Player node itself visible so its physics and children continue ticking!
+			var mesh = player_node.get_node_or_null("MeshInstance3D")
+			if mesh:
+				mesh.visible = false
+	
 	if camera_node and window_center and screen_scaler:
 		var mult = screen_scaler.tracking_scale_multiplier
 		
@@ -160,11 +160,13 @@ func _apply_tracking_data():
 		var y_dir = -1.0 if invert_y else 1.0
 		var z_dir = -1.0 if invert_z else 1.0
 		
-		# Convert real world movement to relative Godot movement using the multiplier
+		# Convert real world movement to relative Godot movement using the multiplier.
+		# Adding an implicit 0.5m (50cm) base Z-depth offset, assuming you recenter OpenTrack
+		# while sitting approx 50cm back from your monitor screen.
 		var scaled_offset = Vector3(
 			(_raw_x * x_dir) * sensitivity.x * mult,
 			(_raw_y * y_dir) * sensitivity.y * mult,
-			(_raw_z * z_dir) * sensitivity.z * mult
+			((_raw_z * z_dir) * sensitivity.z + 0.5) * mult
 		)
 		
 		# The Window Center sits perfectly at the origin of the Player
