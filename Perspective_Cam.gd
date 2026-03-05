@@ -38,14 +38,11 @@ func _process(_delta: float) -> void:
 	var w_local: Vector3 = to_local(_window_center.global_position)
 
 	# 2. Handle Field of View (Z-Axis distance from target eye to window plane)
-	var target_z_dist: float = max(0.001, abs(t_local.z - w_local.z))
+	var target_z_dist: float = max(0.1, abs(t_local.z - w_local.z))
 	size = virtual_window_height * (near / target_z_dist)
 
 	# 3. Handle Frustum Shear / Offset (X/Y-Axis movement)
-	# Godot's forward axis is -Z, so we negate w_local.z for positive depth
-	# We also use absolute value so the projection matrix doesn't flip entirely inside out
-	# if the player flies "past" the window frame into the virtual scene!
-	var window_depth: float = max(0.001, abs(-w_local.z)) 
+	var window_depth: float = max(0.1, abs(-w_local.z)) 
 	
 	# The shift is the local X/Y difference between the Window Center and the Target Eye
 	var raw_shift: Vector2 = Vector2(w_local.x - t_local.x, w_local.y - t_local.y)

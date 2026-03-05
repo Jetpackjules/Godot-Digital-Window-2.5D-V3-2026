@@ -65,9 +65,5 @@ ui_down={
 
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
-lights_and_shadows/directional_shadow/size=8192
-lights_and_shadows/directional_shadow/soft_shadow_filter_quality=5
-lights_and_shadows/positional_shadow/soft_shadow_filter_quality=5
-anti_aliasing/quality/msaa_2d=3
-anti_aliasing/quality/msaa_3d=3
-anti_aliasing/quality/screen_space_aa=2
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
+lights_and_shadows/positional_shadow/soft_shadow_filter_quality=4
