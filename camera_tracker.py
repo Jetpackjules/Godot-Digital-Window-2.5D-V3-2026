@@ -3,6 +3,76 @@ import cv2.aruco as aruco
 import numpy as np
 import json
 import os
+import time
+
+def make_detector_params():
+    params = cv2.aruco.DetectorParameters()
+    params.adaptiveThreshWinSizeMin = 3
+    params.adaptiveThreshWinSizeMax = 45
+    params.adaptiveThreshWinSizeStep = 4
+    params.minMarkerPerimeterRate = 0.01
+    params.maxMarkerPerimeterRate = 6.0
+    params.minDistanceToBorder = 2
+    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    params.cornerRefinementWinSize = 5
+    params.cornerRefinementMaxIterations = 50
+    params.cornerRefinementMinAccuracy = 0.01
+    if hasattr(params, "detectInvertedMarker"):
+        params.detectInvertedMarker = True
+    return params
+
+def detect_markers_robust(gray, detector, dictionary, params):
+    variants = [gray, cv2.equalizeHist(gray)]
+    best_corners = []
+    best_ids = None
+    best_count = -1
+    for variant in variants:
+        corners, ids, _ = detector.detectMarkers(variant)
+        count = 0 if ids is None else int(len(ids))
+        if count > best_count:
+            best_count = count
+            best_corners = corners
+            best_ids = ids
+        if count > 0:
+            continue
+
+        corners2, ids2, _ = cv2.aruco.detectMarkers(variant, dictionary, parameters=params)
+        count2 = 0 if ids2 is None else int(len(ids2))
+        if count2 > best_count:
+            best_count = count2
+            best_corners = corners2
+            best_ids = ids2
+    return best_corners, best_ids
+
+def frame_signature(charuco_corners, image_size):
+    width, height = image_size
+    pts = charuco_corners.reshape(-1, 2).astype(np.float32)
+
+    cx, cy = pts.mean(axis=0)
+    min_xy = pts.min(axis=0)
+    max_xy = pts.max(axis=0)
+    box_w = max(1.0, float(max_xy[0] - min_xy[0]))
+    box_h = max(1.0, float(max_xy[1] - min_xy[1]))
+    area_norm = (box_w * box_h) / float(width * height)
+
+    centered = pts - np.array([[cx, cy]], dtype=np.float32)
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    principal = vt[0]
+    angle = float(np.arctan2(principal[1], principal[0]))
+
+    return np.array([
+        float(cx / width),
+        float(cy / height),
+        float(np.sqrt(max(0.0, area_norm))),
+        float(np.sin(angle)),
+        float(np.cos(angle)),
+    ], dtype=np.float32)
+
+def is_diverse(sig, accepted_sigs, threshold):
+    if not accepted_sigs:
+        return True
+    dmin = min(float(np.linalg.norm(sig - s)) for s in accepted_sigs)
+    return dmin >= threshold
 
 def create_transform_matrix(rvec, tvec):
     rmat, _ = cv2.Rodrigues(rvec)
@@ -32,8 +102,30 @@ def main():
 
     # Load the 4x4_50 dictionary we used in Godot
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
-    parameters = aruco.DetectorParameters()
+    parameters = make_detector_params() # Use the robust parameters!
     detector = aruco.ArucoDetector(aruco_dict, parameters)
+    
+    # --- CHARUCO CALIBRATION SETUP ---
+    charuco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+    charuco_board = aruco.CharucoBoard((8, 6), 0.0285, 0.021, charuco_dict)
+    charuco_detector = aruco.ArucoDetector(charuco_dict, parameters)
+    
+    camera_matrix = None
+    dist_coeffs = None
+    if os.path.exists("camera_calibration.json"):
+        try:
+            with open("camera_calibration.json", "r") as f:
+                calib = json.load(f)
+                camera_matrix = np.array(calib["camera_matrix"], dtype=np.float32)
+                dist_coeffs = np.array(calib["dist_coeffs"], dtype=np.float32)
+            print(">>> Successfully loaded camera_calibration.json! Perfect Intrinsics applied! <<<")
+        except Exception as e:
+            print("Failed to load calibration:", e)
+            
+    all_charuco_corners = []
+    all_charuco_ids = []
+    accepted_sigs = []
+    last_calib_time = time.time()
     
     # Constellation Definitions
     # TL: 40, TR: 41, BL: 42, BR: 43
@@ -43,22 +135,56 @@ def main():
     global_origin_id = None
     # Dictionary mapping screen_id (int) -> {"transform": 4x4 ndarray, "width": float, "height": float}
     global_transforms = {}
+    screen_trackers = {} # c_id -> {"rvec": rvec, "tvec": tvec}
+    
+    # Temporal Smoothing
+    smoothed_T_cam = None
 
     view_pitch = 45.0
     view_yaw = -45.0
     view_dist = 150.0
+    view_pan_x = 0.0
+    view_pan_y = 0.0
     mouse_is_down = False
+    pan_is_down = False
     last_mouse_x = 0
     last_mouse_y = 0
+    last_pan_x = 0
+    last_pan_y = 0
+    rendered_screen_centers = []
 
     def mouse_callback(event, x, y, flags, param):
-        nonlocal view_pitch, view_yaw, mouse_is_down, last_mouse_x, last_mouse_y
+        nonlocal view_pitch, view_yaw, view_dist, view_pan_x, view_pan_y, mouse_is_down, pan_is_down, last_mouse_x, last_mouse_y, last_pan_x, last_pan_y, global_origin_id
+        global global_transforms
         if event == cv2.EVENT_LBUTTONDOWN:
             mouse_is_down = True
             last_mouse_x = x
             last_mouse_y = y
         elif event == cv2.EVENT_LBUTTONUP:
             mouse_is_down = False
+        elif event == cv2.EVENT_MBUTTONDOWN:
+            pan_is_down = True
+            last_pan_x = x
+            last_pan_y = y
+        elif event == cv2.EVENT_MBUTTONUP:
+            pan_is_down = False
+        elif event == cv2.EVENT_MOUSEWHEEL:
+            if flags > 0:
+                view_dist -= 15.0 # Zoom in
+            else:
+                view_dist += 15.0 # Zoom out
+            view_dist = max(5.0, view_dist)
+        elif event == cv2.EVENT_RBUTTONDOWN or event == cv2.EVENT_LBUTTONDBLCLK:
+            for s_id, pt in rendered_screen_centers:
+                if (x - pt[0])**2 + (y - pt[1])**2 < 40**2:
+                    if s_id in global_transforms:
+                        print(f"[*] USER DELETED Screen {s_id} from Spatial Map!")
+                        del global_transforms[s_id]
+                        if s_id == global_origin_id:
+                            print("[!] Global Origin Deleted! Wiping entire Spatial Map!")
+                            global_origin_id = None
+                            global_transforms = {}
+                        break
         elif event == cv2.EVENT_MOUSEMOVE:
             if mouse_is_down:
                 dx = x - last_mouse_x
@@ -68,8 +194,17 @@ def main():
                 view_pitch = max(-89.0, min(89.0, view_pitch))
                 last_mouse_x = x
                 last_mouse_y = y
+            elif pan_is_down:
+                dx = x - last_pan_x
+                dy = y - last_pan_y
+                pan_scale = view_dist / 600.0 # Scale pan speed relative to zoom level
+                view_pan_x -= dx * pan_scale * 5.0
+                view_pan_y -= dy * pan_scale * 5.0
+                last_pan_x = x
+                last_pan_y = y
 
-    cv2.namedWindow("3D Room Spatial Map")
+    cv2.namedWindow("Multi-Monitor ArUco Constellation Tracker", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("3D Room Spatial Map", cv2.WINDOW_NORMAL)
     cv2.setMouseCallback("3D Room Spatial Map", mouse_callback)
 
     while True:
@@ -77,13 +212,69 @@ def main():
         if not ret:
             break
             
-        # ArUco detection requires grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejected = detector.detectMarkers(gray)
-        
+        # Continuous ChArUco Auto-Calibration
+        if camera_matrix is None:
+            # ArUco detection requires grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            corners, ids, rejected = detector.detectMarkers(gray)
+            
+            cv2.putText(frame, f"CALIBRATING SENSOR: {len(all_charuco_corners)}/20", (30, 50), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3, cv2.LINE_AA)
+            cv2.putText(frame, "Please slowly tilt the ChArUco board!", (30, 90), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+            
+            c_corners, c_ids = detect_markers_robust(gray, charuco_detector, charuco_dict, parameters)
+            if c_ids is not None and len(c_ids) > 6:
+                ret, ch_corners, ch_ids = aruco.interpolateCornersCharuco(c_corners, c_ids, gray, charuco_board)
+                if ret > 12: # Min 12 corners for a robust sample
+                    aruco.drawDetectedCornersCharuco(frame, ch_corners, ch_ids, (0, 0, 255))
+                    
+                    sig = frame_signature(ch_corners, (frame.shape[1], frame.shape[0]))
+                    if time.time() - last_calib_time > 0.5 and len(all_charuco_corners) < 20 and is_diverse(sig, accepted_sigs, 0.14):
+                        all_charuco_corners.append(ch_corners)
+                        all_charuco_ids.append(ch_ids)
+                        accepted_sigs.append(sig)
+                        last_calib_time = time.time()
+                        print(f"[*] Captured ChArUco Calibration Frame {len(all_charuco_corners)}/20!")
+                        
+                        # Briefly flash the screen bright green to indicate a successful capture!
+                        cv2.rectangle(frame, (0,0), (frame.shape[1], frame.shape[0]), (0, 255, 0), 15)
+                        
+                        if len(all_charuco_corners) == 20:
+                            print(">>> RUNNING CHARUCO CAMERA CALIBRATION! PLEASE WAIT... <<<")
+                            cv2.putText(frame, "PROCESSING CALIBRATION...", (30, 150), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 4, cv2.LINE_AA)
+                            cv2.imshow("Multi-Monitor ArUco Constellation Tracker", frame)
+                            cv2.waitKey(1) # Force a tiny frame update so they see the text before it hangs!
+                            
+                            ret_val, temp_cam, temp_dist, _, _ = aruco.calibrateCameraCharuco(all_charuco_corners, all_charuco_ids, charuco_board, gray.shape[::-1], None, None)
+                            camera_matrix = temp_cam
+                            dist_coeffs = temp_dist
+                            
+                            print(f">>> CALIBRATION COMPLETE! RMS Error: {ret_val} <<<")
+                            with open("camera_calibration.json", "w") as f:
+                                json.dump({
+                                    "camera_matrix": camera_matrix.tolist(),
+                                    "dist_coeffs": dist_coeffs.tolist()
+                                }, f, indent=4)
+                                
+                            print("Saved to camera_calibration.json! Perfect Intrinsics locked in!")
+        else:
+            # We have perfect intrinsics! Immediately undistort the raw webcam feed
+            # so the user can visually see the math flattening their curved room!
+            frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
+            
+            # Now run ArUco detection on the mathematically perfect image!
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            corners, ids, rejected = detector.detectMarkers(gray)
+            
         current_frame_screens = []
         
         if ids is not None:
+            # 0. Black out the markers to prevent infinite loops from the webcam seeing the screen!
+            for i in range(len(ids)):
+                cv2.fillPoly(frame, [np.int32(corners[i])], (0, 0, 0))
+                
             # 1. Outline every individual marker found
             aruco.drawDetectedMarkers(frame, corners, ids)
             
@@ -92,90 +283,66 @@ def main():
             # 2. Extract our defined layout markers
             center_ids = [i for i, id_val in enumerate(ids_list) if id_val in range(6)]
             
-            tl_ids = [i for i, id_val in enumerate(ids_list) if id_val == 40]
-            tr_ids = [i for i, id_val in enumerate(ids_list) if id_val == 41]
-            bl_ids = [i for i, id_val in enumerate(ids_list) if id_val == 42]
-            br_ids = [i for i, id_val in enumerate(ids_list) if id_val == 43]
-            
             # 3. Cluster corners to their nearest center ID
             # This allows multiple physical monitors to be tracked simultaneously!
             for c_idx in center_ids:
                 c_id = ids_list[c_idx]
+                
+                base_id = (c_id % 6) * 4 + 10
+                tl_ids = [i for i, id_val in enumerate(ids_list) if id_val == base_id]
+                tr_ids = [i for i, id_val in enumerate(ids_list) if id_val == base_id + 1]
+                bl_ids = [i for i, id_val in enumerate(ids_list) if id_val == base_id + 2]
+                br_ids = [i for i, id_val in enumerate(ids_list) if id_val == base_id + 3]
                 
                 # Get the absolute pixel center of the central ArUco marker
                 c_center = np.mean(corners[c_idx][0], axis=0)
                 # Caluclate the pixel perimeter of the center marker
                 c_perimeter = cv2.arcLength(corners[c_idx][0], True)
                 
-                # Helper function to find the *outermost geometric corner* of a specific marker
-                def get_outermost_point(target_idx_list):
+                # Helper function to extract exact ArUco corners structurally
+                def get_corner_point(target_idx_list, corner_index):
                     if not target_idx_list: return None
-                    best_pt = None
-                    best_marker_center = None
-                    min_dist_to_screen_center = float('inf')
-                    marker_corners = None
                     
-                    # 1. Filter out candidate markers that belong to other screens!
-                    valid_idx_list = []
+                    best_idx = None
+                    min_dist_to_center = float('inf')
+                    
                     for idx in target_idx_list:
                         pt = np.mean(corners[idx][0], axis=0)
                         
-                        # Size Check: Corner markers should be physically identical in size to the center marker
                         pt_perimeter = cv2.arcLength(corners[idx][0], True)
                         if pt_perimeter > c_perimeter * 2.5 or pt_perimeter < c_perimeter * 0.4:
-                            continue # This marker is way too big/small to belong to this screen!
+                            continue 
                             
-                        # Distance Check: Is this corner CLOSER to some other Center ID?
-                        closest_c_dist = float('inf')
-                        closest_c_idx = None
-                        for other_c_idx in center_ids:
-                            other_c = np.mean(corners[other_c_idx][0], axis=0)
-                            d = np.linalg.norm(pt - other_c)
-                            if d < closest_c_dist:
-                                closest_c_dist = d
-                                closest_c_idx = other_c_idx
+                        dist = np.linalg.norm(c_center - pt)
+                        if dist < min_dist_to_center:
+                            min_dist_to_center = dist
+                            best_idx = idx
+
+                    if min_dist_to_center > c_perimeter * 10.0:
+                        return None
+                    
+                    if best_idx is not None:
+                        marker_corners = corners[best_idx][0]
+                        
+                        # GRAB THE STRUCTURALLY INVARIANT CORNER BY INDEX, ZERO JITTER!
+                        best_pt = marker_corners[corner_index]
                                 
-                        if closest_c_idx == c_idx:
-                            valid_idx_list.append(idx) # This corner voted for us!
-                            
-                    # 2. Find the marker closest to our screen center out of the valid ones
-                    for idx in valid_idx_list:
-                        mc = np.mean(corners[idx][0], axis=0)
-                        dist = np.linalg.norm(c_center - mc)
-                        if dist < min_dist_to_screen_center:
-                            min_dist_to_screen_center = dist
-                            best_marker_center = mc
-                            marker_corners = corners[idx][0]
-                            
-                    if marker_corners is not None:
-                        # 3. From the 4 corners of *that* ArUco, find the one FURTHEST from the screen center
-                        # (This guarantees we grab the very outer tip of the ArUco square!)
-                        max_dist_to_corner = 0
-                        for pt in marker_corners:
-                            dist = np.linalg.norm(c_center - pt)
-                            if dist > max_dist_to_corner:
-                                max_dist_to_corner = dist
-                                best_pt = pt
-                                
-                        # 4. Mathematically project vectors outwards to counteract Godot's 15% padding!
                         marker_width = np.linalg.norm(marker_corners[0] - marker_corners[1])
                         godot_pad_pixels = marker_width * 0.15
                         
-                        # Create a normalized vector pointing from the screen center to our outer point
                         direction_vector = best_pt - c_center
                         direction_vector = direction_vector / np.linalg.norm(direction_vector)
                         
-                        # Push the point outward along that trajectory
                         expanded_pt = best_pt + (direction_vector * godot_pad_pixels)
                         return expanded_pt
                         
                     return None
                 
-                # Attempt to find the true expanded hardware corners
-                tl = get_outermost_point(tl_ids)
-                tr = get_outermost_point(tr_ids)
-                bl = get_outermost_point(bl_ids)
-                br = get_outermost_point(br_ids)
+                # Fetch structurally invariant indices! 0=TL, 1=TR, 2=BR, 3=BL
+                tl = get_corner_point(tl_ids, 0)
+                tr = get_corner_point(tr_ids, 1)
+                bl = get_corner_point(bl_ids, 3) # Bottom Left is index 3
+                br = get_corner_point(br_ids, 2) # Bottom Right is index 2
                 
                 # If we successfully locked onto all 4 corners + center...
                 if tl is not None and tr is not None and br is not None and bl is not None:
@@ -215,26 +382,49 @@ def main():
                             [-w2,  h2, 0]
                         ], dtype=np.float32)
                         
-                        # Fake Intrinsics Matrix
-                        focal_length = frame.shape[1]
-                        center_pt = (frame.shape[1] / 2.0, frame.shape[0] / 2.0)
-                        camera_matrix = np.array([
-                            [focal_length, 0, center_pt[0]],
-                            [0, focal_length, center_pt[1]],
-                            [0, 0, 1]
-                        ], dtype=np.float32)
-                        dist_coeffs = np.zeros((4, 1), dtype=np.float32)
-                        
+                        # Check if we have real perfectly calibrated intrinsics
+                        if camera_matrix is not None:
+                            cam_mat_use = camera_matrix
+                            dist_use = np.zeros((5, 1), dtype=np.float32) # Undistorted
+                            pnp_flags = cv2.SOLVEPNP_IPPE
+                        else:
+                            # Fake Intrinsics Matrix
+                            focal_length = frame.shape[1]
+                            center_pt = (frame.shape[1] / 2.0, frame.shape[0] / 2.0)
+                            cam_mat_use = np.array([
+                                [focal_length, 0, center_pt[0]],
+                                [0, focal_length, center_pt[1]],
+                                [0, 0, 1]
+                            ], dtype=np.float32)
+                            dist_use = np.zeros((5, 1), dtype=np.float32)
+                            pnp_flags = cv2.SOLVEPNP_ITERATIVE
+                            
                         image_points = np.array([tl, tr, br, bl], dtype=np.float32)
                         
+                        # TEMPORAL LOCKING: Prevent Necker Flipping by anchoring to the last known pose!
+                        tracker = screen_trackers.get(c_id)
+                        use_guess = False
+                        r_guess, t_guess = None, None
+                        if tracker is not None and camera_matrix is not None:
+                            r_guess = tracker["rvec"].copy()
+                            t_guess = tracker["tvec"].copy()
+                            use_guess = True
+                            pnp_flags = cv2.SOLVEPNP_ITERATIVE
+
                         # Project 2D pixels into Physical Space!
-                        success, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, dist_coeffs)
+                        if use_guess:
+                            success, rvec, tvec = cv2.solvePnP(object_points, image_points, cam_mat_use, dist_use, 
+                                                               rvec=r_guess, tvec=t_guess,
+                                                               useExtrinsicGuess=True, flags=pnp_flags)
+                        else:
+                            success, rvec, tvec = cv2.solvePnP(object_points, image_points, cam_mat_use, dist_use, flags=pnp_flags)
                         
                         if success:
+                            screen_trackers[c_id] = {"rvec": rvec, "tvec": tvec}
                             # Draw full 3D coordinate axes relative to the unique screen size!
                             # Shrunk axis length so OpenCV stops warning about lines extending off-screen!
                             axis_length = float(width_inches * 0.2)
-                            cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, axis_length, 2)
+                            cv2.drawFrameAxes(frame, cam_mat_use, dist_use, rvec, tvec, axis_length, 2)
                             
                             dist_inches = np.linalg.norm(tvec)
                             cv2.putText(frame, f"Dist: {dist_inches:.1f}\"", (int(tl[0]), int(tl[1] - 40)), 
@@ -275,10 +465,19 @@ def main():
             # Localization: Where is the camera?
             # Find a screen in the current frame that is already mapped in our Graph.
             known_screen = None
+            
+            # Prioritize the global origin if it's visible to eliminate chaining drift
             for s in current_frame_screens:
-                if s["screen_id"] in global_transforms:
+                if s["screen_id"] == global_origin_id:
                     known_screen = s
                     break
+                    
+            # Fallback to any other known screen if the origin isn't visible
+            if known_screen is None:
+                for s in current_frame_screens:
+                    if s["screen_id"] in global_transforms:
+                        known_screen = s
+                        break
                     
             if known_screen is not None:
                 # Calculate Camera Position relative to the Origin
@@ -287,21 +486,43 @@ def main():
                 
                 # Equation: T_origin_to_screen = T_origin_to_cam * T_cam_to_screen
                 # Therefore: T_origin_to_cam = T_origin_to_screen * (T_cam_to_screen)^(-1)
-                T_origin_to_cam = T_origin_to_known_screen @ np.linalg.inv(T_cam_to_known_screen)
+                raw_T_cam = T_origin_to_known_screen @ np.linalg.inv(T_cam_to_known_screen)
                 
-                # Discovery: Map newly seen screens into the Graph!
+                # --- Exponential Moving Average (EMA) Smoothing ---
+                if smoothed_T_cam is None:
+                    smoothed_T_cam = raw_T_cam.copy()
+                else:
+                    alpha_t = 0.25 # Translation smoothing speed (1.0 = instant, 0.01 = glacial)
+                    alpha_r = 0.15 # Rotation smoothing speed
+                    
+                    # Smooth Translation
+                    smoothed_T_cam[:3, 3] = (alpha_t * raw_T_cam[:3, 3]) + ((1.0 - alpha_t) * smoothed_T_cam[:3, 3])
+                    
+                    # Smooth Rotation (Simple Matrix LERP with SVD Orthogonalization)
+                    R_blend = (alpha_r * raw_T_cam[:3, :3]) + ((1.0 - alpha_r) * smoothed_T_cam[:3, :3])
+                    U, _, Vt = np.linalg.svd(R_blend)
+                    smoothed_T_cam[:3, :3] = U @ Vt
+                
+                T_origin_to_cam = smoothed_T_cam
+                
+                # Discovery & Continuous Updating: Map newly seen screens into the Graph, and update existing ones!
                 for s in current_frame_screens:
-                    if s["screen_id"] not in global_transforms:
-                        T_cam_to_new_screen = create_transform_matrix(s["rvec"], s["tvec"])
-                        # Equation: T_origin_to_new = T_origin_to_cam * T_cam_to_new
-                        T_origin_to_new_screen = T_origin_to_cam @ T_cam_to_new_screen
+                    c_id = s["screen_id"]
+                    # Do not re-update the position of the screen we are currently using as our anchor!
+                    # Doing so with a smoothed camera position creates a feedback loop that drags the screen!
+                    if c_id != known_screen["screen_id"]:
+                        T_cam_to_screen = create_transform_matrix(s["rvec"], s["tvec"])
+                        T_origin_to_screen = T_origin_to_cam @ T_cam_to_screen
                         
-                        global_transforms[s["screen_id"]] = {
-                            "transform": T_origin_to_new_screen,
+                        if c_id not in global_transforms:
+                            print(f"[{c_id}] mathematical position locked into the Global Graph!")
+                            
+                        # Continuously update the position of the screen relative to the known camera
+                        global_transforms[c_id] = {
+                            "transform": T_origin_to_screen,
                             "width": s["width"],
                             "height": s["height"]
                         }
-                        print(f"[{s['screen_id']}] mathematical position locked into the Global Graph!")
 
         # ---------------------------------------------------------
         # 3D ROOM LAYOUT VISUALIZER (INTERACTIVE 3D PERSPECTIVE)
@@ -323,7 +544,7 @@ def main():
             [-np.sin(yaw_rad), 0, np.cos(yaw_rad)]
         ])
         R_view = Rx @ Ry
-        T_view = np.array([0, 0, view_dist])
+        T_view = np.array([view_pan_x, view_pan_y, view_dist])
         
         def project_3d(pt3d_global):
             pt_rotated = R_view @ pt3d_global[:3]
@@ -348,6 +569,7 @@ def main():
 
         visible_ids = [s["screen_id"] for s in current_frame_screens]
         
+        rendered_screen_centers.clear()
         for s_id, s_data in global_transforms.items():
             T = s_data["transform"]
             w2 = s_data["width"] / 2.0
@@ -385,6 +607,8 @@ def main():
             # Draw ID Text
             pt_center, ok = project_3d(center_global)
             if ok:
+                rendered_screen_centers.append((s_id, pt_center))
+                cv2.circle(room_map, pt_center, 4, color, -1)
                 cv2.putText(room_map, f"Screen {s_id}", (max(0, pt_center[0]-30), max(0, pt_center[1]-10)), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
@@ -419,9 +643,47 @@ def main():
         cv2.imshow("Multi-Monitor ArUco Constellation Tracker", frame)
         cv2.imshow("3D Room Spatial Map", room_map)
         
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('c'):
+            print(">>> COMPILING AND BROADCASTING LAYOUT MAP <<<")
+            layout_payload = {
+                "type": "layout_map",
+                "screens": {}
+            }
+            for sid, sdata in global_transforms.items():
+                T = sdata["transform"]
+                layout_payload["screens"][str(sid)] = {
+                    "R": T[:3, :3].tolist(),
+                    "T": T[:3, 3].tolist(),
+                    "width": sdata["width"],
+                    "height": sdata["height"]
+                }
+            
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(json.dumps(layout_payload).encode('utf-8'), ("127.0.0.1", 4243))
+            print("Successfully sent to WebSocket Router!")
+
         # Press 'q' to quit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if key == ord('q'):
             break
+        elif key == ord('r') or key == ord('g'):
+            print(">>> WIPING SPATIAL MAP RE-INITIALIZING <<<")
+            global_transforms.clear()
+            global_origin_id = None
+            rendered_screen_centers.clear()
+            screen_trackers.clear()
+            smoothed_T_cam = None
+        elif key == ord('x'):
+            print(">>> CLEARING SENSOR CALIBRATION <<<")
+            camera_matrix = None
+            dist_coeffs = None
+            all_charuco_corners.clear()
+            all_charuco_ids.clear()
+            accepted_sigs.clear()
+            if os.path.exists("camera_calibration.json"):
+                os.remove("camera_calibration.json")
+            print("Ready to gather new ChArUco frames!")
             
     cap.release()
     cv2.destroyAllWindows()

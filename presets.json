@@ -6,5 +6,9 @@
     "iPad ": {
         "width": 8.875,
         "height": 6.1875
+    },
+    "Ipad (Windowed) (Safari not fullscreen)": {
+        "width": 8.875,
+        "height": 5.375
     }
 }

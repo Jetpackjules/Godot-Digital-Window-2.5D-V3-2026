@@ -139,7 +139,20 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        # OpenTrack sends 48 bytes (6 doubles: X, Y, Z, Yaw, Pitch, Roll)
+        # 1. Intercept OpenCV JSON Layout Maps
+        if data.startswith(b'{'):
+            try:
+                decoded = data.decode('utf-8')
+                json_data = json.loads(decoded)
+                if json_data.get("type") == "layout_map":
+                    print("Intercepted Layout Map from OpenCV! Broadcasting to Godot clients...")
+                    if connected_clients:
+                        websockets.broadcast(connected_clients, decoded)
+                    return
+            except:
+                pass
+                
+        # 2. OpenTrack sends 48 bytes (6 doubles: X, Y, Z, Yaw, Pitch, Roll)
         if len(data) >= 48:
             unpacked_data = struct.unpack('dddddd', data[:48])
             # Broadcast the tracking data ONLY if clients are actually listening
