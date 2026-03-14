@@ -144,8 +144,12 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
             try:
                 decoded = data.decode('utf-8')
                 json_data = json.loads(decoded)
-                if json_data.get("type") == "layout_map":
-                    print("Intercepted Layout Map from OpenCV! Broadcasting to Godot clients...")
+                msg_type = json_data.get("type")
+                if msg_type:
+                    if msg_type == "layout_map":
+                        print("Intercepted Layout Map from OpenCV! Broadcasting to Godot clients...")
+                    elif msg_type == "scan_status":
+                        print(f"Tracker status: {json_data.get('state', 'unknown')}")
                     if connected_clients:
                         websockets.broadcast(connected_clients, decoded)
                     return

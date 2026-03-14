@@ -38,6 +38,8 @@ var aruco_markers: Array[Texture2D] = []
 @export var show_debug_view: bool = false
 @export var debug_toggle_key: Key = KEY_TAB
 @export var diagnostics_toggle_key: Key = KEY_R
+@export var rescan_key: Key = KEY_F6
+@export var edit_screen_size_key: Key = KEY_F7
 
 var udp := PacketPeerUDP.new()
 var ws := WebSocketPeer.new()
@@ -59,6 +61,28 @@ var w_input: LineEdit
 var h_input: LineEdit
 var preset_dropdown: OptionButton
 var global_presets: Dictionary = {}
+var setup_overlay: CanvasLayer
+var setup_status_panel: PanelContainer
+var setup_title_label: Label
+var setup_body_label: Label
+var setup_hint_label: Label
+var rescan_button: Button
+var edit_size_button: Button
+
+const LOCAL_SETUP_PATH := "user://screen_setup.json"
+
+enum SetupState {
+	BOOTING,
+	NEED_SCREEN_SIZE,
+	SCANNING,
+	READY,
+	ERROR,
+}
+
+var setup_state: int = SetupState.BOOTING
+var _screen_registered: bool = false
+var _has_received_config: bool = false
+var _last_scan_state: String = ""
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
@@ -368,6 +392,12 @@ func _ready():
 			push_error("Could not bind to port 4242. Error code: ", error)
 		
 	_setup_debug_view()
+	_set_setup_state(
+		SetupState.BOOTING,
+		"Connecting",
+		"Connecting to the sync bridge and waiting for device setup...",
+		""
+	)
 
 func _setup_debug_view():
 	# ---------------------------------------------------------
@@ -376,6 +406,59 @@ func _setup_debug_view():
 	aruco_canvas = CanvasLayer.new()
 	aruco_canvas.layer = 129 # Absolute top priority above everything
 	add_child(aruco_canvas)
+
+	setup_overlay = CanvasLayer.new()
+	setup_overlay.layer = 130
+	add_child(setup_overlay)
+
+	setup_status_panel = PanelContainer.new()
+	setup_status_panel.visible = true
+	setup_status_panel.custom_minimum_size = Vector2(460, 0)
+	setup_status_panel.position = Vector2(24, 24)
+
+	var status_style = StyleBoxFlat.new()
+	status_style.bg_color = Color(0.05, 0.05, 0.05, 0.82)
+	status_style.set_corner_radius_all(10)
+	status_style.content_margin_left = 18
+	status_style.content_margin_right = 18
+	status_style.content_margin_top = 16
+	status_style.content_margin_bottom = 16
+	setup_status_panel.add_theme_stylebox_override("panel", status_style)
+
+	var status_box = VBoxContainer.new()
+	status_box.add_theme_constant_override("separation", 8)
+	setup_status_panel.add_child(status_box)
+
+	setup_title_label = Label.new()
+	setup_title_label.add_theme_font_size_override("font_size", 22)
+	status_box.add_child(setup_title_label)
+
+	setup_body_label = Label.new()
+	setup_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_box.add_child(setup_body_label)
+
+	setup_hint_label = Label.new()
+	setup_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	setup_hint_label.add_theme_color_override("font_color", Color(0.82, 0.82, 0.82, 1))
+	status_box.add_child(setup_hint_label)
+
+	var action_row = HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 10)
+	status_box.add_child(action_row)
+
+	rescan_button = Button.new()
+	rescan_button.text = "Rescan Layout"
+	rescan_button.visible = false
+	rescan_button.pressed.connect(_restart_scan_flow)
+	action_row.add_child(rescan_button)
+
+	edit_size_button = Button.new()
+	edit_size_button.text = "Edit Screen Size"
+	edit_size_button.visible = false
+	edit_size_button.pressed.connect(_show_screen_setup)
+	action_row.add_child(edit_size_button)
+
+	setup_overlay.add_child(setup_status_panel)
 	
 	# ---------------------------------------------------------
 	# PHYSICAL SCREEN SIZE CALIBRATION UI POPUP
@@ -400,7 +483,7 @@ func _setup_debug_view():
 	calibration_ui_panel.add_child(vbox)
 	
 	var title = Label.new()
-	title.text = "TRACKING CALIBRATION"
+	title.text = "SCREEN SETUP"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 24)
 	vbox.add_child(title)
@@ -460,7 +543,7 @@ func _setup_debug_view():
 	)
 	
 	var save_btn = Button.new()
-	save_btn.text = "Save Dimensions & Register Device"
+	save_btn.text = "Start Marker Scan"
 	save_btn.add_theme_font_size_override("font_size", 18)
 	vbox.add_child(save_btn)
 	
@@ -496,23 +579,17 @@ func _setup_debug_view():
 		var h_val = h_input.text.to_float()
 		
 		if w_val > 0.0 and h_val > 0.0:
-			print("Registering Screen Dimensions! W: ", w_val, " H: ", h_val)
-			calibration_ui_panel.visible = false # Hide it so the ArUco scanner can see the markers!
-			
-			if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
-				var normalized_id = device_id % aruco_markers.size() if aruco_markers.size() > 0 else device_id
-				var msg = {
-					"action": "register_screen",
-					"device_id": normalized_id,
-					"width": w_val,
-					"height": h_val
-				}
-				ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+			_register_screen_dimensions(w_val, h_val, true)
 		else:
-			print("Invalid screen dimensions entered! Try again.")
+			_set_setup_state(
+				SetupState.ERROR,
+				"Invalid Screen Size",
+				"Enter valid positive width and height values before starting the scan.",
+				"Use a saved preset if you have already measured this display."
+			)
 	)
 	
-	aruco_canvas.add_child(calibration_ui_panel)
+	setup_overlay.add_child(calibration_ui_panel)
 	
 	# ---------------------------------------------------------
 	# OVERHEAD TRACKING DEBUG VIEWPORT (OPTIONAL HUD)
@@ -573,6 +650,191 @@ func _rebuild_preset_dropdown():
 			var h = global_presets[key].get("height", 0)
 			preset_dropdown.add_item(key + " (" + str(w) + "\" x " + str(h) + "\")")
 
+func _load_local_screen_config() -> Dictionary:
+	if not FileAccess.file_exists(LOCAL_SETUP_PATH):
+		return {}
+
+	var file = FileAccess.open(LOCAL_SETUP_PATH, FileAccess.READ)
+	if file == null:
+		return {}
+
+	var json = JSON.new()
+	if json.parse(file.get_as_text()) == OK and json.data is Dictionary:
+		return json.data
+
+	return {}
+
+func _save_local_screen_config(width_inches: float, height_inches: float) -> void:
+	var file = FileAccess.open(LOCAL_SETUP_PATH, FileAccess.WRITE)
+	if file == null:
+		return
+
+	file.store_string(JSON.stringify({
+		"width": width_inches,
+		"height": height_inches
+	}, "\t"))
+
+func _apply_screen_dimensions_to_ui(width_inches: float, height_inches: float) -> void:
+	if w_input:
+		w_input.text = str(width_inches)
+	if h_input:
+		h_input.text = str(height_inches)
+
+func _apply_screen_dimensions_to_scaler(width_inches: float, height_inches: float) -> void:
+	if screen_scaler:
+		screen_scaler.physical_width_meters = width_inches * 0.0254
+		screen_scaler.physical_height_meters = height_inches * 0.0254
+
+func _set_setup_state(state: int, title: String, body: String, hint: String) -> void:
+	setup_state = state
+
+	if setup_title_label:
+		setup_title_label.text = title
+	if setup_body_label:
+		setup_body_label.text = body
+	if setup_hint_label:
+		setup_hint_label.text = hint
+	if setup_status_panel:
+		setup_status_panel.visible = true
+	if rescan_button:
+		rescan_button.visible = _screen_registered
+	if edit_size_button:
+		edit_size_button.visible = _has_received_config
+
+func _show_screen_setup() -> void:
+	if not calibration_ui_panel:
+		return
+
+	var local_config = _load_local_screen_config()
+	var width_inches = float(local_config.get("width", 0.0))
+	var height_inches = float(local_config.get("height", 0.0))
+	if width_inches > 0.0 and height_inches > 0.0:
+		_apply_screen_dimensions_to_ui(width_inches, height_inches)
+
+	calibration_ui_panel.visible = true
+	_set_calibration_mode(false)
+	_set_setup_state(
+		SetupState.NEED_SCREEN_SIZE,
+		"Screen Setup",
+		"Choose a saved preset or enter the physical size of this display.",
+		"Measure only the lit pixels, excluding the bezels."
+	)
+
+func _begin_scan_flow() -> void:
+	calibration_ui_panel.visible = false
+	_screen_registered = true
+	_last_scan_state = ""
+	_set_calibration_mode(true)
+	_set_setup_state(
+		SetupState.SCANNING,
+		"Show Markers",
+		"Marker mode is active. Point the tracking camera at this screen so the room layout can lock in.",
+		"Press F6 to force a rescan or F7 to edit this screen size."
+	)
+
+func _register_screen_dimensions(width_inches: float, height_inches: float, save_local: bool) -> void:
+	if use_websocket and ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		_set_setup_state(
+			SetupState.ERROR,
+			"Bridge Offline",
+			"Couldn't register this screen because the WebSocket bridge is not connected.",
+			"Make sure the bridge is running, then try again."
+		)
+		return
+
+	_apply_screen_dimensions_to_ui(width_inches, height_inches)
+	_apply_screen_dimensions_to_scaler(width_inches, height_inches)
+	if save_local:
+		_save_local_screen_config(width_inches, height_inches)
+
+	print("Registering Screen Dimensions! W: ", width_inches, " H: ", height_inches)
+
+	if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		var normalized_id = device_id % aruco_markers.size() if aruco_markers.size() > 0 else device_id
+		var msg = {
+			"action": "register_screen",
+			"device_id": normalized_id,
+			"width": width_inches,
+			"height": height_inches
+		}
+		ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+
+	_begin_scan_flow()
+
+func _restart_scan_flow() -> void:
+	var local_config = _load_local_screen_config()
+	var width_inches = float(local_config.get("width", w_input.text.to_float() if w_input else 0.0))
+	var height_inches = float(local_config.get("height", h_input.text.to_float() if h_input else 0.0))
+
+	if width_inches > 0.0 and height_inches > 0.0:
+		_register_screen_dimensions(width_inches, height_inches, false)
+	else:
+		_show_screen_setup()
+
+func _try_auto_register_saved_screen() -> bool:
+	var local_config = _load_local_screen_config()
+	var width_inches = float(local_config.get("width", 0.0))
+	var height_inches = float(local_config.get("height", 0.0))
+
+	if width_inches > 0.0 and height_inches > 0.0:
+		_register_screen_dimensions(width_inches, height_inches, false)
+		return true
+
+	return false
+
+func _format_screen_ids(ids: Variant) -> String:
+	if ids is Array and not ids.is_empty():
+		var labels: PackedStringArray = []
+		for id in ids:
+			labels.append(str(id))
+		return ", ".join(labels)
+	return "none"
+
+func _handle_scan_status(data: Dictionary) -> void:
+	var state = str(data.get("state", ""))
+	if state == "":
+		return
+
+	if setup_state == SetupState.READY and not calibration_mode:
+		return
+
+	_last_scan_state = state
+
+	match state:
+		"camera_calibrating":
+			var accepted = int(data.get("accepted_frames", 0))
+			var target = int(data.get("target_frames", 20))
+			_set_setup_state(
+				SetupState.SCANNING,
+				"Calibrating Camera",
+				"Tracking intrinsics are calibrating before screen solving can start.",
+				str(accepted) + "/" + str(target) + " calibration frames captured."
+			)
+		"waiting_for_markers":
+			_set_setup_state(
+				SetupState.SCANNING,
+				"Waiting For Markers",
+				"Show the full marker pattern to the tracking camera.",
+				"Keep the whole screen visible and avoid glare on the display."
+			)
+		"scanning":
+			_set_setup_state(
+				SetupState.SCANNING,
+				"Scanning Room Layout",
+				"Markers detected. Solving the screen pose and building the room layout.",
+				"Visible screens: " + _format_screen_ids(data.get("visible_screens", []))
+			)
+		"layout_ready":
+			_set_setup_state(
+				SetupState.SCANNING,
+				"Layout Ready",
+				"Transforms are streaming from the tracker. Applying the room layout now.",
+				"Hold still for a moment while the client snaps into place."
+			)
+		_:
+			var message = str(data.get("message", "Waiting for scan updates..."))
+			_set_setup_state(SetupState.SCANNING, "Scanning", message, "")
+
 func _input(event):
 	if event is InputEventKey and event.pressed:
 		if event.keycode == debug_toggle_key:
@@ -585,11 +847,10 @@ func _input(event):
 				if diagnostics_label.visible and not show_debug_view:
 					show_debug_view = true
 					if debug_canvas: debug_canvas.visible = true
-		elif event.is_action("ui_accept") and event.is_pressed() and not event.is_echo(): # The Spacebar
-			print("Spacebar pressed. Sending Toggle Calibration to Server...")
-			if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
-				var msg = {"action": "toggle_calibration"}
-				ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+		elif event.keycode == rescan_key:
+			_restart_scan_flow()
+		elif event.keycode == edit_screen_size_key:
+			_show_screen_setup()
 
 func _set_calibration_mode(is_on: bool):
 	calibration_mode = is_on
@@ -735,6 +996,7 @@ func _process(_delta):
 					if msg_type == "config":
 						device_id = data.get("device_id", 0)
 						print("Server assigned Godot Device ID: ", device_id)
+						_has_received_config = true
 						_set_calibration_mode(data.get("calibration_mode", false))
 						
 						if data.has("presets"):
@@ -745,8 +1007,8 @@ func _process(_delta):
 						if not aruco_canvas:
 							_setup_debug_view()
 							
-						if calibration_ui_panel:
-							calibration_ui_panel.visible = true
+						if not _try_auto_register_saved_screen():
+							_show_screen_setup()
 							
 					elif msg_type == "presets_update":
 						global_presets = data.get("presets", {})
@@ -755,6 +1017,9 @@ func _process(_delta):
 					elif msg_type == "state_update":
 						_set_calibration_mode(data.get("calibration_mode", false))
 						print("Server toggled ArUco Calibration!")
+
+					elif msg_type == "scan_status":
+						_handle_scan_status(data)
 						
 					elif msg_type == "tracking":
 						_raw_x = data.get("x", 0.0)
@@ -788,6 +1053,12 @@ func _process(_delta):
 								
 							# Hide ArUco Markers and engage Face Tracking!
 							_set_calibration_mode(false)
+							_set_setup_state(
+								SetupState.READY,
+								"Tracking Live",
+								"Screen layout locked. Head tracking is now driving the view.",
+								"Press F6 to rescan the room or F7 to edit this screen's size."
+							)
 						
 					# Legacy UDP format fallback just in case
 					elif data.has("x"):
@@ -799,6 +1070,12 @@ func _process(_delta):
 		elif state == WebSocketPeer.STATE_CLOSED and _was_ws_connected:
 			print("WebSocket Connection Closed.")
 			_was_ws_connected = false
+			_set_setup_state(
+				SetupState.ERROR,
+				"Connection Lost",
+				"Lost connection to the bridge. Tracking and layout updates are paused.",
+				"Restart the stack and reconnect, or press F6 to retry after the bridge returns."
+			)
 	else:
 		while udp.get_available_packet_count() > 0:
 			var packet = udp.get_packet()

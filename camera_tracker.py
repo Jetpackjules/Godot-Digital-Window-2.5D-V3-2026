@@ -3,6 +3,7 @@ import cv2.aruco as aruco
 import numpy as np
 import json
 import os
+import socket
 import time
 
 def make_detector_params():
@@ -152,6 +153,46 @@ def main():
     last_pan_x = 0
     last_pan_y = 0
     rendered_screen_centers = []
+    bridge_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    last_status_blob = ""
+    last_status_time = 0.0
+    last_layout_send_time = 0.0
+
+    def send_udp_json(payload):
+        bridge_sock.sendto(json.dumps(payload).encode('utf-8'), ("127.0.0.1", 4243))
+
+    def send_scan_status(state, message, **extra):
+        nonlocal last_status_blob, last_status_time
+        payload = {
+            "type": "scan_status",
+            "state": state,
+            "message": message,
+        }
+        payload.update(extra)
+        blob = json.dumps(payload, sort_keys=True)
+        now = time.time()
+        if blob != last_status_blob or now - last_status_time > 1.0:
+            send_udp_json(payload)
+            last_status_blob = blob
+            last_status_time = now
+
+    def broadcast_layout():
+        nonlocal last_layout_send_time
+        layout_payload = {
+            "type": "layout_map",
+            "screens": {}
+        }
+        for sid, sdata in global_transforms.items():
+            T = sdata["transform"]
+            layout_payload["screens"][str(sid)] = {
+                "R": T[:3, :3].tolist(),
+                "T": T[:3, 3].tolist(),
+                "width": sdata["width"],
+                "height": sdata["height"]
+            }
+
+        send_udp_json(layout_payload)
+        last_layout_send_time = time.time()
 
     def mouse_callback(event, x, y, flags, param):
         nonlocal view_pitch, view_yaw, view_dist, view_pan_x, view_pan_y, mouse_is_down, pan_is_down, last_mouse_x, last_mouse_y, last_pan_x, last_pan_y, global_origin_id
@@ -222,6 +263,12 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3, cv2.LINE_AA)
             cv2.putText(frame, "Please slowly tilt the ChArUco board!", (30, 90), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+            send_scan_status(
+                "camera_calibrating",
+                "Calibrating webcam intrinsics before layout scanning can begin.",
+                accepted_frames=len(all_charuco_corners),
+                target_frames=20
+            )
             
             c_corners, c_ids = detect_markers_robust(gray, charuco_detector, charuco_dict, parameters)
             if c_ids is not None and len(c_ids) > 6:
@@ -527,6 +574,33 @@ def main():
         # ---------------------------------------------------------
         # 3D ROOM LAYOUT VISUALIZER (INTERACTIVE 3D PERSPECTIVE)
         # ---------------------------------------------------------
+        visible_ids = [s["screen_id"] for s in current_frame_screens]
+
+        if camera_matrix is not None:
+            if not visible_ids:
+                send_scan_status(
+                    "waiting_for_markers",
+                    "Waiting for the screen marker constellation to become visible.",
+                    mapped_screens=sorted(int(sid) for sid in global_transforms.keys())
+                )
+            else:
+                mapped_ids = sorted(int(sid) for sid in global_transforms.keys())
+                state = "layout_ready" if mapped_ids else "scanning"
+                message = (
+                    "Layout solved and streaming."
+                    if state == "layout_ready"
+                    else "Markers detected. Solving screen poses and mapping the room."
+                )
+                send_scan_status(
+                    state,
+                    message,
+                    visible_screens=visible_ids,
+                    mapped_screens=mapped_ids
+                )
+
+            if global_transforms and visible_ids and time.time() - last_layout_send_time > 0.75:
+                broadcast_layout()
+
         room_map = np.zeros((800, 800, 3), dtype=np.uint8)
         
         cx, cy = 400, 400
@@ -567,8 +641,6 @@ def main():
             draw_line_3d(room_map, np.array([i, 20, -100, 1]), np.array([i, 20, 100, 1]), (40, 40, 40), 1)
             draw_line_3d(room_map, np.array([-100, 20, i, 1]), np.array([100, 20, i, 1]), (40, 40, 40), 1)
 
-        visible_ids = [s["screen_id"] for s in current_frame_screens]
-        
         rendered_screen_centers.clear()
         for s_id, s_data in global_transforms.items():
             T = s_data["transform"]
@@ -646,22 +718,7 @@ def main():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('c'):
             print(">>> COMPILING AND BROADCASTING LAYOUT MAP <<<")
-            layout_payload = {
-                "type": "layout_map",
-                "screens": {}
-            }
-            for sid, sdata in global_transforms.items():
-                T = sdata["transform"]
-                layout_payload["screens"][str(sid)] = {
-                    "R": T[:3, :3].tolist(),
-                    "T": T[:3, 3].tolist(),
-                    "width": sdata["width"],
-                    "height": sdata["height"]
-                }
-            
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.sendto(json.dumps(layout_payload).encode('utf-8'), ("127.0.0.1", 4243))
+            broadcast_layout()
             print("Successfully sent to WebSocket Router!")
 
         # Press 'q' to quit
@@ -686,6 +743,7 @@ def main():
             print("Ready to gather new ChArUco frames!")
             
     cap.release()
+    bridge_sock.close()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
