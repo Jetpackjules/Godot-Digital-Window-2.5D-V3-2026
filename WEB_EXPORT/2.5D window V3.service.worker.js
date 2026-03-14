@@ -4,14 +4,14 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1772405245|4724298907';
+const CACHE_VERSION = '1773532450|2901876';
 /** @type {string} */
 const CACHE_PREFIX = '2.5D window V3-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
 /** @type {string} */
 const OFFLINE_URL = '2.5D window V3.offline.html';
 /** @type {boolean} */
-const ENSURE_CROSSORIGIN_ISOLATION_HEADERS = true;
+const ENSURE_CROSSORIGIN_ISOLATION_HEADERS = false;
 // Files that will be cached on load.
 /** @type {string[]} */
 const CACHED_FILES = ["2.5D window V3.html","2.5D window V3.js","2.5D window V3.offline.html","2.5D window V3.icon.png","2.5D window V3.apple-touch-icon.png","2.5D window V3.audio.worklet.js","2.5D window V3.audio.position.worklet.js"];

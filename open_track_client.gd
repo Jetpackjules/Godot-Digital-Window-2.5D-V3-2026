@@ -70,11 +70,15 @@ var setup_hint_label: Label
 var rescan_button: Button
 var edit_size_button: Button
 var setup_action_row: FlowContainer
+var status_toggle_button: Button
 
 const LOCAL_SETUP_PATH := "user://screen_setup.json"
 const MARKER_SLOT_COUNT := 6
 const WS_RETRY_INTERVAL_SEC := 2.0
 const WS_CONNECT_TIMEOUT_SEC := 4.0
+const VIEWER_POSE_SEND_INTERVAL_SEC := 0.05
+const VIEWER_POSE_POSITION_EPSILON := 0.001
+const VIEWER_POSE_BASIS_EPSILON := 0.001
 
 enum SetupState {
 	BOOTING,
@@ -101,6 +105,10 @@ var _has_main_screen_reference: bool = false
 var _main_screen_id: String = ""
 var _main_screen_position: Vector3 = Vector3.ZERO
 var _main_screen_basis: Basis = Basis.IDENTITY
+var _status_panel_hidden_by_user: bool = false
+var _next_viewer_pose_send_msec: int = 0
+var _last_broadcast_player_position: Vector3 = Vector3.INF
+var _last_broadcast_player_basis: Basis = Basis.IDENTITY
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
@@ -471,6 +479,13 @@ func _setup_debug_view():
 	setup_action_row.add_child(edit_size_button)
 
 	setup_overlay.add_child(setup_status_panel)
+
+	status_toggle_button = Button.new()
+	status_toggle_button.text = "Hide Status"
+	status_toggle_button.visible = false
+	status_toggle_button.position = Vector2(24, 24)
+	status_toggle_button.pressed.connect(_toggle_status_panel)
+	setup_overlay.add_child(status_toggle_button)
 	
 	# ---------------------------------------------------------
 	# PHYSICAL SCREEN SIZE CALIBRATION UI POPUP
@@ -643,6 +658,7 @@ func _setup_debug_view():
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	sphere.material = mat
 	head_dot.mesh = sphere
+	head_dot.visible = show_debug_view
 	vp.add_child(head_dot)
 	
 	diagnostics_label = Label.new()
@@ -760,6 +776,22 @@ func _layout_transform_from_payload(t_data: Dictionary) -> Dictionary:
 		)
 	}
 
+func _basis_to_payload(basis: Basis) -> Array:
+	return [
+		[basis.x.x, basis.x.y, basis.x.z],
+		[basis.y.x, basis.y.y, basis.y.z],
+		[basis.z.x, basis.z.y, basis.z.z],
+	]
+
+func _basis_from_payload(rows: Variant) -> Basis:
+	if rows is Array and rows.size() == 3:
+		return Basis(
+			Vector3(rows[0][0], rows[0][1], rows[0][2]),
+			Vector3(rows[1][0], rows[1][1], rows[1][2]),
+			Vector3(rows[2][0], rows[2][1], rows[2][2])
+		).orthonormalized()
+	return Basis.IDENTITY
+
 func _reset_websocket_peer() -> void:
 	ws = WebSocketPeer.new()
 	_ws_connect_started_msec = 0
@@ -810,7 +842,9 @@ func _refresh_connecting_debug(state: int = -1) -> void:
 func _sync_setup_visibility() -> void:
 	var marker_mode_active = _is_marker_mode_active()
 	if setup_status_panel:
-		setup_status_panel.visible = not marker_mode_active
+		setup_status_panel.visible = not marker_mode_active and not _status_panel_hidden_by_user
+	if status_toggle_button:
+		status_toggle_button.visible = not marker_mode_active and setup_state != SetupState.BOOTING
 
 func _set_setup_state(state: int, title: String, body: String, hint: String) -> void:
 	setup_state = state
@@ -844,17 +878,35 @@ func _refresh_setup_controls() -> void:
 	if edit_size_button:
 		edit_size_button.text = "Edit Screen Size"
 
+	if status_toggle_button:
+		status_toggle_button.text = "Show Status" if _status_panel_hidden_by_user else "Hide Status"
+
 func _layout_setup_status_panel() -> void:
 	if not setup_status_panel:
 		return
 
 	if _is_marker_mode_active():
+		if status_toggle_button:
+			status_toggle_button.visible = false
 		return
 
 	var viewport_size = get_viewport().get_visible_rect().size
 	var panel_width = clampf(viewport_size.x - 48.0, 240.0, 460.0)
 	setup_status_panel.custom_minimum_size = Vector2(panel_width, 0)
-	setup_status_panel.position = Vector2(24.0, 24.0)
+	if setup_status_panel.visible:
+		setup_status_panel.position = Vector2(24.0, 24.0)
+
+	if status_toggle_button:
+		if setup_status_panel.visible:
+			status_toggle_button.position = Vector2(24.0, setup_status_panel.position.y + setup_status_panel.size.y + 10.0)
+		else:
+			status_toggle_button.position = Vector2(24.0, 24.0)
+
+func _toggle_status_panel() -> void:
+	_status_panel_hidden_by_user = not _status_panel_hidden_by_user
+	_refresh_setup_controls()
+	_sync_setup_visibility()
+	_layout_setup_status_panel()
 
 func _show_screen_setup() -> void:
 	if not calibration_ui_panel:
@@ -941,6 +993,55 @@ func _handle_scan_start(data: Dictionary) -> void:
 		"Markers are now active on every registered screen for a shared room scan.",
 		"Expected screens: " + expected + " | Press P on any screen to finish once the full layout is visible."
 	)
+
+func _handle_viewer_pose(data: Dictionary) -> void:
+	if not player_node:
+		return
+
+	var pos = data.get("position", [])
+	var basis_rows = data.get("basis", [])
+	if not (pos is Array and pos.size() == 3 and basis_rows is Array and basis_rows.size() == 3):
+		return
+
+	player_node.global_position = Vector3(pos[0], pos[1], pos[2])
+	player_node.global_transform.basis = _basis_from_payload(basis_rows)
+	_last_broadcast_player_position = player_node.global_position
+	_last_broadcast_player_basis = player_node.global_transform.basis
+
+func _maybe_broadcast_viewer_pose() -> void:
+	if not use_websocket or not player_node:
+		return
+	if ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	if not _scan_locked or calibration_mode:
+		return
+
+	var now = Time.get_ticks_msec()
+	if now < _next_viewer_pose_send_msec:
+		return
+
+	var current_pos = player_node.global_position
+	var current_basis = player_node.global_transform.basis.orthonormalized()
+	var basis_changed = (
+		current_basis.x.distance_to(_last_broadcast_player_basis.x) > VIEWER_POSE_BASIS_EPSILON
+		or current_basis.y.distance_to(_last_broadcast_player_basis.y) > VIEWER_POSE_BASIS_EPSILON
+		or current_basis.z.distance_to(_last_broadcast_player_basis.z) > VIEWER_POSE_BASIS_EPSILON
+	)
+
+	if current_pos.distance_to(_last_broadcast_player_position) <= VIEWER_POSE_POSITION_EPSILON and not basis_changed:
+		return
+
+	_next_viewer_pose_send_msec = now + int(VIEWER_POSE_SEND_INTERVAL_SEC * 1000.0)
+	_last_broadcast_player_position = current_pos
+	_last_broadcast_player_basis = current_basis
+
+	var msg = {
+		"action": "viewer_pose",
+		"device_id": _current_marker_slot(),
+		"position": [current_pos.x, current_pos.y, current_pos.z],
+		"basis": _basis_to_payload(current_basis)
+	}
+	ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
 
 func _request_finish_scan() -> void:
 	if not use_websocket or ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
@@ -1062,6 +1163,8 @@ func _input(event):
 			show_debug_view = !show_debug_view
 			if debug_canvas:
 				debug_canvas.visible = show_debug_view
+			if head_dot:
+				head_dot.visible = show_debug_view
 		elif event.keycode == diagnostics_toggle_key:
 			if diagnostics_label:
 				diagnostics_label.visible = !diagnostics_label.visible
@@ -1265,6 +1368,9 @@ func _process(_delta):
 
 					elif msg_type == "scan_status":
 						_handle_scan_status(data)
+
+					elif msg_type == "viewer_pose":
+						_handle_viewer_pose(data)
 						
 					elif msg_type == "tracking":
 						_raw_x = data.get("x", 0.0)
@@ -1282,6 +1388,10 @@ func _process(_delta):
 							_main_screen_position = origin_transform["position"]
 							_main_screen_basis = origin_transform["basis"]
 							_has_main_screen_reference = true
+
+							if player_node:
+								player_node.global_transform.basis = _main_screen_basis
+								player_node.global_position = _main_screen_position
 
 						var my_id_str = str(_current_marker_slot())
 						if screens.has(my_id_str):
@@ -1336,6 +1446,8 @@ func _process(_delta):
 			
 	if has_new_data:
 		_apply_tracking_data()
+
+	_maybe_broadcast_viewer_pose()
 
 	if debug_canvas and debug_canvas.visible:
 		if camera_node:
@@ -1395,11 +1507,6 @@ func _apply_tracking_data():
 		
 		var reference_pos = player_node.global_position if player_node else window_center.global_position
 		var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
-
-		# Before live tracking arrives, hold a static 50cm view relative to the first scanned screen.
-		if not _has_live_tracking_data and _has_main_screen_reference:
-			reference_pos = _main_screen_position
-			reference_basis = _main_screen_basis
 
 		var final_pos = reference_pos + reference_basis * scaled_offset
 			

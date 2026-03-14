@@ -15,7 +15,7 @@ var left_cam: Camera3D
 var right_cam: Camera3D
 var left_vp: SubViewport
 var right_vp: SubViewport
-var _anaglyph_enabled: bool = true
+var _anaglyph_enabled: bool = false
 var _shader_canvas: CanvasLayer
 var _shader_mat: ShaderMaterial # Keep a reference to update it live
 
@@ -57,6 +57,7 @@ func _ready() -> void:
 	right_vp.add_child(right_cam)
 
 	_build_shader_overlay(left_vp.get_texture(), right_vp.get_texture())
+	_apply_anaglyph_mode()
 	
 	get_viewport().size_changed.connect(func():
 		var new_size = get_viewport().size
@@ -80,26 +81,40 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_T:
 			_anaglyph_enabled = not _anaglyph_enabled
-			if _shader_canvas: _shader_canvas.visible = _anaglyph_enabled
-			
-			if not _anaglyph_enabled:
-				if left_cam: left_cam.clear_current()
-				if right_cam: right_cam.clear_current()
-				
-				if left_vp and left_vp.get_parent(): remove_child(left_vp)
-				if right_vp and right_vp.get_parent(): remove_child(right_vp)
-				
-				if base_camera: base_camera.make_current()
-			else:
-				if not left_vp.get_parent(): add_child(left_vp)
-				if not right_vp.get_parent(): add_child(right_vp)
-				
-				if base_camera: base_camera.clear_current()
-				if left_cam: left_cam.make_current()
-				if right_cam: right_cam.make_current()
+			_apply_anaglyph_mode()
 				
 		elif event.keycode == KEY_EQUAL: ipd += 0.005
 		elif event.keycode == KEY_MINUS: ipd = max(0.0, ipd - 0.005)
+
+func _apply_anaglyph_mode() -> void:
+	if _shader_canvas:
+		_shader_canvas.visible = _anaglyph_enabled
+
+	if not _anaglyph_enabled:
+		if left_cam:
+			left_cam.clear_current()
+		if right_cam:
+			right_cam.clear_current()
+
+		if left_vp and left_vp.get_parent():
+			remove_child(left_vp)
+		if right_vp and right_vp.get_parent():
+			remove_child(right_vp)
+
+		if base_camera:
+			base_camera.make_current()
+	else:
+		if left_vp and not left_vp.get_parent():
+			add_child(left_vp)
+		if right_vp and not right_vp.get_parent():
+			add_child(right_vp)
+
+		if base_camera:
+			base_camera.clear_current()
+		if left_cam:
+			left_cam.make_current()
+		if right_cam:
+			right_cam.make_current()
 
 func _build_shader_overlay(left_tex: ViewportTexture, right_tex: ViewportTexture) -> void:
 	_shader_canvas = CanvasLayer.new()

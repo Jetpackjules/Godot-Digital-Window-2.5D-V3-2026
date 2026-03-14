@@ -33,6 +33,11 @@ func _process(_delta: float) -> void:
 	if _screen_scaler:
 		virtual_window_height = _screen_scaler.virtual_window_height
 
+	# The projection plane must inherit the solved physical screen orientation.
+	# Without this, rotated secondary screens keep their border transform but the
+	# frustum math still behaves like the screen is facing the default axis.
+	global_basis = _window_center.global_basis.orthonormalized()
+
 	# 1. Convert global positions to camera local space (handles all rotation automatically)
 	var t_local: Vector3 = to_local(_target.global_position)
 	var w_local: Vector3 = to_local(_window_center.global_position)

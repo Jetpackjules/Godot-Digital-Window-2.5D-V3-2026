@@ -169,6 +169,15 @@ async def handle_client(websocket, path=None):
                 elif action == "finish_scan":
                     logger.info("Device %s requested scan finish via keyboard.", client_id)
                     set_scan_lock(True, "manual_finish")
+
+                elif action == "viewer_pose":
+                    payload = {
+                        "type": "viewer_pose",
+                        "device_id": data.get("device_id", client_id),
+                        "position": data.get("position", [0.0, 0.0, 0.0]),
+                        "basis": data.get("basis", []),
+                    }
+                    broadcast_json(payload)
                         
                 elif action == "save_preset":
                     name = str(data.get("name", "Unknown Preset"))
