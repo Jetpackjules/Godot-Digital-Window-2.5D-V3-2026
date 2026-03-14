@@ -180,6 +180,7 @@ def main():
         nonlocal last_layout_send_time
         layout_payload = {
             "type": "layout_map",
+            "origin_screen": int(global_origin_id) if global_origin_id is not None else None,
             "screens": {}
         }
         for sid, sdata in global_transforms.items():
@@ -246,6 +247,7 @@ def main():
 
     cv2.namedWindow("Multi-Monitor ArUco Constellation Tracker", cv2.WINDOW_NORMAL)
     cv2.namedWindow("3D Room Spatial Map", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("3D Room Spatial Map", 1200, 960)
     cv2.setMouseCallback("3D Room Spatial Map", mouse_callback)
 
     while True:

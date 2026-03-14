@@ -5,12 +5,13 @@ import json
 import asyncio
 import websockets
 import logging
-from typing import Set
+from typing import Dict, Set
 
 # Configuration
 UDP_IP = "127.0.0.1"
 UDP_PORT = 4243
 WS_PORT = 8080
+AUTO_FINISH_SCAN_WHEN_ALL_REGISTERED_MAPPED = False
 
 def load_presets():
     import os
@@ -27,12 +28,78 @@ logger = logging.getLogger("OpenTrackBridge")
 
 # Global State
 connected_clients: Set[websockets.WebSocketServerProtocol] = set()
+registered_screens_by_client: Dict[websockets.WebSocketServerProtocol, str] = {}
 client_id_counter = 0
 calibration_mode = False
+scan_locked = False
+latest_visible_screen_ids: Set[str] = set()
+latest_mapped_screen_ids: Set[str] = set()
+
+
+def broadcast_json(payload: dict) -> None:
+    if connected_clients:
+        websockets.broadcast(connected_clients, json.dumps(payload))
+
+
+def get_registered_screen_ids() -> Set[str]:
+    return {screen_id for screen_id in registered_screens_by_client.values()}
+
+
+def set_scan_lock(locked: bool, reason: str) -> None:
+    global scan_locked
+    if scan_locked == locked:
+        return
+
+    scan_locked = locked
+    payload = {
+        "type": "scan_lock",
+        "locked": locked,
+        "reason": reason,
+        "expected_screens": sorted(get_registered_screen_ids()),
+        "visible_screens": sorted(latest_visible_screen_ids),
+        "mapped_screens": sorted(latest_mapped_screen_ids),
+    }
+    logger.info(
+        "Scan lock %s (%s). expected=%s visible=%s mapped=%s",
+        "enabled" if locked else "cleared",
+        reason,
+        payload["expected_screens"],
+        payload["visible_screens"],
+        payload["mapped_screens"],
+    )
+    broadcast_json(payload)
+
+
+def broadcast_scan_start(reason: str) -> None:
+    payload = {
+        "type": "scan_start",
+        "reason": reason,
+        "expected_screens": sorted(get_registered_screen_ids()),
+        "visible_screens": sorted(latest_visible_screen_ids),
+        "mapped_screens": sorted(latest_mapped_screen_ids),
+    }
+    logger.info(
+        "Scan start broadcast (%s). expected=%s",
+        reason,
+        payload["expected_screens"],
+    )
+    broadcast_json(payload)
+
+
+def maybe_auto_lock_from_layout(layout_screens: Set[str]) -> None:
+    if not AUTO_FINISH_SCAN_WHEN_ALL_REGISTERED_MAPPED:
+        return
+
+    expected = get_registered_screen_ids()
+    if scan_locked or not expected:
+        return
+
+    if expected.issubset(layout_screens) and expected.issubset(latest_visible_screen_ids) and expected.issubset(latest_mapped_screen_ids):
+        set_scan_lock(True, "all_registered_screens_mapped")
 
 async def handle_client(websocket, path=None):
     """Handles an individual WebSocket connection, assigning an ID and listening for toggles."""
-    global client_id_counter, calibration_mode
+    global client_id_counter, calibration_mode, latest_visible_screen_ids, latest_mapped_screen_ids
     
     # Assign ID
     client_id = client_id_counter
@@ -46,6 +113,7 @@ async def handle_client(websocket, path=None):
             "type": "config",
             "device_id": client_id,
             "calibration_mode": calibration_mode,
+            "scan_locked": scan_locked,
             "presets": load_presets()
         })
         await websocket.send(init_payload)
@@ -75,6 +143,12 @@ async def handle_client(websocket, path=None):
                     d_id = str(data.get("device_id", 0))
                     w = data.get("width", 20.9)
                     h = data.get("height", 11.7)
+
+                    registered_screens_by_client[websocket] = d_id
+                    latest_visible_screen_ids = set()
+                    latest_mapped_screen_ids = set()
+                    set_scan_lock(False, "register_screen")
+                    broadcast_scan_start("register_screen")
                     
                     logger.info(f"Device {client_id} Registered Physical Size: {w}\" x {h}\"")
                     
@@ -91,6 +165,10 @@ async def handle_client(websocket, path=None):
                     
                     with open(config_file, "w") as f:
                         json.dump(configs, f, indent=4)
+
+                elif action == "finish_scan":
+                    logger.info("Device %s requested scan finish via keyboard.", client_id)
+                    set_scan_lock(True, "manual_finish")
                         
                 elif action == "save_preset":
                     name = str(data.get("name", "Unknown Preset"))
@@ -119,6 +197,7 @@ async def handle_client(websocket, path=None):
         logger.warning(f"Connection lost to Device {client_id}! Removing from sync.")
     finally:
         connected_clients.remove(websocket)
+        registered_screens_by_client.pop(websocket, None)
         logger.info(f"Godot Device '{client_id}' disconnected. Total devices: {len(connected_clients)}")
 
 async def udp_listener_task():
@@ -139,6 +218,7 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
+        global latest_visible_screen_ids, latest_mapped_screen_ids
         # 1. Intercept OpenCV JSON Layout Maps
         if data.startswith(b'{'):
             try:
@@ -147,11 +227,17 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
                 msg_type = json_data.get("type")
                 if msg_type:
                     if msg_type == "layout_map":
+                        layout_screens = set(json_data.get("screens", {}).keys())
+                        latest_mapped_screen_ids = layout_screens
                         print("Intercepted Layout Map from OpenCV! Broadcasting to Godot clients...")
                     elif msg_type == "scan_status":
+                        latest_visible_screen_ids = {str(screen_id) for screen_id in json_data.get("visible_screens", [])}
+                        latest_mapped_screen_ids = {str(screen_id) for screen_id in json_data.get("mapped_screens", [])}
                         print(f"Tracker status: {json_data.get('state', 'unknown')}")
                     if connected_clients:
                         websockets.broadcast(connected_clients, decoded)
+                    if msg_type == "layout_map":
+                        maybe_auto_lock_from_layout(set(json_data.get("screens", {}).keys()))
                     return
             except:
                 pass

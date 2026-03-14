@@ -62,7 +62,7 @@ print("\nStep 2: Injecting iOS Safari Native Input Workaround...")
 if EXPORT_PATH.exists():
     with open(EXPORT_PATH, 'r', encoding='utf-8') as f:
         html_content = f.read()
-        
+
     if "function promptScreenSize" not in html_content:
         # Inject standard JS prompt at the bottom of the body
         injection = """
@@ -74,12 +74,65 @@ if EXPORT_PATH.exists():
         </script>
         """
         html_content = html_content.replace('</body>', injection + '\n</body>')
-        
-        with open(EXPORT_PATH, 'w', encoding='utf-8') as f:
-            f.write(html_content)
         print("  -> Successfully injected native window.prompt() fallback into HTML.")
     else:
         print("  -> Native UI fallback is already injected into the HTML.")
+
+    if "window.enableWakeLock" not in html_content:
+        wake_lock_injection = """
+        <script>
+            // Best-effort mobile wake lock so calibration/scan screens do not dim out mid-session.
+            window.__godotWakeLock = null;
+            window.enableWakeLock = async function () {
+                if (!('wakeLock' in navigator) || document.hidden) {
+                    return false;
+                }
+                try {
+                    if (window.__godotWakeLock) {
+                        return true;
+                    }
+                    window.__godotWakeLock = await navigator.wakeLock.request('screen');
+                    window.__godotWakeLock.addEventListener('release', function () {
+                        window.__godotWakeLock = null;
+                    });
+                    return true;
+                } catch (err) {
+                    console.warn('Wake lock request failed:', err);
+                    return false;
+                }
+            };
+
+            window.disableWakeLock = async function () {
+                if (window.__godotWakeLock) {
+                    await window.__godotWakeLock.release();
+                    window.__godotWakeLock = null;
+                }
+            };
+
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) {
+                    window.enableWakeLock();
+                }
+            });
+
+            ['click', 'touchend', 'keydown'].forEach(function (eventName) {
+                window.addEventListener(eventName, function () {
+                    window.enableWakeLock();
+                }, { passive: true });
+            });
+
+            window.addEventListener('load', function () {
+                window.enableWakeLock();
+            });
+        </script>
+        """
+        html_content = html_content.replace('</body>', wake_lock_injection + '\n</body>')
+        print("  -> Successfully injected best-effort screen wake lock helper into HTML.")
+    else:
+        print("  -> Screen wake lock helper is already injected into the HTML.")
+
+    with open(EXPORT_PATH, 'w', encoding='utf-8') as f:
+        f.write(html_content)
 else:
     print(f"  ! Could not find the HTML Export file at {EXPORT_PATH}")
 

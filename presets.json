@@ -10,5 +10,9 @@
     "Ipad (Windowed) (Safari not fullscreen)": {
         "width": 8.875,
         "height": 5.375
+    },
+    "Iphone 16 Pro (Landscape)": {
+        "width": 5.3125,
+        "height": 2.5625
     }
 }

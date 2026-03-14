@@ -38,6 +38,7 @@ var aruco_markers: Array[Texture2D] = []
 @export var show_debug_view: bool = false
 @export var debug_toggle_key: Key = KEY_TAB
 @export var diagnostics_toggle_key: Key = KEY_R
+@export var finish_scan_key: Key = KEY_P
 @export var rescan_key: Key = KEY_F6
 @export var edit_screen_size_key: Key = KEY_F7
 
@@ -68,8 +69,12 @@ var setup_body_label: Label
 var setup_hint_label: Label
 var rescan_button: Button
 var edit_size_button: Button
+var setup_action_row: FlowContainer
 
 const LOCAL_SETUP_PATH := "user://screen_setup.json"
+const MARKER_SLOT_COUNT := 6
+const WS_RETRY_INTERVAL_SEC := 2.0
+const WS_CONNECT_TIMEOUT_SEC := 4.0
 
 enum SetupState {
 	BOOTING,
@@ -83,6 +88,19 @@ var setup_state: int = SetupState.BOOTING
 var _screen_registered: bool = false
 var _has_received_config: bool = false
 var _last_scan_state: String = ""
+var _scan_locked: bool = false
+var _has_layout_solution: bool = false
+var _next_ws_retry_msec: int = 0
+var _ws_connect_attempt_count: int = 0
+var _last_ws_connect_error: int = OK
+var _runtime_page_host: String = ""
+var _runtime_display_mode: String = "browser"
+var _ws_connect_started_msec: int = 0
+var _has_live_tracking_data: bool = false
+var _has_main_screen_reference: bool = false
+var _main_screen_id: String = ""
+var _main_screen_position: Vector3 = Vector3.ZERO
+var _main_screen_basis: Basis = Basis.IDENTITY
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
@@ -374,16 +392,8 @@ func _ready():
 		aruco_markers.append(ImageTexture.create_from_image(img))
 			
 	if use_websocket:
-		if OS.has_feature("web"):
-			var host = JavaScriptBridge.eval("window.location.hostname")
-			if host != null and str(host) != "":
-				websocket_url = "ws://" + str(host) + ":8080"
-				
-		var err = ws.connect_to_url(websocket_url)
-		if err == OK:
-			print("Godot WebClient is reaching out to Python Bridge at ", websocket_url)
-		else:
-			push_error("Failed to initiate WebSocket connection. Error code: ", err)
+		_capture_web_runtime_debug()
+		_try_connect_websocket(true)
 	else:
 		var error = udp.bind(port, "127.0.0.1")
 		if error == OK:
@@ -398,6 +408,7 @@ func _ready():
 		"Connecting to the sync bridge and waiting for device setup...",
 		""
 	)
+	_refresh_connecting_debug()
 
 func _setup_debug_view():
 	# ---------------------------------------------------------
@@ -442,21 +453,22 @@ func _setup_debug_view():
 	setup_hint_label.add_theme_color_override("font_color", Color(0.82, 0.82, 0.82, 1))
 	status_box.add_child(setup_hint_label)
 
-	var action_row = HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 10)
-	status_box.add_child(action_row)
+	setup_action_row = FlowContainer.new()
+	setup_action_row.add_theme_constant_override("h_separation", 10)
+	setup_action_row.add_theme_constant_override("v_separation", 8)
+	status_box.add_child(setup_action_row)
 
 	rescan_button = Button.new()
-	rescan_button.text = "Rescan Layout"
+	rescan_button.text = "Rescan All Screens"
 	rescan_button.visible = false
 	rescan_button.pressed.connect(_restart_scan_flow)
-	action_row.add_child(rescan_button)
+	setup_action_row.add_child(rescan_button)
 
 	edit_size_button = Button.new()
 	edit_size_button.text = "Edit Screen Size"
 	edit_size_button.visible = false
 	edit_size_button.pressed.connect(_show_screen_setup)
-	action_row.add_child(edit_size_button)
+	setup_action_row.add_child(edit_size_button)
 
 	setup_overlay.add_child(setup_status_panel)
 	
@@ -685,6 +697,121 @@ func _apply_screen_dimensions_to_scaler(width_inches: float, height_inches: floa
 		screen_scaler.physical_width_meters = width_inches * 0.0254
 		screen_scaler.physical_height_meters = height_inches * 0.0254
 
+func _current_marker_slot() -> int:
+	return posmod(device_id, MARKER_SLOT_COUNT)
+
+func _capture_web_runtime_debug() -> void:
+	if not OS.has_feature("web"):
+		return
+
+	var host = JavaScriptBridge.eval("window.location.hostname")
+	if host != null and str(host) != "":
+		_runtime_page_host = str(host)
+
+	var standalone = JavaScriptBridge.eval("(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true")
+	_runtime_display_mode = "standalone" if bool(standalone) else "browser tab"
+
+func _resolve_websocket_url() -> String:
+	if OS.has_feature("web"):
+		if _runtime_page_host == "":
+			_capture_web_runtime_debug()
+		if _runtime_page_host != "":
+			return "ws://" + _runtime_page_host + ":8080"
+	return websocket_url
+
+func _try_connect_websocket(force: bool = false) -> void:
+	if not use_websocket:
+		return
+
+	var state = ws.get_ready_state()
+	if state == WebSocketPeer.STATE_OPEN or state == WebSocketPeer.STATE_CONNECTING or state == WebSocketPeer.STATE_CLOSING:
+		return
+
+	var now = Time.get_ticks_msec()
+	if not force and now < _next_ws_retry_msec:
+		return
+
+	websocket_url = _resolve_websocket_url()
+	_next_ws_retry_msec = now + int(WS_RETRY_INTERVAL_SEC * 1000.0)
+	_ws_connect_started_msec = now
+	_ws_connect_attempt_count += 1
+
+	var err = ws.connect_to_url(websocket_url)
+	_last_ws_connect_error = err
+	if err == OK:
+		print("Godot WebClient is reaching out to Python Bridge at ", websocket_url)
+	else:
+		push_error("Failed to initiate WebSocket connection. Error code: ", err)
+
+func _is_marker_mode_active() -> bool:
+	return calibration_mode and calibration_ui_panel != null and not calibration_ui_panel.visible
+
+func _layout_transform_from_payload(t_data: Dictionary) -> Dictionary:
+	var r_arr = t_data["R"]
+	var t_arr = t_data["T"]
+	var in_to_m = 0.0254
+
+	return {
+		"position": Vector3(t_arr[0] * in_to_m, -t_arr[1] * in_to_m, -t_arr[2] * in_to_m),
+		"basis": Basis(
+			Vector3(r_arr[0][0], -r_arr[1][0], -r_arr[2][0]),
+			Vector3(-r_arr[0][1], r_arr[1][1], r_arr[2][1]),
+			Vector3(-r_arr[0][2], r_arr[1][2], r_arr[2][2])
+		)
+	}
+
+func _reset_websocket_peer() -> void:
+	ws = WebSocketPeer.new()
+	_ws_connect_started_msec = 0
+
+func _is_ws_connect_stalled(state: int) -> bool:
+	if state != WebSocketPeer.STATE_CONNECTING or _ws_connect_started_msec <= 0:
+		return false
+	return (Time.get_ticks_msec() - _ws_connect_started_msec) >= int(WS_CONNECT_TIMEOUT_SEC * 1000.0)
+
+func _ws_state_label(state: int) -> String:
+	match state:
+		WebSocketPeer.STATE_CONNECTING:
+			return "CONNECTING"
+		WebSocketPeer.STATE_OPEN:
+			return "OPEN"
+		WebSocketPeer.STATE_CLOSING:
+			return "CLOSING"
+		WebSocketPeer.STATE_CLOSED:
+			return "CLOSED"
+		_:
+			return "UNKNOWN(%s)" % state
+
+func _refresh_connecting_debug(state: int = -1) -> void:
+	if not use_websocket or _has_received_config or setup_state != SetupState.BOOTING:
+		return
+	if not setup_body_label or not setup_hint_label:
+		return
+
+	if state == -1:
+		state = ws.get_ready_state()
+
+	var retry_in = max(0.0, float(_next_ws_retry_msec - Time.get_ticks_msec()) / 1000.0)
+	var connect_age = max(0.0, float(Time.get_ticks_msec() - _ws_connect_started_msec) / 1000.0) if _ws_connect_started_msec > 0 else 0.0
+	var page_host = _runtime_page_host if _runtime_page_host != "" else "unknown"
+
+	setup_body_label.text = "Connecting to the sync bridge and waiting for device setup.\n\nPage host: %s\nWS target: %s\nWS state: %s\nConnect attempts: %d\nLast connect error: %d\nConnect age: %.1fs\nNext retry: %.1fs\nDisplay mode: %s" % [
+		page_host,
+		websocket_url,
+		_ws_state_label(state),
+		_ws_connect_attempt_count,
+		_last_ws_connect_error,
+		connect_age,
+		retry_in,
+		_runtime_display_mode
+	]
+	setup_hint_label.text = "If browser tabs work but a saved web app does not, fully close the saved app and reopen the normal URL once to refresh its cached export."
+
+func _sync_setup_visibility() -> void:
+	var marker_mode_active = _is_marker_mode_active()
+	if setup_status_panel:
+		setup_status_panel.visible = not marker_mode_active
+
 func _set_setup_state(state: int, title: String, body: String, hint: String) -> void:
 	setup_state = state
 
@@ -694,12 +821,40 @@ func _set_setup_state(state: int, title: String, body: String, hint: String) -> 
 		setup_body_label.text = body
 	if setup_hint_label:
 		setup_hint_label.text = hint
-	if setup_status_panel:
-		setup_status_panel.visible = true
 	if rescan_button:
 		rescan_button.visible = _screen_registered
 	if edit_size_button:
 		edit_size_button.visible = _has_received_config
+	_refresh_setup_controls()
+	_sync_setup_visibility()
+	_layout_setup_status_panel()
+
+func _refresh_setup_controls() -> void:
+	var marker_mode_active = _is_marker_mode_active()
+
+	if setup_body_label:
+		setup_body_label.visible = true
+
+	if setup_hint_label:
+		setup_hint_label.visible = true
+
+	if rescan_button:
+		rescan_button.text = "Rescan All Screens"
+
+	if edit_size_button:
+		edit_size_button.text = "Edit Screen Size"
+
+func _layout_setup_status_panel() -> void:
+	if not setup_status_panel:
+		return
+
+	if _is_marker_mode_active():
+		return
+
+	var viewport_size = get_viewport().get_visible_rect().size
+	var panel_width = clampf(viewport_size.x - 48.0, 240.0, 460.0)
+	setup_status_panel.custom_minimum_size = Vector2(panel_width, 0)
+	setup_status_panel.position = Vector2(24.0, 24.0)
 
 func _show_screen_setup() -> void:
 	if not calibration_ui_panel:
@@ -724,12 +879,14 @@ func _begin_scan_flow() -> void:
 	calibration_ui_panel.visible = false
 	_screen_registered = true
 	_last_scan_state = ""
+	_scan_locked = false
+	_has_layout_solution = false
 	_set_calibration_mode(true)
 	_set_setup_state(
 		SetupState.SCANNING,
-		"Show Markers",
-		"Marker mode is active. Point the tracking camera at this screen so the room layout can lock in.",
-		"Press F6 to force a rescan or F7 to edit this screen size."
+		"Marker Scan Active",
+		"This screen is showing ArUco markers for the shared room scan.",
+		"Press P on any screen to finish once the full layout is visible, or press F7 to edit this screen size."
 	)
 
 func _register_screen_dimensions(width_inches: float, height_inches: float, save_local: bool) -> void:
@@ -750,7 +907,7 @@ func _register_screen_dimensions(width_inches: float, height_inches: float, save
 	print("Registering Screen Dimensions! W: ", width_inches, " H: ", height_inches)
 
 	if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
-		var normalized_id = device_id % aruco_markers.size() if aruco_markers.size() > 0 else device_id
+		var normalized_id = _current_marker_slot()
 		var msg = {
 			"action": "register_screen",
 			"device_id": normalized_id,
@@ -770,6 +927,70 @@ func _restart_scan_flow() -> void:
 		_register_screen_dimensions(width_inches, height_inches, false)
 	else:
 		_show_screen_setup()
+
+func _handle_scan_start(data: Dictionary) -> void:
+	if not _screen_registered:
+		return
+
+	_begin_scan_flow()
+
+	var expected = _format_screen_ids(data.get("expected_screens", []))
+	_set_setup_state(
+		SetupState.SCANNING,
+		"Global Room Scan",
+		"Markers are now active on every registered screen for a shared room scan.",
+		"Expected screens: " + expected + " | Press P on any screen to finish once the full layout is visible."
+	)
+
+func _request_finish_scan() -> void:
+	if not use_websocket or ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+
+	var msg = {
+		"action": "finish_scan",
+		"device_id": _current_marker_slot()
+	}
+	ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+
+func _complete_scan_lock(reason: String) -> void:
+	_scan_locked = true
+	_set_calibration_mode(false)
+
+	if _has_layout_solution:
+		var body = "Screen layout locked. Head tracking is now driving the view."
+		if reason == "manual_finish":
+			body = "Scan manually finished. Using the latest solved layout for this screen."
+		elif reason == "all_registered_screens_mapped":
+			body = "All registered screens were mapped. Head tracking is now driving the view."
+
+		_set_setup_state(
+			SetupState.READY,
+			"Tracking Live",
+			body,
+			"Press F6 to start a new room scan on every registered screen, or F7 to edit this screen's size."
+		)
+	else:
+		_set_setup_state(
+			SetupState.ERROR,
+			"Scan Finished Without Layout",
+			"This screen never received a solved room transform before the scan was finished.",
+			"Press F6 to rescan or F7 to edit this screen size."
+		)
+
+func _handle_scan_lock(data: Dictionary) -> void:
+	var locked = bool(data.get("locked", false))
+	var reason = str(data.get("reason", ""))
+	_scan_locked = locked
+
+	if locked:
+		_complete_scan_lock(reason)
+	elif _screen_registered and not calibration_mode and (calibration_ui_panel == null or not calibration_ui_panel.visible):
+		_set_setup_state(
+			SetupState.SCANNING,
+			"Scan Unlocked",
+			"Room scanning is active again for registered screens.",
+			"Press F6 if you need to restart the shared room scan."
+		)
 
 func _try_auto_register_saved_screen() -> bool:
 	var local_config = _load_local_screen_config()
@@ -847,6 +1068,8 @@ func _input(event):
 				if diagnostics_label.visible and not show_debug_view:
 					show_debug_view = true
 					if debug_canvas: debug_canvas.visible = true
+		elif event.keycode == finish_scan_key:
+			_request_finish_scan()
 		elif event.keycode == rescan_key:
 			_restart_scan_flow()
 		elif event.keycode == edit_screen_size_key:
@@ -855,9 +1078,12 @@ func _input(event):
 func _set_calibration_mode(is_on: bool):
 	calibration_mode = is_on
 	print("Calibration mode set to ", is_on)
+	_refresh_setup_controls()
+	_sync_setup_visibility()
+	_layout_setup_status_panel()
 
 	if calibration_mode:
-		print("Displaying Calibration Marker #", device_id)
+		print("Displaying Calibration Marker Slot #", _current_marker_slot())
 		if not aruco_canvas:
 			_setup_debug_view()
 		
@@ -874,7 +1100,7 @@ func _set_calibration_mode(is_on: bool):
 			# Generate 4 Distinct Corner ArUcos
 			# They MUST be unique so the camera can calculate screen rotation/orientation
 			# Using our new dynamically padded OpenCV DICT_4X4_50 array:
-			var base_id = (device_id % 6) * 4 + 10
+			var base_id = _current_marker_slot() * 4 + 10
 			var corner_textures = [
 				aruco_markers[base_id],     # TL
 				aruco_markers[base_id + 1], # TR
@@ -901,7 +1127,8 @@ func _set_calibration_mode(is_on: bool):
 				return rect
 			
 			# Instantiate the 5-Point Constellation
-			var center_tex = aruco_markers[device_id % aruco_markers.size()] if aruco_markers.size() > 0 else null
+			var center_slot = _current_marker_slot()
+			var center_tex = aruco_markers[center_slot] if center_slot < aruco_markers.size() else null
 			var center = create_rect.call("CenterArUco", 0.5, 0.5, center_tex)
 			
 			var tl = create_rect.call("TopLeftArUco", 0.0, 0.0, corner_textures[0])
@@ -920,6 +1147,9 @@ var _was_ws_connected: bool = false
 var _initial_apply_done: bool = false
 
 func _process(_delta):
+	if setup_status_panel and setup_status_panel.visible:
+		_layout_setup_status_panel()
+
 	# DYNAMICALLY RESIZE CONSTELLATION SQUARES
 	# Prevents Godot UI anchors from stretching perfect ArUco squares into useless rectangles!
 	if calibration_mode and aruco_canvas and aruco_canvas.visible:
@@ -927,38 +1157,37 @@ func _process(_delta):
 		if bg:
 			var viewport_size = get_viewport().get_visible_rect().size
 			var shortest_edge = min(viewport_size.x, viewport_size.y)
-			var box_size = shortest_edge * 0.40 # Increased to 40% for better long-distance camera tracking!
+			var box_size = shortest_edge * 0.40
 			var sq_size = Vector2(box_size, box_size)
-			
+
 			# Resize Center (Needs special offset to remain truly centered)
 			var center = bg.get_node_or_null("CenterArUco")
 			if center:
 				center.custom_minimum_size = sq_size
 				center.size = sq_size
 				center.position = Vector2((viewport_size.x - box_size) / 2.0, (viewport_size.y - box_size) / 2.0)
-				
-			# Pad the corners inward so the black border doesn't clip off the screen bezel!
-			# OpenCV strictly relies on a white-to-black contrast margin to find the squares.
-			var pad = box_size * 0.15 # 15% of the ArUco's size translates to a thick 1-pixel white border equivalent!
-			
+
+			# Pad the corners inward so the black border doesn't clip off the screen bezel.
+			var pad = box_size * 0.15
+
 			var tl = bg.get_node_or_null("TopLeftArUco")
 			if tl:
 				tl.custom_minimum_size = sq_size
 				tl.size = sq_size
 				tl.position = Vector2(pad, pad)
-				
+
 			var tr = bg.get_node_or_null("TopRightArUco")
 			if tr:
 				tr.custom_minimum_size = sq_size
 				tr.size = sq_size
 				tr.position = Vector2(viewport_size.x - box_size - pad, pad)
-				
+
 			var bl = bg.get_node_or_null("BottomLeftArUco")
 			if bl:
 				bl.custom_minimum_size = sq_size
 				bl.size = sq_size
 				bl.position = Vector2(pad, viewport_size.y - box_size - pad)
-				
+
 			var br = bg.get_node_or_null("BottomRightArUco")
 			if br:
 				br.custom_minimum_size = sq_size
@@ -977,6 +1206,15 @@ func _process(_delta):
 	if use_websocket:
 		ws.poll()
 		var state = ws.get_ready_state()
+
+		if _is_ws_connect_stalled(state):
+			print("WebSocket connect attempt stalled. Recreating peer and retrying.")
+			_last_ws_connect_error = ERR_TIMEOUT
+			_reset_websocket_peer()
+			_try_connect_websocket(true)
+			state = ws.get_ready_state()
+
+		_refresh_connecting_debug(state)
 		
 		if state == WebSocketPeer.STATE_OPEN:
 			if not _was_ws_connected:
@@ -997,6 +1235,7 @@ func _process(_delta):
 						device_id = data.get("device_id", 0)
 						print("Server assigned Godot Device ID: ", device_id)
 						_has_received_config = true
+						_scan_locked = bool(data.get("scan_locked", false))
 						_set_calibration_mode(data.get("calibration_mode", false))
 						
 						if data.has("presets"):
@@ -1018,6 +1257,12 @@ func _process(_delta):
 						_set_calibration_mode(data.get("calibration_mode", false))
 						print("Server toggled ArUco Calibration!")
 
+					elif msg_type == "scan_start":
+						_handle_scan_start(data)
+
+					elif msg_type == "scan_lock":
+						_handle_scan_lock(data)
+
 					elif msg_type == "scan_status":
 						_handle_scan_status(data)
 						
@@ -1025,46 +1270,46 @@ func _process(_delta):
 						_raw_x = data.get("x", 0.0)
 						_raw_y = data.get("y", 0.0)
 						_raw_z = data.get("z", 60.0)
+						_has_live_tracking_data = true
 						has_new_data = true
 						
 					elif msg_type == "layout_map":
 						var screens = data.get("screens", {})
-						var my_id_str = str(device_id % aruco_markers.size() if aruco_markers.size() > 0 else device_id)
+						var origin_screen_id = str(data.get("origin_screen", ""))
+						if origin_screen_id != "" and screens.has(origin_screen_id):
+							var origin_transform = _layout_transform_from_payload(screens[origin_screen_id])
+							_main_screen_id = origin_screen_id
+							_main_screen_position = origin_transform["position"]
+							_main_screen_basis = origin_transform["basis"]
+							_has_main_screen_reference = true
+
+						var my_id_str = str(_current_marker_slot())
 						if screens.has(my_id_str):
-							var t_data = screens[my_id_str]
-							var r_arr = t_data["R"]
-							var t_arr = t_data["T"]
-							
-							# Convert OpenCV translation block from inches to meters
-							var in_to_m = 0.0254
-							# OpenCV is Right-Handed Y-Down, Godot is Right-Handed Y-Up.
-							var target_pos = Vector3(t_arr[0] * in_to_m, -t_arr[1] * in_to_m, -t_arr[2] * in_to_m)
-							
-							var target_basis = Basis(
-								Vector3(r_arr[0][0], -r_arr[1][0], -r_arr[2][0]),
-								Vector3(-r_arr[0][1], r_arr[1][1], r_arr[2][1]),
-								Vector3(-r_arr[0][2], r_arr[1][2], r_arr[2][2])
-							)
+							var screen_transform = _layout_transform_from_payload(screens[my_id_str])
+							var target_pos: Vector3 = screen_transform["position"]
+							var target_basis: Basis = screen_transform["basis"]
 							
 							if window_center:
 								window_center.global_transform.basis = target_basis
 								window_center.global_position = target_pos
 								print("Successfully Stitched Viewport Coordinate Offset: ", target_pos)
-								
-							# Hide ArUco Markers and engage Face Tracking!
-							_set_calibration_mode(false)
-							_set_setup_state(
-								SetupState.READY,
-								"Tracking Live",
-								"Screen layout locked. Head tracking is now driving the view.",
-								"Press F6 to rescan the room or F7 to edit this screen's size."
-							)
+								_has_layout_solution = true
+
+							if not _has_live_tracking_data and _has_main_screen_reference:
+								_raw_x = 0.0
+								_raw_y = 0.0
+								_raw_z = 0.0
+								_apply_tracking_data()
+
+							if _scan_locked:
+								_complete_scan_lock("scan_lock")
 						
 					# Legacy UDP format fallback just in case
 					elif data.has("x"):
 						_raw_x = data.get("x", 0.0)
 						_raw_y = data.get("y", 0.0)
 						_raw_z = data.get("z", 60.0)
+						_has_live_tracking_data = true
 						has_new_data = true
 						
 		elif state == WebSocketPeer.STATE_CLOSED and _was_ws_connected:
@@ -1074,8 +1319,11 @@ func _process(_delta):
 				SetupState.ERROR,
 				"Connection Lost",
 				"Lost connection to the bridge. Tracking and layout updates are paused.",
-				"Restart the stack and reconnect, or press F6 to retry after the bridge returns."
+				"Retrying automatically. Press F6 after the bridge returns if you need to restart the room scan."
 			)
+			_try_connect_websocket()
+		elif state == WebSocketPeer.STATE_CLOSED:
+			_try_connect_websocket()
 	else:
 		while udp.get_available_packet_count() > 0:
 			var packet = udp.get_packet()
@@ -1083,6 +1331,7 @@ func _process(_delta):
 				_raw_x = packet.decode_double(0)
 				_raw_y = packet.decode_double(8)
 				_raw_z = packet.decode_double(16)
+				_has_live_tracking_data = true
 				has_new_data = true
 			
 	if has_new_data:
@@ -1118,8 +1367,8 @@ func _process(_delta):
 			]
 
 func _apply_tracking_data():
-	# The first time we successfully get a tracking packet:
-	if not _face_detected:
+	# The first time we successfully get a real tracking packet:
+	if _has_live_tracking_data and not _face_detected:
 		_face_detected = true
 		if player_node:
 			# Hide the player's physical capsule body so it doesn't block the screen, 
@@ -1144,16 +1393,14 @@ func _apply_tracking_data():
 			((_raw_z * z_dir) * sensitivity.z + 0.5) * mult
 		)
 		
-		# The Window Center sits perfectly at the origin of the Player
-		# So we can just mathematically offset the Camera local to the player's 
-		# current facing direction and flight position!
-		var base_pos = player_node.global_position if player_node else window_center.global_position
-		
-		# Move the camera natively within the player's local rotated basis
-		var final_pos = base_pos
-		if player_node:
-			final_pos += player_node.global_transform.basis * scaled_offset
-		else:
-			final_pos += window_center.global_transform.basis * scaled_offset
+		var reference_pos = player_node.global_position if player_node else window_center.global_position
+		var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
+
+		# Before live tracking arrives, hold a static 50cm view relative to the first scanned screen.
+		if not _has_live_tracking_data and _has_main_screen_reference:
+			reference_pos = _main_screen_position
+			reference_basis = _main_screen_basis
+
+		var final_pos = reference_pos + reference_basis * scaled_offset
 			
 		camera_node.global_position = final_pos
