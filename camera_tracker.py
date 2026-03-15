@@ -6,6 +6,8 @@ import os
 import socket
 import time
 
+TRACKER_CONTROL_PORT = 4244
+
 def make_detector_params():
     params = cv2.aruco.DetectorParameters()
     params.adaptiveThreshWinSizeMin = 3
@@ -154,6 +156,9 @@ def main():
     last_pan_y = 0
     rendered_screen_centers = []
     bridge_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    command_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    command_sock.bind(("127.0.0.1", TRACKER_CONTROL_PORT))
+    command_sock.setblocking(False)
     last_status_blob = ""
     last_status_time = 0.0
     last_layout_send_time = 0.0
@@ -194,6 +199,15 @@ def main():
 
         send_udp_json(layout_payload)
         last_layout_send_time = time.time()
+
+    def reset_spatial_map():
+        nonlocal global_origin_id, smoothed_T_cam
+        print(">>> WIPING SPATIAL MAP RE-INITIALIZING <<<")
+        global_transforms.clear()
+        global_origin_id = None
+        rendered_screen_centers.clear()
+        screen_trackers.clear()
+        smoothed_T_cam = None
 
     def mouse_callback(event, x, y, flags, param):
         nonlocal view_pitch, view_yaw, view_dist, view_pan_x, view_pan_y, mouse_is_down, pan_is_down, last_mouse_x, last_mouse_y, last_pan_x, last_pan_y, global_origin_id
@@ -251,6 +265,16 @@ def main():
     cv2.setMouseCallback("3D Room Spatial Map", mouse_callback)
 
     while True:
+        try:
+            cmd_data, _ = command_sock.recvfrom(65535)
+            cmd_json = json.loads(cmd_data.decode("utf-8"))
+            if cmd_json.get("type") == "reset_spatial_map":
+                reset_spatial_map()
+        except BlockingIOError:
+            pass
+        except Exception as exc:
+            print(f"[tracker] Failed to process control command: {exc}")
+
         ret, frame = cap.read()
         if not ret:
             break
@@ -727,12 +751,7 @@ def main():
         if key == ord('q'):
             break
         elif key == ord('r') or key == ord('g'):
-            print(">>> WIPING SPATIAL MAP RE-INITIALIZING <<<")
-            global_transforms.clear()
-            global_origin_id = None
-            rendered_screen_centers.clear()
-            screen_trackers.clear()
-            smoothed_T_cam = None
+            reset_spatial_map()
         elif key == ord('x'):
             print(">>> CLEARING SENSOR CALIBRATION <<<")
             camera_matrix = None

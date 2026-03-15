@@ -30,6 +30,14 @@ class_name ScreenScaling
 		_update_from_width_height()
 
 @export_group("Virtual Window Size")
+@export var match_virtual_window_to_physical_height: bool = true :
+	set(value):
+		match_virtual_window_to_physical_height = value
+		if match_virtual_window_to_physical_height:
+			_sync_virtual_window_height_to_physical()
+		else:
+			_update_scale_multiplier()
+
 @export var virtual_window_height: float = 9.0 :
 	set(value):
 		virtual_window_height = value
@@ -60,6 +68,7 @@ func _update_from_diagonal() -> void:
 		physical_height_meters = diagonal_meters * (aspect_ratio_height / aspect_diagonal)
 		physical_width_meters = diagonal_meters * (aspect_ratio_width / aspect_diagonal)
 	_is_updating = false
+	_sync_virtual_window_height_to_physical()
 	_update_scale_multiplier()
 
 func _update_from_width_height() -> void:
@@ -68,7 +77,15 @@ func _update_from_width_height() -> void:
 	var diag_meters = sqrt(pow(physical_width_meters, 2) + pow(physical_height_meters, 2))
 	screen_diagonal_inches = diag_meters / 0.0254
 	_is_updating = false
+	_sync_virtual_window_height_to_physical()
 	_update_scale_multiplier()
+
+func _sync_virtual_window_height_to_physical() -> void:
+	if not match_virtual_window_to_physical_height:
+		return
+	if physical_height_meters <= 0.0:
+		return
+	virtual_window_height = physical_height_meters
 
 func _update_scale_multiplier() -> void:
 	if physical_height_meters > 0:

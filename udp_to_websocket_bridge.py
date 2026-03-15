@@ -11,6 +11,7 @@ from typing import Dict, Set
 UDP_IP = "127.0.0.1"
 UDP_PORT = 4243
 WS_PORT = 8080
+TRACKER_CONTROL_PORT = 4244
 AUTO_FINISH_SCAN_WHEN_ALL_REGISTERED_MAPPED = False
 
 def load_presets():
@@ -84,6 +85,14 @@ def broadcast_scan_start(reason: str) -> None:
         payload["expected_screens"],
     )
     broadcast_json(payload)
+
+
+def send_tracker_command(payload: dict) -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(json.dumps(payload).encode("utf-8"), (UDP_IP, TRACKER_CONTROL_PORT))
+    finally:
+        sock.close()
 
 
 def maybe_auto_lock_from_layout(layout_screens: Set[str]) -> None:
@@ -169,6 +178,14 @@ async def handle_client(websocket, path=None):
                 elif action == "finish_scan":
                     logger.info("Device %s requested scan finish via keyboard.", client_id)
                     set_scan_lock(True, "manual_finish")
+
+                elif action == "rescan_layout":
+                    logger.info("Device %s requested a full room rescan.", client_id)
+                    latest_visible_screen_ids = set()
+                    latest_mapped_screen_ids = set()
+                    set_scan_lock(False, "rescan_layout")
+                    send_tracker_command({"type": "reset_spatial_map"})
+                    broadcast_scan_start("rescan_layout")
 
                 elif action == "viewer_pose":
                     payload = {

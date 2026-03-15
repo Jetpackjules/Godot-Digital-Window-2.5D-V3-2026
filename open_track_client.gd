@@ -933,6 +933,8 @@ func _begin_scan_flow() -> void:
 	_last_scan_state = ""
 	_scan_locked = false
 	_has_layout_solution = false
+	_has_main_screen_reference = false
+	_main_screen_id = ""
 	_set_calibration_mode(true)
 	_set_setup_state(
 		SetupState.SCANNING,
@@ -975,7 +977,13 @@ func _restart_scan_flow() -> void:
 	var width_inches = float(local_config.get("width", w_input.text.to_float() if w_input else 0.0))
 	var height_inches = float(local_config.get("height", h_input.text.to_float() if h_input else 0.0))
 
-	if width_inches > 0.0 and height_inches > 0.0:
+	if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN and _screen_registered:
+		var msg = {
+			"action": "rescan_layout",
+			"device_id": _current_marker_slot()
+		}
+		ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+	elif width_inches > 0.0 and height_inches > 0.0:
 		_register_screen_dimensions(width_inches, height_inches, false)
 	else:
 		_show_screen_setup()

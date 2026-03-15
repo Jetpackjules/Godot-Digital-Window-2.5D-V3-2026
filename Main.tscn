@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" uid="uid://dk1sfjmbix8yc" path="res://Views/test_box.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
+[ext_resource type="Script" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
 [ext_resource type="Texture2D" uid="uid://wtfpc740cgej" path="res://aruco_marker_1.png" id="11_aruco_1"]
 [ext_resource type="Texture2D" uid="uid://dsqcdnfuwx8oe" path="res://aruco_marker_2.png" id="12_aruco_2"]
 [ext_resource type="Texture2D" uid="uid://c2m5aisglqfl2" path="res://aruco_marker_3.png" id="13_aruco_3"]
@@ -38,15 +39,16 @@ albedo_color = Color(1, 0, 0, 1)
 
 [sub_resource type="QuadMesh" id="QuadMesh_cm0pq"]
 material = SubResource("StandardMaterial3D_r0du0")
-size = Vector2(0.25, 4.5)
+size = Vector2(0.021, 0.37199485)
 
 [sub_resource type="QuadMesh" id="QuadMesh_fos0i"]
 material = SubResource("StandardMaterial3D_r0du0")
-size = Vector2(0.25, 8)
+size = Vector2(0.58665746, 0.021)
 
-[sub_resource type="BoxMesh" id="BoxMesh_glv2v"]
+[sub_resource type="BoxMesh" id="BoxMesh_rjuhk"]
+lightmap_size_hint = Vector2i(8, 12)
 flip_faces = true
-size = Vector3(7.111, 4, 4)
+size = Vector3(0.587, 0.33, 0.33)
 
 [node name="Main" type="Node3D" unique_id=1224428574]
 
@@ -86,21 +88,25 @@ screen_scaling_path = NodePath("../../ScreenScaling")
 [node name="MonitorFrame" type="Node3D" parent="Player" unique_id=123123123]
 
 [node name="Red_Border" type="Node3D" parent="Player/MonitorFrame" unique_id=1379736672]
+visible = false
+script = ExtResource("10_qgpa4")
+border_thickness_meters = 0.021
+border_depth_offset_meters = 0.0
 
 [node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=430316341]
-transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 4, 0, 0.125)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.30382875, 0, 0)
 mesh = SubResource("QuadMesh_cm0pq")
 
 [node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1990355786]
-transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, -4, 0, 0.125)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.30382875, 0, 0)
 mesh = SubResource("QuadMesh_cm0pq")
 
 [node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1073289249]
-transform = Transform3D(-4.371139e-08, 1, -4.371139e-08, 0, -4.371139e-08, -1, -1, -4.371139e-08, 1.9106855e-15, 0, 2.25, 0.125)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.17549743, 0)
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=441872831]
-transform = Transform3D(-4.371139e-08, 1, 4.371139e-08, 0, -4.371139e-08, 1, 1, 4.371139e-08, 1.9106855e-15, 0, -2.25, 0.125)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.17549743, 0)
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
@@ -136,7 +142,7 @@ websocket_url = "ws://10.20.211.39:8080"
 script = ExtResource("8_trn2v")
 physical_width_meters = 0.5866574940385341
 physical_height_meters = 0.3299948403966754
-virtual_window_height = 4.5
+virtual_window_height = 0.3299948403966754
 
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
@@ -144,8 +150,8 @@ script = ExtResource("9_vs123")
 current_view_name = "test_box.tscn"
 
 [node name="Box" type="MeshInstance3D" parent="View" unique_id=666923875 instance=ExtResource("9_j4qnp")]
-transform = Transform3D(1.125, 0, 0, 0, 1.125, 0, 0, 0, 1.125, 0, 0, -2.25)
-mesh = SubResource("BoxMesh_glv2v")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.165)
+mesh = SubResource("BoxMesh_rjuhk")
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]
 resources = [PackedStringArray("aruco_0", "aruco_1", "aruco_2", "aruco_3", "aruco_4", "aruco_5"), [ExtResource("10_aruco_0"), ExtResource("11_aruco_1"), ExtResource("12_aruco_2"), ExtResource("13_aruco_3"), ExtResource("14_aruco_4"), ExtResource("15_aruco_5")]]

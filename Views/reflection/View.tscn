@@ -1,0 +1,330 @@
+[gd_scene format=3 uid="uid://crdhnc0igttmq"]
+
+[ext_resource type="Texture2D" uid="uid://b1l85foeal1fv" path="res://Views/reflection/decals/snowylogo01_d.png" id="3_rs8mk"]
+[ext_resource type="PackedScene" uid="uid://b74rbr16tc16v" path="res://Views/reflection/models/reflection.glb" id="4"]
+[ext_resource type="Texture2D" uid="uid://dpvvetx5ji1pr" path="res://Views/reflection/decals/snw_suitad.png" id="4_n3374"]
+[ext_resource type="Texture2D" uid="uid://bx5nuycvlxwyn" path="res://Views/reflection/decals/snw_combat_01.png" id="5_ga63o"]
+[ext_resource type="Texture2D" uid="uid://6ymrd2nbt358" path="res://Views/reflection/decals/snw_security_2.png" id="6_lesbl"]
+[ext_resource type="Texture2D" uid="uid://bfgw7k7uhcju4" path="res://Views/reflection/decals/snw_fairad.png" id="7_8endr"]
+[ext_resource type="Texture2D" uid="uid://bjnuh8v3bocp7" path="res://Views/reflection/decals/snw_planet_01.png" id="8_2podw"]
+[ext_resource type="Texture2D" uid="uid://bdleybuse7qvd" path="res://Views/reflection/decals/snw_security_1.png" id="9_vx1sg"]
+
+[sub_resource type="Environment" id="1"]
+background_mode = 1
+background_color = Color(0.752941, 0.843137, 0.941176, 1)
+tonemap_mode = 4
+ssr_enabled = true
+ssao_enabled = true
+ssil_enabled = true
+sdfgi_enabled = true
+sdfgi_use_occlusion = true
+sdfgi_bounce_feedback = 1.0
+sdfgi_cascades = 3
+sdfgi_min_cell_size = 0.35
+sdfgi_energy = 5.0
+glow_enabled = true
+glow_intensity = 0.2
+fog_light_color = Color(0.682353, 0.701961, 0.541176, 1)
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.02
+volumetric_fog_gi_inject = 0.5
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_gjgmi"]
+frequency = 0.03
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_5pa5h"]
+noise = SubResource("FastNoiseLite_gjgmi")
+seamless = true
+as_normal_map = true
+
+[sub_resource type="StandardMaterial3D" id="2"]
+transparency = 1
+albedo_color = Color(1, 1, 1, 0.5)
+metallic = 1.0
+roughness = 0.25
+normal_enabled = true
+normal_scale = 0.05
+normal_texture = SubResource("NoiseTexture2D_5pa5h")
+refraction_enabled = true
+refraction_texture = SubResource("NoiseTexture2D_5pa5h")
+
+[sub_resource type="BoxMesh" id="3"]
+material = SubResource("2")
+size = Vector3(0.1, 3, 4.25)
+
+[sub_resource type="BoxMesh" id="4"]
+material = SubResource("2")
+size = Vector3(0.1, 3.15, 9.4)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_loc1w"]
+size = Vector2(1000, 1000)
+
+[node name="Reflection" type="Node3D" unique_id=983523286]
+
+[node name="ReflectionModel" parent="." unique_id=1894012207 instance=ExtResource("4")]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1361229509]
+transform = Transform3D(0.952193, 0.103041, 0.287594, -0.305496, 0.321167, 0.896395, 0, -0.9414, 0.337292, 0, 0, 0)
+light_color = Color(0.870588, 0.992157, 0.980392, 1)
+light_energy = 5.0
+light_indirect_energy = 3.0
+shadow_enabled = true
+shadow_bias = 0.04
+directional_shadow_mode = 0
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 1.0
+directional_shadow_max_distance = 60.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=476909700]
+environment = SubResource("1")
+
+[node name="GlassPanes" type="Node3D" parent="." unique_id=11683269]
+
+[node name="SkurVertical" type="MeshInstance3D" parent="GlassPanes" unique_id=895810241]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30.161, 17.1813, -2.50535)
+cast_shadow = 0
+mesh = SubResource("3")
+
+[node name="ReflectionProbe" type="ReflectionProbe" parent="GlassPanes/SkurVertical" unique_id=87449824]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0060043335, 0)
+blend_distance = 0.0
+max_distance = 4000.0
+size = Vector3(10, 2.97, 4.205)
+box_projection = true
+enable_shadows = true
+
+[node name="SkurHorizontal" type="MeshInstance3D" parent="GlassPanes" unique_id=285127461]
+transform = Transform3D(-4.37114e-08, 1, 0, -1, -4.37114e-08, 0, 0, 0, 1, -16.8898, 9.82557, -3.76627)
+cast_shadow = 0
+mesh = SubResource("4")
+
+[node name="ReflectionProbe" type="ReflectionProbe" parent="GlassPanes/SkurHorizontal" unique_id=2107584136]
+blend_distance = 0.0
+max_distance = 4000.0
+size = Vector3(7, 3.05, 9.39)
+box_projection = true
+enable_shadows = true
+
+[node name="SnowyVertical" type="MeshInstance3D" parent="GlassPanes" unique_id=2118669658]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 30.15, 17.181, 2.5)
+cast_shadow = 0
+mesh = SubResource("3")
+
+[node name="ReflectionProbe" type="ReflectionProbe" parent="GlassPanes/SnowyVertical" unique_id=831694366]
+blend_distance = 0.0
+max_distance = 4000.0
+size = Vector3(10, 2.97, 4.205)
+box_projection = true
+enable_shadows = true
+
+[node name="SnowyHorizontal" type="MeshInstance3D" parent="GlassPanes" unique_id=1473250304]
+transform = Transform3D(4.37114e-08, -1, -8.74228e-08, -1, -4.37114e-08, 0, -3.82137e-15, 8.74228e-08, -1, 16.87, 9.826, 3.75)
+cast_shadow = 0
+mesh = SubResource("4")
+
+[node name="ReflectionProbe" type="ReflectionProbe" parent="GlassPanes/SnowyHorizontal" unique_id=1629694297]
+blend_distance = 0.0
+max_distance = 4000.0
+size = Vector3(7, 3.05, 9.39)
+box_projection = true
+enable_shadows = true
+
+[node name="Decals" type="Node3D" parent="." unique_id=969143085]
+
+[node name="Neutral" type="Node3D" parent="Decals" unique_id=975409505]
+
+[node name="SnowyTop1" type="Decal" parent="Decals/Neutral" unique_id=195636951]
+transform = Transform3D(-0.984808, -3.23366e-07, 0.173648, -0.173648, -2.82909e-08, -0.984808, 3.23366e-07, -1, -2.82909e-08, 16.2596, 21.3923, 24.3223)
+size = Vector3(0.4, 0.2, 0.4)
+texture_albedo = ExtResource("3_rs8mk")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="SnowyTop2" type="Decal" parent="Decals/Neutral" unique_id=324574962]
+transform = Transform3D(0.984808, -7.5904e-09, -0.173648, -0.173648, -4.30473e-08, -0.984808, 0, 1, -4.37114e-08, -16.2846, 21.4122, -24.3036)
+size = Vector3(0.4, 0.2, 0.4)
+texture_albedo = ExtResource("3_rs8mk")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="SnowyVent1" type="Decal" parent="Decals/Neutral" unique_id=936045883]
+transform = Transform3D(-0.984808, -7.59041e-09, 0.173648, -0.173648, 4.30473e-08, -0.984808, 0, -1, -4.37114e-08, -0.851167, 26.0872, 19.9217)
+size = Vector3(0.4, 0.2, 0.4)
+texture_albedo = ExtResource("3_rs8mk")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="SnowyVent2" type="Decal" parent="Decals/Neutral" unique_id=1013933948]
+transform = Transform3D(0.984808, -7.5904e-09, -0.173648, -0.173648, -4.30473e-08, -0.984808, 0, 1, -4.37114e-08, 0.849822, 26.0917, -19.9809)
+size = Vector3(0.4, 0.2, 0.4)
+texture_albedo = ExtResource("3_rs8mk")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="Skur" type="Node3D" parent="Decals" unique_id=695647360]
+
+[node name="DressLarge" type="Decal" parent="Decals/Skur" unique_id=1702875145]
+transform = Transform3D(-4.37114e-08, -1, 0, -4.37114e-08, 1.91069e-15, -1, 1, -4.37114e-08, -4.37114e-08, -22.6833, 20.3, -12.5)
+size = Vector3(2.5, 0.2, 3.74)
+texture_albedo = ExtResource("4_n3374")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="CombatLarge" type="Decal" parent="Decals/Skur" unique_id=394314990]
+transform = Transform3D(-4.37114e-08, 1, 3.82137e-15, -4.37114e-08, 1.91069e-15, -1, -1, -4.37114e-08, 4.37114e-08, -17.428, 20.3, -12.5)
+size = Vector3(2.5, 0.2, 3.74)
+texture_albedo = ExtResource("5_ga63o")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="DressSmall" type="Decal" parent="Decals/Skur" unique_id=255309837]
+transform = Transform3D(-1, 8.74228e-08, 4.37114e-08, -4.37114e-08, 1.91069e-15, -1, -8.74228e-08, -1, 1.91069e-15, -22.498, 16.2523, 3.23425)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("4_n3374")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="CombatSmall" type="Decal" parent="Decals/Skur" unique_id=231406606]
+transform = Transform3D(-1, 8.74228e-08, 4.37114e-08, -4.37114e-08, 1.91069e-15, -1, -8.74228e-08, -1, 1.91069e-15, -27.1867, 16.2523, 3.2231)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("5_ga63o")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="DressSmallBack" type="Decal" parent="Decals/Skur" unique_id=519470818]
+transform = Transform3D(1, -2.13163e-14, -4.37114e-08, -4.37114e-08, 1.91069e-15, -1, 2.13163e-14, 1, 1.91068e-15, -27.1867, 16.2523, 3.62674)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("4_n3374")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="CombatSmallBack" type="Decal" parent="Decals/Skur" unique_id=2002974344]
+transform = Transform3D(1, -2.13163e-14, -4.37114e-08, -4.37114e-08, 1.91069e-15, -1, 2.13163e-14, 1, 1.91068e-15, -22.498, 16.2523, 3.66282)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("5_ga63o")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="TopSekLarge" type="Decal" parent="Decals/Skur" unique_id=487059558]
+transform = Transform3D(-1, 0.000698212, 1.05252e-07, -1.05165e-07, 1.24433e-07, -1, -0.000698222, -1, -1.24359e-07, -10.6301, 12.2159, 21.2756)
+size = Vector3(1.2, 0.2, 1.8)
+texture_albedo = ExtResource("6_lesbl")
+normal_fade = 0.99
+upper_fade = 1e-05
+lower_fade = 1e-05
+
+[node name="TopSekSmall" type="Decal" parent="Decals/Skur" unique_id=1583121853]
+transform = Transform3D(-4.37114e-08, -1, 0, -4.37114e-08, 1.91069e-15, -1, 1, -4.37114e-08, -4.37114e-08, -21.2718, 18.1474, 16.5835)
+size = Vector3(0.8, 0.2, 1.2)
+texture_albedo = ExtResource("6_lesbl")
+normal_fade = 0.99
+upper_fade = 1e-05
+lower_fade = 1e-05
+
+[node name="Snowy" type="Node3D" parent="Decals" unique_id=2106466621]
+
+[node name="FairmadeLarge" type="Decal" parent="Decals/Snowy" unique_id=176825910]
+transform = Transform3D(-4.37114e-08, 1, 3.82137e-15, -4.37114e-08, 1.91069e-15, -1, -1, -4.37114e-08, 4.37114e-08, 22.6167, 20.3, 12.5)
+size = Vector3(2.5, 0.2, 3.74)
+texture_albedo = ExtResource("7_8endr")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="PlanetLarge" type="Decal" parent="Decals/Snowy" unique_id=2021585077]
+transform = Transform3D(1.31134e-07, -1, -7.64274e-15, -4.37114e-08, 1.91069e-15, -1, 1, 1.31134e-07, -4.37114e-08, 17.372, 20.3, 12.5)
+size = Vector3(2.5, 0.2, 3.74)
+texture_albedo = ExtResource("8_2podw")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="PlanetSmall" type="Decal" parent="Decals/Snowy" unique_id=1592139592]
+transform = Transform3D(1, -2.13163e-14, -4.37114e-08, -4.37114e-08, 1.91069e-15, -1, 2.13163e-14, 1, 1.91068e-15, 22.502, 16.2523, -3.06575)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("8_2podw")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="FairmadeSmall" type="Decal" parent="Decals/Snowy" unique_id=1510851100]
+transform = Transform3D(1, -2.13163e-14, -4.37114e-08, -4.37114e-08, 1.91069e-15, -1, 2.13163e-14, 1, 1.91068e-15, 27.1855, 16.2523, -3.06575)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("7_8endr")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="PlanetSmallBack" type="Decal" parent="Decals/Snowy" unique_id=608226675]
+transform = Transform3D(-1, -8.74228e-08, 4.37114e-08, -4.37114e-08, 1.91069e-15, -1, 8.74228e-08, -1, -5.73205e-15, 27.1855, 16.2523, -3.66575)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("8_2podw")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="FairmadeSmallBack" type="Decal" parent="Decals/Snowy" unique_id=1442893714]
+transform = Transform3D(-1, -8.74228e-08, 4.37114e-08, -4.37114e-08, 1.91069e-15, -1, 8.74228e-08, -1, -5.73205e-15, 22.4937, 16.2523, -3.66575)
+size = Vector3(1.24, 0.2, 1.87)
+texture_albedo = ExtResource("7_8endr")
+normal_fade = 0.99
+upper_fade = 1.03526e-05
+lower_fade = 0.0
+
+[node name="IcupLarge" type="Decal" parent="Decals/Snowy" unique_id=320746784]
+transform = Transform3D(1, -0.000698125, -1.05252e-07, -1.05165e-07, 1.24433e-07, -1, 0.000698135, 1, 1.24359e-07, 11.3699, 12.2159, -21.3244)
+size = Vector3(1.2, 0.2, 1.8)
+texture_albedo = ExtResource("9_vx1sg")
+normal_fade = 0.99
+upper_fade = 1e-05
+lower_fade = 1e-05
+
+[node name="IcupSmall" type="Decal" parent="Decals/Snowy" unique_id=1663135056]
+transform = Transform3D(-4.37114e-08, 1, 3.82137e-15, -4.37114e-08, 1.91069e-15, -1, -1, -4.37114e-08, 4.37114e-08, 21.2282, 18.1474, -16.4165)
+size = Vector3(0.8, 0.2, 1.2)
+texture_albedo = ExtResource("9_vx1sg")
+normal_fade = 0.99
+upper_fade = 1e-05
+lower_fade = 1e-05
+
+[node name="PointLights" type="Node3D" parent="." unique_id=984868956]
+
+[node name="SkurVentOmniLight" type="OmniLight3D" parent="PointLights" unique_id=414623780]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22.1561, 19.5, 19.7887)
+light_energy = 4.0
+shadow_enabled = true
+shadow_bias = 0.05
+shadow_opacity = 0.85
+shadow_blur = 1.5
+distance_fade_enabled = true
+distance_fade_begin = 10.0
+omni_range = 6.0
+omni_attenuation = 0.5
+
+[node name="SnowyVentOmniLight" type="OmniLight3D" parent="PointLights" unique_id=2069812394]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22.2903, 19.5, -19.8062)
+light_energy = 4.0
+shadow_enabled = true
+shadow_bias = 0.05
+shadow_opacity = 0.85
+shadow_blur = 1.5
+distance_fade_enabled = true
+distance_fade_begin = 10.0
+omni_range = 6.0
+omni_attenuation = 0.5
+
+[node name="Lightfix" type="MeshInstance3D" parent="." unique_id=1638250320]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4.78459, 0)
+mesh = SubResource("PlaneMesh_loc1w")
+
+[editable path="ReflectionModel"]
