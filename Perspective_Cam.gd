@@ -3,6 +3,7 @@ extends Camera3D
 @export var target_path: NodePath
 @export var window_center_path: NodePath
 @export var screen_scaling_path: NodePath
+@export var minimum_window_distance_meters: float = 0.005
 
 var virtual_window_height: float = 4.0
 
@@ -37,17 +38,18 @@ func _process(_delta: float) -> void:
 	# Without this, rotated secondary screens keep their border transform but the
 	# frustum math still behaves like the screen is facing the default axis.
 	global_basis = _window_center.global_basis.orthonormalized()
+	var min_window_distance := maxf(0.001, minimum_window_distance_meters)
 
 	# 1. Convert global positions to camera local space (handles all rotation automatically)
 	var t_local: Vector3 = to_local(_target.global_position)
 	var w_local: Vector3 = to_local(_window_center.global_position)
 
 	# 2. Handle Field of View (Z-Axis distance from target eye to window plane)
-	var target_z_dist: float = max(0.1, abs(t_local.z - w_local.z))
+	var target_z_dist: float = max(min_window_distance, abs(t_local.z - w_local.z))
 	size = virtual_window_height * (near / target_z_dist)
 
 	# 3. Handle Frustum Shear / Offset (X/Y-Axis movement)
-	var window_depth: float = max(0.1, abs(-w_local.z)) 
+	var window_depth: float = max(min_window_distance, abs(-w_local.z))
 	
 	# The shift is the local X/Y difference between the Window Center and the Target Eye
 	var raw_shift: Vector2 = Vector2(w_local.x - t_local.x, w_local.y - t_local.y)

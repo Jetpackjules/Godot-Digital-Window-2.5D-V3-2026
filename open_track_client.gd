@@ -6,6 +6,7 @@ extends Node
 @export var screen_scaler: ScreenScaling # Link to the ScreenScaling node
 
 @export var sensitivity: Vector3 = Vector3(0.01, 0.01, 0.01) # Maps OpenTrack cm to godot base meters
+@export var default_viewer_distance_meters: float = 0.5
 
 # Global Output (accessible from other scripts)
 @export var output_x: float = 0.0
@@ -41,6 +42,9 @@ var aruco_markers: Array[Texture2D] = []
 @export var finish_scan_key: Key = KEY_P
 @export var rescan_key: Key = KEY_F6
 @export var edit_screen_size_key: Key = KEY_F7
+@export var debug_preview_zoom_step: float = 1.0
+@export var debug_preview_min_size: float = 2.0
+@export var debug_preview_max_size: float = 60.0
 
 var udp := PacketPeerUDP.new()
 var ws := WebSocketPeer.new()
@@ -64,21 +68,35 @@ var preset_dropdown: OptionButton
 var global_presets: Dictionary = {}
 var setup_overlay: CanvasLayer
 var setup_status_panel: PanelContainer
+var setup_status_scroll: ScrollContainer
+var setup_status_box: VBoxContainer
 var setup_title_label: Label
 var setup_body_label: Label
 var setup_hint_label: Label
+var setup_diagnostics_label: Label
 var rescan_button: Button
 var edit_size_button: Button
 var setup_action_row: FlowContainer
 var status_toggle_button: Button
+var connect_details_button: Button
+var setup_status_stylebox: StyleBoxFlat
+var calibration_panel_stylebox: StyleBoxFlat
+var calibration_title_label: Label
+var calibration_info_label: Label
+var start_scan_button: Button
+var save_preset_button: Button
+var _selected_preset_name: String = ""
 
 const LOCAL_SETUP_PATH := "user://screen_setup.json"
 const MARKER_SLOT_COUNT := 6
 const WS_RETRY_INTERVAL_SEC := 2.0
 const WS_CONNECT_TIMEOUT_SEC := 4.0
-const VIEWER_POSE_SEND_INTERVAL_SEC := 0.05
-const VIEWER_POSE_POSITION_EPSILON := 0.001
-const VIEWER_POSE_BASIS_EPSILON := 0.001
+const VIEWER_POSE_SEND_INTERVAL_SEC := 1.0 / 90.0
+const VIEWER_POSE_POSITION_EPSILON := 0.0002
+const VIEWER_POSE_BASIS_EPSILON := 0.0002
+const VIEWER_POSE_INTERPOLATION_RATE := 28.0
+const VIEWER_POSE_REMOTE_TIMEOUT_SEC := 0.12
+const VIEWER_POSE_SNAP_DISTANCE := 0.05
 
 enum SetupState {
 	BOOTING,
@@ -105,13 +123,39 @@ var _has_main_screen_reference: bool = false
 var _main_screen_id: String = ""
 var _main_screen_position: Vector3 = Vector3.ZERO
 var _main_screen_basis: Basis = Basis.IDENTITY
+var _layout_anchor_initialized: bool = false
+var _layout_anchor_window_local_transform: Transform3D = Transform3D.IDENTITY
+var _default_window_local_transform: Transform3D = Transform3D.IDENTITY
+var _last_layout_screen_ids: PackedStringArray = PackedStringArray()
+var _last_layout_origin_raw: String = "none"
+var _active_screen_width_inches: float = 0.0
+var _active_screen_height_inches: float = 0.0
+var _active_screen_preset_name: String = ""
 var _status_panel_hidden_by_user: bool = false
+var _show_connect_debug_details: bool = true
 var _next_viewer_pose_send_msec: int = 0
 var _last_broadcast_player_position: Vector3 = Vector3.INF
 var _last_broadcast_player_basis: Basis = Basis.IDENTITY
+var _remote_viewer_pose_active: bool = false
+var _remote_viewer_target_position: Vector3 = Vector3.ZERO
+var _remote_viewer_target_basis: Basis = Basis.IDENTITY
+var _remote_viewer_source_slot: int = -1
+var _remote_viewer_timeout_msec: int = 0
+var _suppress_viewer_pose_broadcast_until_msec: int = 0
+var _remote_viewer_first_packet: bool = true
+var _anaglyph_controller: Node = null
+var _suppress_anaglyph_broadcast: bool = false
+var _pending_anaglyph_state: Variant = null
+const TAB_UI_MODE_NORMAL := 0
+const TAB_UI_MODE_CLEAN := 1
+const TAB_UI_MODE_PREVIEW := 2
+var _tab_ui_mode: int = TAB_UI_MODE_NORMAL
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
+	if window_center:
+		_default_window_local_transform = window_center.transform
+		_layout_anchor_window_local_transform = _default_window_local_transform
 	
 	# Generates the foundational ArUco Dict_4X4_50 layouts natively inside Godot!
 	# 4x4 data + a 1 pixel black border all the way around, creating a 6x6 pixel grid.
@@ -410,6 +454,7 @@ func _ready():
 			push_error("Could not bind to port 4242. Error code: ", error)
 		
 	_setup_debug_view()
+	_resolve_anaglyph_controller()
 	_set_setup_state(
 		SetupState.BOOTING,
 		"Connecting",
@@ -435,36 +480,37 @@ func _setup_debug_view():
 	setup_status_panel.custom_minimum_size = Vector2(460, 0)
 	setup_status_panel.position = Vector2(24, 24)
 
-	var status_style = StyleBoxFlat.new()
-	status_style.bg_color = Color(0.05, 0.05, 0.05, 0.82)
-	status_style.set_corner_radius_all(10)
-	status_style.content_margin_left = 18
-	status_style.content_margin_right = 18
-	status_style.content_margin_top = 16
-	status_style.content_margin_bottom = 16
-	setup_status_panel.add_theme_stylebox_override("panel", status_style)
+	setup_status_stylebox = StyleBoxFlat.new()
+	setup_status_stylebox.bg_color = Color(0.05, 0.05, 0.05, 0.82)
+	setup_status_panel.add_theme_stylebox_override("panel", setup_status_stylebox)
 
-	var status_box = VBoxContainer.new()
-	status_box.add_theme_constant_override("separation", 8)
-	setup_status_panel.add_child(status_box)
+	setup_status_scroll = ScrollContainer.new()
+	setup_status_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	setup_status_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	setup_status_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	setup_status_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	setup_status_panel.add_child(setup_status_scroll)
+
+	setup_status_box = VBoxContainer.new()
+	setup_status_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	setup_status_scroll.add_child(setup_status_box)
 
 	setup_title_label = Label.new()
-	setup_title_label.add_theme_font_size_override("font_size", 22)
-	status_box.add_child(setup_title_label)
+	setup_status_box.add_child(setup_title_label)
 
 	setup_body_label = Label.new()
 	setup_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status_box.add_child(setup_body_label)
+	setup_status_box.add_child(setup_body_label)
 
 	setup_hint_label = Label.new()
 	setup_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	setup_hint_label.add_theme_color_override("font_color", Color(0.82, 0.82, 0.82, 1))
-	status_box.add_child(setup_hint_label)
+	setup_status_box.add_child(setup_hint_label)
 
 	setup_action_row = FlowContainer.new()
 	setup_action_row.add_theme_constant_override("h_separation", 10)
 	setup_action_row.add_theme_constant_override("v_separation", 8)
-	status_box.add_child(setup_action_row)
+	setup_status_box.add_child(setup_action_row)
 
 	rescan_button = Button.new()
 	rescan_button.text = "Rescan All Screens"
@@ -477,6 +523,17 @@ func _setup_debug_view():
 	edit_size_button.visible = false
 	edit_size_button.pressed.connect(_show_screen_setup)
 	setup_action_row.add_child(edit_size_button)
+
+	connect_details_button = Button.new()
+	connect_details_button.text = "Show Details"
+	connect_details_button.visible = false
+	connect_details_button.pressed.connect(_toggle_connect_details)
+	setup_action_row.add_child(connect_details_button)
+
+	setup_diagnostics_label = Label.new()
+	setup_diagnostics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	setup_diagnostics_label.add_theme_color_override("font_color", Color(0.92, 0.92, 0.92, 1))
+	setup_status_box.add_child(setup_diagnostics_label)
 
 	setup_overlay.add_child(setup_status_panel)
 
@@ -493,14 +550,9 @@ func _setup_debug_view():
 	calibration_ui_panel = PanelContainer.new()
 	calibration_ui_panel.visible = false
 	
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.1, 0.1, 0.1, 0.9)
-	style.set_corner_radius_all(10)
-	style.content_margin_left = 20
-	style.content_margin_right = 20
-	style.content_margin_top = 20
-	style.content_margin_bottom = 20
-	calibration_ui_panel.add_theme_stylebox_override("panel", style)
+	calibration_panel_stylebox = StyleBoxFlat.new()
+	calibration_panel_stylebox.bg_color = Color(0.08, 0.08, 0.08, 0.9)
+	calibration_ui_panel.add_theme_stylebox_override("panel", calibration_panel_stylebox)
 	
 	# Position the UI perfectly centered on the screen!
 	calibration_ui_panel.set_anchors_preset(Control.PRESET_CENTER)
@@ -509,24 +561,26 @@ func _setup_debug_view():
 	vbox.add_theme_constant_override("separation", 15)
 	calibration_ui_panel.add_child(vbox)
 	
-	var title = Label.new()
-	title.text = "SCREEN SETUP"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 24)
-	vbox.add_child(title)
+	calibration_title_label = Label.new()
+	calibration_title_label.text = "SCREEN SETUP"
+	calibration_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(calibration_title_label)
 	
-	var info = Label.new()
-	info.text = "Please enter the physical dimensions of THIS specific screen.\n(Measure the lit pixels, excluding the bezels)"
-	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(info)
+	calibration_info_label = Label.new()
+	calibration_info_label.text = "Please enter the physical dimensions of THIS specific screen.\n(Measure the lit pixels, excluding the bezels)"
+	calibration_info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	calibration_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(calibration_info_label)
 	
 	preset_dropdown = OptionButton.new()
 	vbox.add_child(preset_dropdown)
 	
 	preset_dropdown.item_selected.connect(func(index: int):
+		_selected_preset_name = ""
 		if index > 0 and index - 1 < global_presets.keys().size():
 			var p_name = global_presets.keys()[index - 1]
 			var p_data = global_presets[p_name]
+			_selected_preset_name = p_name
 			w_input.text = str(p_data.get("width", ""))
 			h_input.text = str(p_data.get("height", ""))
 	)
@@ -569,16 +623,15 @@ func _setup_debug_view():
 				h_input.grab_focus()
 	)
 	
-	var save_btn = Button.new()
-	save_btn.text = "Start Marker Scan"
-	save_btn.add_theme_font_size_override("font_size", 18)
-	vbox.add_child(save_btn)
+	start_scan_button = Button.new()
+	start_scan_button.text = "Start Marker Scan"
+	vbox.add_child(start_scan_button)
 	
-	var save_preset_btn = Button.new()
-	save_preset_btn.text = "Save as New Preset..."
-	vbox.add_child(save_preset_btn)
+	save_preset_button = Button.new()
+	save_preset_button.text = "Save as New Preset..."
+	vbox.add_child(save_preset_button)
 	
-	save_preset_btn.pressed.connect(func():
+	save_preset_button.pressed.connect(func():
 		var w_val = w_input.text.to_float()
 		var h_val = h_input.text.to_float()
 		
@@ -601,12 +654,12 @@ func _setup_debug_view():
 					ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
 	)
 	
-	save_btn.pressed.connect(func():
+	start_scan_button.pressed.connect(func():
 		var w_val = w_input.text.to_float()
 		var h_val = h_input.text.to_float()
 		
 		if w_val > 0.0 and h_val > 0.0:
-			_register_screen_dimensions(w_val, h_val, true)
+			_register_screen_dimensions(w_val, h_val, true, _resolve_preset_name_for_dimensions(w_val, h_val, _selected_preset_name))
 		else:
 			_set_setup_state(
 				SetupState.ERROR,
@@ -617,6 +670,7 @@ func _setup_debug_view():
 	)
 	
 	setup_overlay.add_child(calibration_ui_panel)
+	_apply_setup_ui_metrics()
 	
 	# ---------------------------------------------------------
 	# OVERHEAD TRACKING DEBUG VIEWPORT (OPTIONAL HUD)
@@ -651,8 +705,8 @@ func _setup_debug_view():
 	
 	head_dot = MeshInstance3D.new()
 	var sphere = SphereMesh.new()
-	sphere.radius = 0.25 # Cleanly sized for 4.5m height
-	sphere.height = 0.5
+	sphere.radius = 0.025 # 5 cm diameter debug marker
+	sphere.height = 0.05
 	var mat = StandardMaterial3D.new()
 	mat.albedo_color = Color.RED
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -662,9 +716,11 @@ func _setup_debug_view():
 	vp.add_child(head_dot)
 	
 	diagnostics_label = Label.new()
-	diagnostics_label.position = Vector2(20, 350)
+	diagnostics_label.position = Vector2(18, 250)
+	diagnostics_label.custom_minimum_size = Vector2(340, 0)
 	diagnostics_label.add_theme_color_override("font_color", Color.WHITE)
 	diagnostics_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	diagnostics_label.add_theme_font_size_override("font_size", 18)
 	diagnostics_label.add_theme_constant_override("outline_size", 4)
 	diagnostics_label.visible = false
 	debug_canvas.add_child(diagnostics_label)
@@ -692,15 +748,43 @@ func _load_local_screen_config() -> Dictionary:
 
 	return {}
 
-func _save_local_screen_config(width_inches: float, height_inches: float) -> void:
+func _save_local_screen_config(width_inches: float, height_inches: float, preset_name: String = "") -> void:
 	var file = FileAccess.open(LOCAL_SETUP_PATH, FileAccess.WRITE)
 	if file == null:
 		return
 
-	file.store_string(JSON.stringify({
+	var payload := {
 		"width": width_inches,
 		"height": height_inches
-	}, "\t"))
+	}
+	if preset_name != "":
+		payload["preset_name"] = preset_name
+
+	file.store_string(JSON.stringify(payload, "\t"))
+
+func _find_matching_preset_name(width_inches: float, height_inches: float) -> String:
+	const EPSILON := 0.02
+	for preset_name in global_presets.keys():
+		var preset_data = global_presets[preset_name]
+		var preset_width = float(preset_data.get("width", 0.0))
+		var preset_height = float(preset_data.get("height", 0.0))
+		if absf(preset_width - width_inches) <= EPSILON and absf(preset_height - height_inches) <= EPSILON:
+			return str(preset_name)
+	return ""
+
+func _resolve_preset_name_for_dimensions(width_inches: float, height_inches: float, preferred_name: String = "") -> String:
+	if preferred_name != "" and global_presets.has(preferred_name):
+		var preset_data = global_presets[preferred_name]
+		var preset_width = float(preset_data.get("width", 0.0))
+		var preset_height = float(preset_data.get("height", 0.0))
+		if absf(preset_width - width_inches) <= 0.02 and absf(preset_height - height_inches) <= 0.02:
+			return preferred_name
+	return _find_matching_preset_name(width_inches, height_inches)
+
+func _set_active_screen_profile(width_inches: float, height_inches: float, preset_name: String = "") -> void:
+	_active_screen_width_inches = width_inches
+	_active_screen_height_inches = height_inches
+	_active_screen_preset_name = preset_name
 
 func _apply_screen_dimensions_to_ui(width_inches: float, height_inches: float) -> void:
 	if w_input:
@@ -773,8 +857,12 @@ func _layout_transform_from_payload(t_data: Dictionary) -> Dictionary:
 			Vector3(r_arr[0][0], -r_arr[1][0], -r_arr[2][0]),
 			Vector3(-r_arr[0][1], r_arr[1][1], r_arr[2][1]),
 			Vector3(-r_arr[0][2], r_arr[1][2], r_arr[2][2])
-		)
+		).orthonormalized()
 	}
+
+func _transform_from_layout_payload(t_data: Dictionary) -> Transform3D:
+	var layout = _layout_transform_from_payload(t_data)
+	return Transform3D(layout["basis"], layout["position"])
 
 func _basis_to_payload(basis: Basis) -> Array:
 	return [
@@ -791,6 +879,77 @@ func _basis_from_payload(rows: Variant) -> Basis:
 			Vector3(rows[2][0], rows[2][1], rows[2][2])
 		).orthonormalized()
 	return Basis.IDENTITY
+
+func _basis_euler_degrees(basis: Basis) -> Vector3:
+	var euler = basis.orthonormalized().get_euler()
+	return Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
+
+func _build_diagnostics_text() -> String:
+	var scale_mult = screen_scaler.tracking_scale_multiplier if screen_scaler else 1.0
+	var cam_pos = camera_node.global_position if camera_node else Vector3.ZERO
+	var player_pos = player_node.global_position if player_node else Vector3.ZERO
+	var cam_rot = _basis_euler_degrees(camera_node.global_transform.basis) if camera_node else Vector3.ZERO
+	var player_rot = _basis_euler_degrees(player_node.global_transform.basis) if player_node else Vector3.ZERO
+	var window_rot = _basis_euler_degrees(window_center.global_transform.basis) if window_center else Vector3.ZERO
+	var window_pos = window_center.global_position if window_center else Vector3.ZERO
+	var window_local = Vector3.ZERO
+	var raw_shift = Vector2.ZERO
+	var debug_frustum_offset = Vector2.ZERO
+	var distance_to_window = 0.0
+	var estimated_vertical_fov_deg = 0.0
+	var tracking_source = "live" if _has_live_tracking_data else "fallback"
+	var base_distance_text = "%.2f m" % default_viewer_distance_meters
+	var my_slot = str(_current_marker_slot())
+	var origin_label = _main_screen_id if _main_screen_id != "" else "none"
+	var layout_ids = ", ".join(_last_layout_screen_ids) if not _last_layout_screen_ids.is_empty() else "none"
+	var preset_label = _active_screen_preset_name if _active_screen_preset_name != "" else "Manual/Custom"
+	var preset_dims = "%.2f x %.2f in" % [_active_screen_width_inches, _active_screen_height_inches]
+	if camera_node and window_center and screen_scaler:
+		var window_basis = window_center.global_transform.basis.orthonormalized()
+		var window_to_camera = cam_pos - window_center.global_position
+		distance_to_window = abs(window_to_camera.dot(window_basis.z))
+		if distance_to_window > 0.001:
+			estimated_vertical_fov_deg = rad_to_deg(2.0 * atan((screen_scaler.virtual_window_height * 0.5) / distance_to_window))
+		window_local = camera_node.to_local(window_center.global_position)
+		raw_shift = Vector2(window_local.x, window_local.y)
+		var window_depth = maxf(0.1, absf(-window_local.z))
+		debug_frustum_offset = raw_shift * (camera_node.near / window_depth)
+
+	return """
+--- DIAGNOSTICS ---
+Source: %s | Raw(cm): X %.2f | Y %.2f | Z %.2f
+Preset: %s (%s)
+My Slot: %s | Origin: %s | Origin Raw: %s | Layout IDs: %s
+Scale: %.3f x | Tracking Base: %s
+Window Dist: %.3f m (%.1f cm) | V-FOV: %.1f deg
+Player: X %.2f | Y %.2f | Z %.2f
+Player Rot(deg): X %.1f | Y %.1f | Z %.1f
+Head: X %.3f | Y %.3f | Z %.3f
+Cam Rot(deg): X %.1f | Y %.1f | Z %.1f
+Window Pos: X %.3f | Y %.3f | Z %.3f
+Window Rot(deg): X %.1f | Y %.1f | Z %.1f
+Window Local: X %.3f | Y %.3f | Z %.3f
+Raw Shift: X %.3f | Y %.3f
+Frustum Offset: X %.4f | Y %.4f
+""" % [
+		tracking_source,
+		_raw_x, _raw_y, _raw_z,
+		preset_label, preset_dims,
+		my_slot, origin_label, _last_layout_origin_raw, layout_ids,
+		scale_mult,
+		base_distance_text,
+		distance_to_window, distance_to_window * 100.0,
+		estimated_vertical_fov_deg,
+		player_pos.x, player_pos.y, player_pos.z,
+		player_rot.x, player_rot.y, player_rot.z,
+		cam_pos.x, cam_pos.y, cam_pos.z,
+		cam_rot.x, cam_rot.y, cam_rot.z,
+		window_pos.x, window_pos.y, window_pos.z,
+		window_rot.x, window_rot.y, window_rot.z,
+		window_local.x, window_local.y, window_local.z,
+		raw_shift.x, raw_shift.y,
+		debug_frustum_offset.x, debug_frustum_offset.y
+	]
 
 func _reset_websocket_peer() -> void:
 	ws = WebSocketPeer.new()
@@ -837,7 +996,24 @@ func _refresh_connecting_debug(state: int = -1) -> void:
 		retry_in,
 		_runtime_display_mode
 	]
-	setup_hint_label.text = "If browser tabs work but a saved web app does not, fully close the saved app and reopen the normal URL once to refresh its cached export."
+	setup_hint_label.text = ""
+
+func _apply_global_ui_visibility() -> void:
+	var show_full_ui := _tab_ui_mode == TAB_UI_MODE_NORMAL
+	var show_preview := _tab_ui_mode == TAB_UI_MODE_PREVIEW
+	var show_debug_overlay := show_preview or show_debug_view
+	if setup_overlay:
+		setup_overlay.visible = show_full_ui
+	if aruco_canvas:
+		aruco_canvas.visible = show_full_ui
+	if debug_canvas:
+		debug_canvas.visible = show_debug_overlay
+	if head_dot:
+		head_dot.visible = show_debug_overlay
+
+func _advance_tab_ui_mode() -> void:
+	_tab_ui_mode = (_tab_ui_mode + 1) % 3
+	_sync_setup_visibility()
 
 func _sync_setup_visibility() -> void:
 	var marker_mode_active = _is_marker_mode_active()
@@ -845,6 +1021,7 @@ func _sync_setup_visibility() -> void:
 		setup_status_panel.visible = not marker_mode_active and not _status_panel_hidden_by_user
 	if status_toggle_button:
 		status_toggle_button.visible = not marker_mode_active and setup_state != SetupState.BOOTING
+	_apply_global_ui_visibility()
 
 func _set_setup_state(state: int, title: String, body: String, hint: String) -> void:
 	setup_state = state
@@ -870,7 +1047,9 @@ func _refresh_setup_controls() -> void:
 		setup_body_label.visible = true
 
 	if setup_hint_label:
-		setup_hint_label.visible = true
+		setup_hint_label.visible = setup_hint_label.text != ""
+	if setup_diagnostics_label:
+		setup_diagnostics_label.visible = true
 
 	if rescan_button:
 		rescan_button.text = "Rescan All Screens"
@@ -881,26 +1060,134 @@ func _refresh_setup_controls() -> void:
 	if status_toggle_button:
 		status_toggle_button.text = "Show Status" if _status_panel_hidden_by_user else "Hide Status"
 
+	if connect_details_button:
+		connect_details_button.visible = false
+		connect_details_button.text = "Hide Details" if _show_connect_debug_details else "Show Details"
+
+func _toggle_connect_details() -> void:
+	_show_connect_debug_details = not _show_connect_debug_details
+	_refresh_setup_controls()
+	_refresh_connecting_debug()
+	_layout_setup_status_panel()
+
+func _effective_ui_viewport_size() -> Vector2:
+	var viewport_size = get_viewport().get_visible_rect().size
+
+	if OS.has_feature("web"):
+		var css_width = JavaScriptBridge.eval("window.innerWidth")
+		var css_height = JavaScriptBridge.eval("window.innerHeight")
+		if css_width != null and css_height != null:
+			var width_value = float(css_width)
+			var height_value = float(css_height)
+			if width_value > 0.0 and height_value > 0.0:
+				return Vector2(width_value, height_value)
+
+	return viewport_size
+
+func _apply_setup_ui_metrics() -> void:
+	var effective_size = _effective_ui_viewport_size()
+	if effective_size.x <= 0.0 or effective_size.y <= 0.0:
+		return
+
+	var short_side = minf(effective_size.x, effective_size.y)
+	var ui_scale = clampf(short_side / 1100.0, 0.72, 0.9)
+	var gutter = round(clampf(20.0 * ui_scale, 16.0, 22.0))
+	var corner_radius = int(round(clampf(12.0 * ui_scale, 10.0, 14.0)))
+	var padding_x = clampf(16.0 * ui_scale, 12.0, 16.0)
+	var padding_y = clampf(14.0 * ui_scale, 10.0, 14.0)
+	var title_font = int(round(clampf(20.0 * ui_scale, 16.0, 20.0)))
+	var body_font = int(round(clampf(14.0 * ui_scale, 12.0, 14.0)))
+	var hint_font = int(round(clampf(12.0 * ui_scale, 11.0, 12.0)))
+	var button_font = int(round(clampf(14.0 * ui_scale, 12.0, 14.0)))
+	var control_height = clampf(36.0 * ui_scale, 30.0, 36.0)
+	var status_width = clampf(effective_size.x * 0.20, 250.0, 340.0)
+	var setup_width = clampf(effective_size.x * 0.34, 300.0, 460.0)
+	var status_content_width = max(180.0, status_width - padding_x * 2.0)
+
+	if setup_status_stylebox:
+		setup_status_stylebox.set_corner_radius_all(corner_radius)
+		setup_status_stylebox.content_margin_left = padding_x
+		setup_status_stylebox.content_margin_right = padding_x
+		setup_status_stylebox.content_margin_top = padding_y
+		setup_status_stylebox.content_margin_bottom = padding_y
+
+	if calibration_panel_stylebox:
+		calibration_panel_stylebox.set_corner_radius_all(corner_radius)
+		calibration_panel_stylebox.content_margin_left = padding_x
+		calibration_panel_stylebox.content_margin_right = padding_x
+		calibration_panel_stylebox.content_margin_top = padding_y
+		calibration_panel_stylebox.content_margin_bottom = padding_y
+
+	if setup_title_label:
+		setup_title_label.add_theme_font_size_override("font_size", title_font)
+	if setup_body_label:
+		setup_body_label.add_theme_font_size_override("font_size", body_font)
+		setup_body_label.custom_minimum_size = Vector2(status_content_width, 0.0)
+	if setup_hint_label:
+		setup_hint_label.add_theme_font_size_override("font_size", hint_font)
+		setup_hint_label.custom_minimum_size = Vector2(status_content_width, 0.0)
+	if setup_diagnostics_label:
+		setup_diagnostics_label.add_theme_font_size_override("font_size", hint_font)
+		setup_diagnostics_label.custom_minimum_size = Vector2(status_content_width, 0.0)
+	if setup_title_label:
+		setup_title_label.custom_minimum_size = Vector2(status_content_width, 0.0)
+
+	if calibration_title_label:
+		calibration_title_label.add_theme_font_size_override("font_size", title_font)
+	if calibration_info_label:
+		calibration_info_label.add_theme_font_size_override("font_size", body_font)
+
+	for control in [rescan_button, edit_size_button, status_toggle_button, start_scan_button, save_preset_button, preset_dropdown, w_input, h_input]:
+		if control == null:
+			continue
+		control.custom_minimum_size = Vector2(0.0, control_height)
+		if control is Button or control is OptionButton or control is LineEdit:
+			control.add_theme_font_size_override("font_size", button_font)
+
+	if setup_status_panel:
+		setup_status_panel.custom_minimum_size = Vector2(status_width, 0.0)
+	if setup_status_box:
+		setup_status_box.custom_minimum_size = Vector2(status_content_width, 0.0)
+		setup_status_box.add_theme_constant_override("separation", int(round(clampf(8.0 * ui_scale, 5.0, 8.0))))
+	if setup_status_scroll:
+		setup_status_scroll.custom_minimum_size = Vector2(status_content_width, 0.0)
+
+	if calibration_ui_panel:
+		calibration_ui_panel.custom_minimum_size = Vector2(setup_width, 0.0)
+
+	if setup_action_row:
+		setup_action_row.add_theme_constant_override("h_separation", int(round(clampf(10.0 * ui_scale, 8.0, 10.0))))
+		setup_action_row.add_theme_constant_override("v_separation", int(round(clampf(8.0 * ui_scale, 6.0, 8.0))))
+
 func _layout_setup_status_panel() -> void:
 	if not setup_status_panel:
 		return
+	_apply_setup_ui_metrics()
 
 	if _is_marker_mode_active():
 		if status_toggle_button:
 			status_toggle_button.visible = false
 		return
 
-	var viewport_size = get_viewport().get_visible_rect().size
-	var panel_width = clampf(viewport_size.x - 48.0, 240.0, 460.0)
-	setup_status_panel.custom_minimum_size = Vector2(panel_width, 0)
+	var viewport_size = _effective_ui_viewport_size()
+	var gutter = clampf(minf(viewport_size.x, viewport_size.y) * 0.03, 18.0, 30.0)
+	var max_panel_height = max(180.0, viewport_size.y - gutter * 2.0)
+	var vertical_margins = 0.0
+	if setup_status_stylebox:
+		vertical_margins = setup_status_stylebox.content_margin_top + setup_status_stylebox.content_margin_bottom
+	var content_height = setup_status_box.get_combined_minimum_size().y if setup_status_box else 120.0
+	var panel_height = clampf(content_height + vertical_margins, 120.0, max_panel_height)
+	setup_status_panel.size = Vector2(setup_status_panel.custom_minimum_size.x, panel_height)
+	if setup_status_scroll:
+		setup_status_scroll.size = Vector2(setup_status_scroll.custom_minimum_size.x, max(0.0, panel_height - vertical_margins))
 	if setup_status_panel.visible:
-		setup_status_panel.position = Vector2(24.0, 24.0)
+		setup_status_panel.position = Vector2(gutter, gutter)
 
 	if status_toggle_button:
 		if setup_status_panel.visible:
-			status_toggle_button.position = Vector2(24.0, setup_status_panel.position.y + setup_status_panel.size.y + 10.0)
+			status_toggle_button.position = Vector2(gutter, setup_status_panel.position.y + setup_status_panel.size.y + 10.0)
 		else:
-			status_toggle_button.position = Vector2(24.0, 24.0)
+			status_toggle_button.position = Vector2(gutter, gutter)
 
 func _toggle_status_panel() -> void:
 	_status_panel_hidden_by_user = not _status_panel_hidden_by_user
@@ -935,6 +1222,12 @@ func _begin_scan_flow() -> void:
 	_has_layout_solution = false
 	_has_main_screen_reference = false
 	_main_screen_id = ""
+	_last_layout_screen_ids = PackedStringArray()
+	_last_layout_origin_raw = "none"
+	if window_center:
+		window_center.transform = _default_window_local_transform
+	_layout_anchor_window_local_transform = _default_window_local_transform
+	_layout_anchor_initialized = true
 	_set_calibration_mode(true)
 	_set_setup_state(
 		SetupState.SCANNING,
@@ -943,7 +1236,7 @@ func _begin_scan_flow() -> void:
 		"Press P on any screen to finish once the full layout is visible, or press F7 to edit this screen size."
 	)
 
-func _register_screen_dimensions(width_inches: float, height_inches: float, save_local: bool) -> void:
+func _register_screen_dimensions(width_inches: float, height_inches: float, save_local: bool, preset_name_override: String = "") -> void:
 	if use_websocket and ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		_set_setup_state(
 			SetupState.ERROR,
@@ -955,8 +1248,10 @@ func _register_screen_dimensions(width_inches: float, height_inches: float, save
 
 	_apply_screen_dimensions_to_ui(width_inches, height_inches)
 	_apply_screen_dimensions_to_scaler(width_inches, height_inches)
+	var resolved_preset_name = _resolve_preset_name_for_dimensions(width_inches, height_inches, preset_name_override)
+	_set_active_screen_profile(width_inches, height_inches, resolved_preset_name)
 	if save_local:
-		_save_local_screen_config(width_inches, height_inches)
+		_save_local_screen_config(width_inches, height_inches, resolved_preset_name)
 
 	print("Registering Screen Dimensions! W: ", width_inches, " H: ", height_inches)
 
@@ -976,6 +1271,7 @@ func _restart_scan_flow() -> void:
 	var local_config = _load_local_screen_config()
 	var width_inches = float(local_config.get("width", w_input.text.to_float() if w_input else 0.0))
 	var height_inches = float(local_config.get("height", h_input.text.to_float() if h_input else 0.0))
+	var preset_name = str(local_config.get("preset_name", ""))
 
 	if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN and _screen_registered:
 		var msg = {
@@ -984,7 +1280,7 @@ func _restart_scan_flow() -> void:
 		}
 		ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
 	elif width_inches > 0.0 and height_inches > 0.0:
-		_register_screen_dimensions(width_inches, height_inches, false)
+		_register_screen_dimensions(width_inches, height_inches, false, preset_name)
 	else:
 		_show_screen_setup()
 
@@ -1006,15 +1302,52 @@ func _handle_viewer_pose(data: Dictionary) -> void:
 	if not player_node:
 		return
 
+	var source_slot = int(data.get("device_id", -1))
+	if source_slot == _current_marker_slot():
+		return
+
 	var pos = data.get("position", [])
 	var basis_rows = data.get("basis", [])
 	if not (pos is Array and pos.size() == 3 and basis_rows is Array and basis_rows.size() == 3):
 		return
 
-	player_node.global_position = Vector3(pos[0], pos[1], pos[2])
-	player_node.global_transform.basis = _basis_from_payload(basis_rows)
-	_last_broadcast_player_position = player_node.global_position
-	_last_broadcast_player_basis = player_node.global_transform.basis
+	_remote_viewer_source_slot = source_slot
+	_remote_viewer_target_position = Vector3(pos[0], pos[1], pos[2])
+	_remote_viewer_target_basis = _basis_from_payload(basis_rows).orthonormalized()
+	_remote_viewer_pose_active = true
+	_remote_viewer_timeout_msec = Time.get_ticks_msec() + int(VIEWER_POSE_REMOTE_TIMEOUT_SEC * 1000.0)
+	_suppress_viewer_pose_broadcast_until_msec = _remote_viewer_timeout_msec
+	_last_broadcast_player_position = _remote_viewer_target_position
+	_last_broadcast_player_basis = _remote_viewer_target_basis
+
+	if _remote_viewer_first_packet:
+		_remote_viewer_first_packet = false
+		player_node.global_position = _remote_viewer_target_position
+		player_node.global_transform.basis = _remote_viewer_target_basis
+		return
+
+	if player_node.global_position.distance_to(_remote_viewer_target_position) > VIEWER_POSE_SNAP_DISTANCE:
+		player_node.global_position = _remote_viewer_target_position
+		player_node.global_transform.basis = _remote_viewer_target_basis
+		return
+
+func _update_remote_viewer_pose(delta: float) -> void:
+	if not _remote_viewer_pose_active or not player_node:
+		return
+
+	var now = Time.get_ticks_msec()
+	if now > _remote_viewer_timeout_msec:
+		_remote_viewer_pose_active = false
+		_remote_viewer_source_slot = -1
+		_remote_viewer_first_packet = true
+		return
+
+	var alpha = 1.0 - exp(-VIEWER_POSE_INTERPOLATION_RATE * delta)
+	player_node.global_position = player_node.global_position.lerp(_remote_viewer_target_position, alpha)
+
+	var current_quat = player_node.global_transform.basis.orthonormalized().get_rotation_quaternion()
+	var target_quat = _remote_viewer_target_basis.get_rotation_quaternion()
+	player_node.global_transform.basis = Basis(current_quat.slerp(target_quat, alpha)).orthonormalized()
 
 func _maybe_broadcast_viewer_pose() -> void:
 	if not use_websocket or not player_node:
@@ -1025,6 +1358,8 @@ func _maybe_broadcast_viewer_pose() -> void:
 		return
 
 	var now = Time.get_ticks_msec()
+	if now < _suppress_viewer_pose_broadcast_until_msec:
+		return
 	if now < _next_viewer_pose_send_msec:
 		return
 
@@ -1105,9 +1440,10 @@ func _try_auto_register_saved_screen() -> bool:
 	var local_config = _load_local_screen_config()
 	var width_inches = float(local_config.get("width", 0.0))
 	var height_inches = float(local_config.get("height", 0.0))
+	var preset_name = str(local_config.get("preset_name", ""))
 
 	if width_inches > 0.0 and height_inches > 0.0:
-		_register_screen_dimensions(width_inches, height_inches, false)
+		_register_screen_dimensions(width_inches, height_inches, false, preset_name)
 		return true
 
 	return false
@@ -1168,23 +1504,29 @@ func _handle_scan_status(data: Dictionary) -> void:
 func _input(event):
 	if event is InputEventKey and event.pressed:
 		if event.keycode == debug_toggle_key:
-			show_debug_view = !show_debug_view
-			if debug_canvas:
-				debug_canvas.visible = show_debug_view
-			if head_dot:
-				head_dot.visible = show_debug_view
+			_advance_tab_ui_mode()
 		elif event.keycode == diagnostics_toggle_key:
 			if diagnostics_label:
 				diagnostics_label.visible = !diagnostics_label.visible
 				if diagnostics_label.visible and not show_debug_view:
 					show_debug_view = true
-					if debug_canvas: debug_canvas.visible = true
+				_apply_global_ui_visibility()
 		elif event.keycode == finish_scan_key:
 			_request_finish_scan()
 		elif event.keycode == rescan_key:
 			_restart_scan_flow()
 		elif event.keycode == edit_screen_size_key:
 			_show_screen_setup()
+	elif event is InputEventMouseButton and event.pressed and _tab_ui_mode == TAB_UI_MODE_PREVIEW:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_adjust_debug_preview_zoom(-debug_preview_zoom_step)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_adjust_debug_preview_zoom(debug_preview_zoom_step)
+
+func _adjust_debug_preview_zoom(delta_size: float) -> void:
+	if _tab_ui_mode != TAB_UI_MODE_PREVIEW or not debug_cam:
+		return
+	debug_cam.size = clampf(debug_cam.size + delta_size, debug_preview_min_size, debug_preview_max_size)
 
 func _set_calibration_mode(is_on: bool):
 	calibration_mode = is_on
@@ -1254,11 +1596,44 @@ func _set_calibration_mode(is_on: bool):
 			if aruco_bg:
 				aruco_bg.visible = false
 
+func _resolve_anaglyph_controller() -> void:
+	if _anaglyph_controller and is_instance_valid(_anaglyph_controller):
+		return
+	var scene_root: Node = get_tree().current_scene
+	if scene_root:
+		_anaglyph_controller = scene_root.find_child("Analgyph Script", true, false)
+	elif get_parent():
+		_anaglyph_controller = get_parent().find_child("Analgyph Script", true, false)
+	if _anaglyph_controller and _anaglyph_controller.has_signal("anaglyph_toggled"):
+		if not _anaglyph_controller.anaglyph_toggled.is_connected(_handle_local_anaglyph_toggled):
+			_anaglyph_controller.anaglyph_toggled.connect(_handle_local_anaglyph_toggled)
+	if _pending_anaglyph_state != null and _anaglyph_controller and _anaglyph_controller.has_method("set_anaglyph_enabled"):
+		_set_anaglyph_enabled_from_sync(bool(_pending_anaglyph_state))
+		_pending_anaglyph_state = null
+
+func _handle_local_anaglyph_toggled(enabled: bool) -> void:
+	if _suppress_anaglyph_broadcast:
+		return
+	if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		var msg = {
+			"action": "anaglyph_toggle",
+			"enabled": enabled
+		}
+		ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+
+func _set_anaglyph_enabled_from_sync(enabled: bool) -> void:
+	if not _anaglyph_controller or not _anaglyph_controller.has_method("set_anaglyph_enabled"):
+		_pending_anaglyph_state = enabled
+		return
+	_suppress_anaglyph_broadcast = true
+	_anaglyph_controller.call("set_anaglyph_enabled", enabled, false)
+	_suppress_anaglyph_broadcast = false
+
 var _was_ws_connected: bool = false
 var _initial_apply_done: bool = false
 
 func _process(_delta):
-	if setup_status_panel and setup_status_panel.visible:
+	if setup_overlay and setup_overlay.visible and setup_status_panel and setup_status_panel.visible:
 		_layout_setup_status_panel()
 
 	# DYNAMICALLY RESIZE CONSTELLATION SQUARES
@@ -1308,9 +1683,10 @@ func _process(_delta):
 	var has_new_data: bool = false
 	
 	if not _initial_apply_done:
-		# Force a safe starting distance (60cm back) before data arrives
-		# so the Frustum matrix doesn't calculate with a distance of 0.0!
-		_raw_z = 60.0 
+		# Apply the configured default viewer distance before live tracking arrives.
+		# The base distance is handled inside _apply_tracking_data(), so raw Z should
+		# stay at zero here instead of adding another implicit 60 cm on top.
+		_raw_z = 0.0
 		_apply_tracking_data()
 		_initial_apply_done = true
 	
@@ -1348,6 +1724,8 @@ func _process(_delta):
 						_has_received_config = true
 						_scan_locked = bool(data.get("scan_locked", false))
 						_set_calibration_mode(data.get("calibration_mode", false))
+						if data.has("anaglyph_enabled"):
+							_set_anaglyph_enabled_from_sync(bool(data.get("anaglyph_enabled", false)))
 						
 						if data.has("presets"):
 							global_presets = data.get("presets", {})
@@ -1367,6 +1745,9 @@ func _process(_delta):
 					elif msg_type == "state_update":
 						_set_calibration_mode(data.get("calibration_mode", false))
 						print("Server toggled ArUco Calibration!")
+						
+					elif msg_type == "anaglyph_toggle":
+						_set_anaglyph_enabled_from_sync(bool(data.get("enabled", false)))
 
 					elif msg_type == "scan_start":
 						_handle_scan_start(data)
@@ -1383,33 +1764,104 @@ func _process(_delta):
 					elif msg_type == "tracking":
 						_raw_x = data.get("x", 0.0)
 						_raw_y = data.get("y", 0.0)
-						_raw_z = data.get("z", 60.0)
+						_raw_z = data.get("z", 0.0)
 						_has_live_tracking_data = true
 						has_new_data = true
 						
 					elif msg_type == "layout_map":
 						var screens = data.get("screens", {})
-						var origin_screen_id = str(data.get("origin_screen", ""))
+						_last_layout_screen_ids = PackedStringArray()
+						for screen_id in screens.keys():
+							_last_layout_screen_ids.append(str(screen_id))
+						_last_layout_screen_ids.sort()
+						var my_id_str = str(_current_marker_slot())
+						var single_screen_payload = screens.size() == 1 and screens.has(my_id_str)
+						var origin_variant = data.get("origin_screen", null)
+						var origin_screen_id = ""
+						if origin_variant != null:
+							origin_screen_id = str(origin_variant)
+						_last_layout_origin_raw = origin_screen_id if origin_screen_id != "" else "none"
+						var origin_tracker_transform := Transform3D.IDENTITY
+						var origin_resolved = false
 						if origin_screen_id != "" and screens.has(origin_screen_id):
 							var origin_transform = _layout_transform_from_payload(screens[origin_screen_id])
+							origin_tracker_transform = _transform_from_layout_payload(screens[origin_screen_id])
 							_main_screen_id = origin_screen_id
 							_main_screen_position = origin_transform["position"]
 							_main_screen_basis = origin_transform["basis"]
 							_has_main_screen_reference = true
+							origin_resolved = true
 
-							if player_node:
-								player_node.global_transform.basis = _main_screen_basis
-								player_node.global_position = _main_screen_position
+							if not _layout_anchor_initialized and window_center:
+								_layout_anchor_window_local_transform = _default_window_local_transform
+								_layout_anchor_initialized = true
+						elif _main_screen_id != "" and screens.has(_main_screen_id):
+							origin_screen_id = _main_screen_id
+							var cached_origin_transform = _layout_transform_from_payload(screens[origin_screen_id])
+							origin_tracker_transform = _transform_from_layout_payload(screens[origin_screen_id])
+							_main_screen_position = cached_origin_transform["position"]
+							_main_screen_basis = cached_origin_transform["basis"]
+							_has_main_screen_reference = true
+							origin_resolved = true
 
-						var my_id_str = str(_current_marker_slot())
+							if not _layout_anchor_initialized and window_center:
+								_layout_anchor_window_local_transform = _default_window_local_transform
+								_layout_anchor_initialized = true
+						elif single_screen_payload:
+							origin_screen_id = my_id_str
+							var inferred_origin_transform = _layout_transform_from_payload(screens[origin_screen_id])
+							origin_tracker_transform = _transform_from_layout_payload(screens[origin_screen_id])
+							_main_screen_id = origin_screen_id
+							_main_screen_position = inferred_origin_transform["position"]
+							_main_screen_basis = inferred_origin_transform["basis"]
+							_has_main_screen_reference = true
+							origin_resolved = true
+
+							if not _layout_anchor_initialized and window_center:
+								_layout_anchor_window_local_transform = _default_window_local_transform
+								_layout_anchor_initialized = true
+						elif not _last_layout_screen_ids.is_empty():
+							origin_screen_id = _last_layout_screen_ids[0]
+							var fallback_origin_transform = _layout_transform_from_payload(screens[origin_screen_id])
+							origin_tracker_transform = _transform_from_layout_payload(screens[origin_screen_id])
+							_main_screen_id = origin_screen_id
+							_main_screen_position = fallback_origin_transform["position"]
+							_main_screen_basis = fallback_origin_transform["basis"]
+							_has_main_screen_reference = true
+							origin_resolved = true
+
+							if not _layout_anchor_initialized and window_center:
+								_layout_anchor_window_local_transform = _default_window_local_transform
+								_layout_anchor_initialized = true
+						else:
+							_has_main_screen_reference = false
+							_main_screen_id = ""
+
+						if origin_resolved and single_screen_payload and origin_screen_id == my_id_str:
+							_main_screen_position = Vector3.ZERO
+							_main_screen_basis = Basis.IDENTITY
+
 						if screens.has(my_id_str):
 							var screen_transform = _layout_transform_from_payload(screens[my_id_str])
 							var target_pos: Vector3 = screen_transform["position"]
 							var target_basis: Basis = screen_transform["basis"]
+							var screen_tracker_transform = _transform_from_layout_payload(screens[my_id_str])
+
+							if _has_main_screen_reference and _layout_anchor_initialized:
+								var relative_transform := Transform3D.IDENTITY
+								if not (single_screen_payload or my_id_str == origin_screen_id):
+									relative_transform = origin_tracker_transform.affine_inverse() * screen_tracker_transform
+								var anchored_local_transform = _layout_anchor_window_local_transform * relative_transform
+								target_pos = anchored_local_transform.origin
+								target_basis = anchored_local_transform.basis.orthonormalized()
 							
 							if window_center:
-								window_center.global_transform.basis = target_basis
-								window_center.global_position = target_pos
+								if _has_main_screen_reference and _layout_anchor_initialized:
+									window_center.transform.basis = target_basis
+									window_center.position = target_pos
+								else:
+									window_center.global_transform.basis = target_basis
+									window_center.global_position = target_pos
 								print("Successfully Stitched Viewport Coordinate Offset: ", target_pos)
 								_has_layout_solution = true
 
@@ -1426,7 +1878,7 @@ func _process(_delta):
 					elif data.has("x"):
 						_raw_x = data.get("x", 0.0)
 						_raw_y = data.get("y", 0.0)
-						_raw_z = data.get("z", 60.0)
+						_raw_z = data.get("z", 0.0)
 						_has_live_tracking_data = true
 						has_new_data = true
 						
@@ -1452,10 +1904,16 @@ func _process(_delta):
 				_has_live_tracking_data = true
 				has_new_data = true
 			
+	_update_remote_viewer_pose(_delta)
+
 	if has_new_data:
 		_apply_tracking_data()
 
 	_maybe_broadcast_viewer_pose()
+
+	var diagnostics_text = _build_diagnostics_text()
+	if setup_diagnostics_label:
+		setup_diagnostics_label.text = diagnostics_text
 
 	if debug_canvas and debug_canvas.visible:
 		if camera_node:
@@ -1464,27 +1922,13 @@ func _process(_delta):
 			debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
 			
 		if diagnostics_label and diagnostics_label.visible:
-			var scale_mult = screen_scaler.tracking_scale_multiplier if screen_scaler else 1.0
-			var cam_pos = camera_node.global_position if camera_node else Vector3.ZERO
-			var player_pos = player_node.global_position if player_node else Vector3.ZERO
-			
-			diagnostics_label.text = """
-			--- DIAGNOSTICS ---
-			Raw Tracker Data (cm): X: %.2f | Y: %.2f | Z: %.2f
-			Tracking Scale Multiplier: %.3f x
-			
-			Player Drone Position: X: %.2f | Y: %.2f | Z: %.2f
-			
-			Godot Head Position:
-			X: %.3f m
-			Y: %.3f m
-			Z: %.3f m
-			""" % [
-				_raw_x, _raw_y, _raw_z,
-				scale_mult,
-				player_pos.x, player_pos.y, player_pos.z,
-				cam_pos.x, cam_pos.y, cam_pos.z
-			]
+			diagnostics_label.text = diagnostics_text
+			var diag_view_size = get_viewport().get_visible_rect().size
+			var diag_height = diagnostics_label.get_combined_minimum_size().y
+			diagnostics_label.position = Vector2(
+				18.0,
+				clampf(250.0, 18.0, maxf(18.0, diag_view_size.y - diag_height - 18.0))
+			)
 
 func _apply_tracking_data():
 	# The first time we successfully get a real tracking packet:
@@ -1504,13 +1948,13 @@ func _apply_tracking_data():
 		var y_dir = -1.0 if invert_y else 1.0
 		var z_dir = -1.0 if invert_z else 1.0
 		
-		# Convert real world movement to relative Godot movement using the multiplier.
-		# Adding an implicit 0.5m (50cm) base Z-depth offset, assuming you recenter OpenTrack
-		# while sitting approx 50cm back from your monitor screen.
+		# Keep a persistent baseline eye distance in front of the screen so neutral
+		# tracking data represents a sensible viewing position instead of the glass plane.
+		var base_distance = default_viewer_distance_meters
 		var scaled_offset = Vector3(
 			(_raw_x * x_dir) * sensitivity.x * mult,
 			(_raw_y * y_dir) * sensitivity.y * mult,
-			((_raw_z * z_dir) * sensitivity.z + 0.5) * mult
+			((_raw_z * z_dir) * sensitivity.z + base_distance) * mult
 		)
 		
 		var reference_pos = player_node.global_position if player_node else window_center.global_position

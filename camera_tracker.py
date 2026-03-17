@@ -7,6 +7,37 @@ import socket
 import time
 
 TRACKER_CONTROL_PORT = 4244
+TRACKER_WINDOW_NAME = "Multi-Monitor ArUco Constellation Tracker"
+ROOM_MAP_WINDOW_NAME = "3D Room Spatial Map"
+CAMERA_TOGGLE_KEY = ord('v')
+CAMERA_KEY_LEFT = 81
+CAMERA_KEY_UP = 82
+CAMERA_KEY_RIGHT = 83
+CAMERA_KEY_DOWN = 84
+CAMERA_KEY_LEFT_EX = 2424832
+CAMERA_KEY_UP_EX = 2490368
+CAMERA_KEY_RIGHT_EX = 2555904
+CAMERA_KEY_DOWN_EX = 2621440
+CAMERA_INDEX_DEFAULT = 1
+CAMERA_INDEX_ENV = "CAMERA_INDEX"
+CAMERA_INDEX_AUTO_MAX = 6
+PREFERRED_CAMERA_MODES = [
+    (2560, 1440),
+    (2560, 1080),
+    (2304, 1296),
+    (1920, 1080),
+    (1600, 1200),
+    (1280, 960),
+    (1280, 720),
+]
+PREFERRED_CAMERA_FPS = 30
+SUBPIX_WIN_SIZE = (5, 5)
+SUBPIX_ZERO_ZONE = (-1, -1)
+SUBPIX_CRITERIA = (
+    cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+    40,
+    0.001,
+)
 
 def make_detector_params():
     params = cv2.aruco.DetectorParameters()
@@ -45,6 +76,13 @@ def detect_markers_robust(gray, detector, dictionary, params):
             best_count = count2
             best_corners = corners2
             best_ids = ids2
+    if best_ids is not None and len(best_corners) > 0:
+        refined_corners = []
+        for marker_corners in best_corners:
+            pts = np.ascontiguousarray(marker_corners.reshape(-1, 1, 2).astype(np.float32))
+            cv2.cornerSubPix(gray, pts, SUBPIX_WIN_SIZE, SUBPIX_ZERO_ZONE, SUBPIX_CRITERIA)
+            refined_corners.append(pts.reshape(1, 4, 2))
+        best_corners = refined_corners
     return best_corners, best_ids
 
 def frame_signature(charuco_corners, image_size):
@@ -93,15 +131,83 @@ def load_screen_configs():
             pass
     return {}
 
+def build_status_frame(title, lines, width=1280, height=720):
+    frame = np.full((height, width, 3), 20, dtype=np.uint8)
+    cv2.putText(frame, title, (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
+
+    y = 145
+    for line in lines:
+        cv2.putText(frame, line, (40, y), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (210, 210, 210), 2, cv2.LINE_AA)
+        y += 42
+
+    return frame
+
+def get_capture_dimensions(capture):
+    width = int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+    height = int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    return width, height
+
+def camera_mode_score(width, height):
+    return width * height
+
+def open_capture_for_index(index, backends):
+    for backend in backends:
+        capture = cv2.VideoCapture(index, backend)
+        if capture.isOpened():
+            return capture
+        capture.release()
+    return None
+
+def select_best_camera_index(backends):
+    best_index = None
+    best_score = -1
+    best_mode = None
+
+    for index in range(CAMERA_INDEX_AUTO_MAX):
+        cap = open_capture_for_index(index, backends)
+        if cap is None:
+            continue
+
+        if hasattr(cv2, "CAP_PROP_FOURCC"):
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        if hasattr(cv2, "CAP_PROP_FPS"):
+            cap.set(cv2.CAP_PROP_FPS, PREFERRED_CAMERA_FPS)
+
+        current_mode = get_capture_dimensions(cap)
+        current_score = camera_mode_score(*current_mode)
+        for width, height in PREFERRED_CAMERA_MODES:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            actual_mode = get_capture_dimensions(cap)
+            actual_score = camera_mode_score(*actual_mode)
+            if actual_score > current_score:
+                current_score = actual_score
+                current_mode = actual_mode
+
+        if current_score > best_score:
+            best_score = current_score
+            best_index = index
+            best_mode = current_mode
+
+        cap.release()
+
+    return best_index, best_mode
+
+def infer_calibration_size(camera_matrix):
+    if camera_matrix is None:
+        return None
+    cx = float(camera_matrix[0, 2])
+    cy = float(camera_matrix[1, 2])
+    inferred_width = int(round(cx * 2.0))
+    inferred_height = int(round(cy * 2.0))
+    if inferred_width <= 0 or inferred_height <= 0:
+        return None
+    return inferred_width, inferred_height
+
 def main():
     print("Starting ArUco Constellation Tracker...")
+    print("Press 'v' in the camera window to release/reacquire the webcam without stopping the tracker.")
     print("Press 'q' in the camera window to quit.\n")
-    
-    # Connect to default webcam
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Could not open webcam.")
-        return
 
     # Load the 4x4_50 dictionary we used in Godot
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
@@ -115,13 +221,18 @@ def main():
     
     camera_matrix = None
     dist_coeffs = None
+    stored_camera_matrix = None
+    stored_dist_coeffs = None
+    stored_calibration_size = None
     if os.path.exists("camera_calibration.json"):
         try:
             with open("camera_calibration.json", "r") as f:
                 calib = json.load(f)
-                camera_matrix = np.array(calib["camera_matrix"], dtype=np.float32)
-                dist_coeffs = np.array(calib["dist_coeffs"], dtype=np.float32)
-            print(">>> Successfully loaded camera_calibration.json! Perfect Intrinsics applied! <<<")
+                stored_camera_matrix = np.array(calib["camera_matrix"], dtype=np.float32)
+                stored_dist_coeffs = np.array(calib["dist_coeffs"], dtype=np.float32)
+                if "image_width" in calib and "image_height" in calib:
+                    stored_calibration_size = (int(calib["image_width"]), int(calib["image_height"]))
+            print(">>> Successfully loaded camera_calibration.json! Intrinsics are available pending capture-mode validation. <<<")
         except Exception as e:
             print("Failed to load calibration:", e)
             
@@ -162,6 +273,11 @@ def main():
     last_status_blob = ""
     last_status_time = 0.0
     last_layout_send_time = 0.0
+    cap = None
+    camera_paused = False
+    active_capture_width = 0
+    active_capture_height = 0
+    active_camera_index = None
 
     def send_udp_json(payload):
         bridge_sock.sendto(json.dumps(payload).encode('utf-8'), ("127.0.0.1", 4243))
@@ -183,9 +299,14 @@ def main():
 
     def broadcast_layout():
         nonlocal last_layout_send_time
+        origin_screen = int(global_origin_id) if global_origin_id is not None else None
+        if origin_screen is None and global_transforms:
+            sorted_ids = sorted(int(sid) for sid in global_transforms.keys())
+            origin_screen = sorted_ids[0]
+            print(f">>> WARNING: layout broadcast had no origin; falling back to screen {origin_screen}. <<<")
         layout_payload = {
             "type": "layout_map",
-            "origin_screen": int(global_origin_id) if global_origin_id is not None else None,
+            "origin_screen": origin_screen,
             "screens": {}
         }
         for sid, sdata in global_transforms.items():
@@ -208,6 +329,170 @@ def main():
         rendered_screen_centers.clear()
         screen_trackers.clear()
         smoothed_T_cam = None
+
+    def configure_active_calibration():
+        nonlocal camera_matrix, dist_coeffs, stored_calibration_size
+        camera_matrix = None
+        dist_coeffs = None
+
+        if stored_camera_matrix is None or stored_dist_coeffs is None:
+            return
+
+        if active_capture_width <= 0 or active_capture_height <= 0:
+            return
+
+        calib_size = stored_calibration_size
+        inferred_size = False
+        if calib_size is None:
+            calib_size = infer_calibration_size(stored_camera_matrix)
+            inferred_size = True
+
+        if calib_size is None:
+            print(">>> Stored camera calibration has no usable image size. Recalibrate at the active capture mode. <<<")
+            return
+
+        calib_width, calib_height = calib_size
+        current_aspect = active_capture_width / float(active_capture_height)
+        calib_aspect = calib_width / float(calib_height)
+        aspect_delta = abs(current_aspect - calib_aspect)
+
+        if aspect_delta > 0.02:
+            print(
+                f">>> Stored calibration {calib_width}x{calib_height} is incompatible with active capture "
+                f"{active_capture_width}x{active_capture_height} (aspect mismatch). Recalibrate this camera mode. <<<"
+            )
+            return
+
+        scale_x = active_capture_width / float(calib_width)
+        scale_y = active_capture_height / float(calib_height)
+        scaled_camera_matrix = stored_camera_matrix.copy().astype(np.float32)
+        scaled_camera_matrix[0, 0] *= scale_x
+        scaled_camera_matrix[0, 2] *= scale_x
+        scaled_camera_matrix[1, 1] *= scale_y
+        scaled_camera_matrix[1, 2] *= scale_y
+        camera_matrix = scaled_camera_matrix
+        dist_coeffs = stored_dist_coeffs.copy().astype(np.float32)
+
+        qualifier = "inferred-size " if inferred_size else ""
+        print(
+            f">>> Applied {qualifier}camera calibration from {calib_width}x{calib_height} "
+            f"to active capture {active_capture_width}x{active_capture_height}. <<<"
+        )
+
+    def open_camera():
+        nonlocal active_capture_width, active_capture_height, active_camera_index
+
+        backends = []
+        if os.name == "nt" and hasattr(cv2, "CAP_DSHOW"):
+            backends.append(cv2.CAP_DSHOW)
+        backends.append(cv2.CAP_ANY)
+
+        forced_index = os.environ.get(CAMERA_INDEX_ENV, "").strip()
+        if forced_index != "":
+            try:
+                active_camera_index = int(forced_index)
+            except ValueError:
+                active_camera_index = None
+        if active_camera_index is None:
+            active_camera_index = CAMERA_INDEX_DEFAULT
+
+        capture = None
+        if active_camera_index is not None:
+            capture = open_capture_for_index(active_camera_index, backends)
+        if capture is None:
+            best_index, _ = select_best_camera_index(backends)
+            active_camera_index = best_index
+            if active_camera_index is not None:
+                capture = open_capture_for_index(active_camera_index, backends)
+        if capture is None:
+            active_camera_index = None
+
+        if capture is None:
+            print(">>> Webcam unavailable. Tracker will keep running without it. Press 'v' to retry. <<<")
+            return None
+
+        if hasattr(cv2, "CAP_PROP_FOURCC"):
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        if hasattr(cv2, "CAP_PROP_FPS"):
+            capture.set(cv2.CAP_PROP_FPS, PREFERRED_CAMERA_FPS)
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        best_mode = get_capture_dimensions(capture)
+        best_score = camera_mode_score(*best_mode)
+
+        for width, height in PREFERRED_CAMERA_MODES:
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            actual_mode = get_capture_dimensions(capture)
+            actual_score = camera_mode_score(*actual_mode)
+            if actual_score > best_score:
+                best_mode = actual_mode
+                best_score = actual_score
+
+        if best_mode[0] > 0 and best_mode[1] > 0:
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, best_mode[0])
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, best_mode[1])
+
+        active_capture_width, active_capture_height = get_capture_dimensions(capture)
+        configure_active_calibration()
+        idx_label = active_camera_index if active_camera_index is not None else "unknown"
+        print(
+            f">>> Webcam[{idx_label}] capture active at {active_capture_width}x{active_capture_height}"
+            f" @ target {PREFERRED_CAMERA_FPS}fps. <<<"
+        )
+        return capture
+
+    def switch_camera_index(delta):
+        nonlocal active_camera_index, camera_paused, cap
+        prev_index = active_camera_index
+        prev_cap = cap
+
+        if active_camera_index is None:
+            active_camera_index = 0
+        else:
+            active_camera_index = (active_camera_index + delta) % CAMERA_INDEX_AUTO_MAX
+
+        release_camera()
+        os.environ[CAMERA_INDEX_ENV] = str(active_camera_index)
+        cap_local = open_camera()
+        if cap_local is None:
+            # restore previous camera if the new one fails
+            active_camera_index = prev_index
+            if active_camera_index is not None:
+                os.environ[CAMERA_INDEX_ENV] = str(active_camera_index)
+            cap_local = prev_cap
+            if cap_local is None and active_camera_index is not None:
+                cap_local = open_camera()
+            if cap_local is None:
+                camera_paused = True
+                print(">>> Camera switch failed; staying paused. <<<")
+                return None
+
+        camera_paused = False
+        return cap_local
+
+    def release_camera():
+        nonlocal cap, active_capture_width, active_capture_height, active_camera_index
+        if cap is not None:
+            cap.release()
+            cap = None
+        active_capture_width = 0
+        active_capture_height = 0
+        active_camera_index = None
+
+    def set_camera_paused(paused):
+        nonlocal cap, camera_paused
+        if paused:
+            release_camera()
+            camera_paused = True
+            print(">>> Webcam capture released. Tracker and bridge remain active. Press 'v' to reacquire. <<<")
+            return
+
+        cap = open_camera()
+        camera_paused = cap is None
+        if not camera_paused:
+            print(">>> Webcam capture reacquired. <<<")
 
     def mouse_callback(event, x, y, flags, param):
         nonlocal view_pitch, view_yaw, view_dist, view_pan_x, view_pan_y, mouse_is_down, pan_is_down, last_mouse_x, last_mouse_y, last_pan_x, last_pan_y, global_origin_id
@@ -259,90 +544,131 @@ def main():
                 last_pan_x = x
                 last_pan_y = y
 
-    cv2.namedWindow("Multi-Monitor ArUco Constellation Tracker", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("3D Room Spatial Map", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("3D Room Spatial Map", 1200, 960)
-    cv2.setMouseCallback("3D Room Spatial Map", mouse_callback)
+    cv2.namedWindow(TRACKER_WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(ROOM_MAP_WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(ROOM_MAP_WINDOW_NAME, 1200, 960)
+    cv2.setMouseCallback(ROOM_MAP_WINDOW_NAME, mouse_callback)
+    cap = open_camera()
+    camera_paused = cap is None
 
     while True:
         try:
             cmd_data, _ = command_sock.recvfrom(65535)
             cmd_json = json.loads(cmd_data.decode("utf-8"))
-            if cmd_json.get("type") == "reset_spatial_map":
+            cmd_type = cmd_json.get("type")
+            if cmd_type == "reset_spatial_map":
                 reset_spatial_map()
+            elif cmd_type == "pause_camera_capture":
+                set_camera_paused(True)
+            elif cmd_type == "resume_camera_capture":
+                set_camera_paused(False)
+            elif cmd_type == "toggle_camera_capture":
+                set_camera_paused(not camera_paused)
         except BlockingIOError:
             pass
         except Exception as exc:
             print(f"[tracker] Failed to process control command: {exc}")
 
-        ret, frame = cap.read()
-        if not ret:
-            break
-            
-        # Continuous ChArUco Auto-Calibration
-        if camera_matrix is None:
-            # ArUco detection requires grayscale
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            corners, ids, rejected = detector.detectMarkers(gray)
-            
-            cv2.putText(frame, f"CALIBRATING SENSOR: {len(all_charuco_corners)}/20", (30, 50), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3, cv2.LINE_AA)
-            cv2.putText(frame, "Please slowly tilt the ChArUco board!", (30, 90), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
-            send_scan_status(
-                "camera_calibrating",
-                "Calibrating webcam intrinsics before layout scanning can begin.",
-                accepted_frames=len(all_charuco_corners),
-                target_frames=20
-            )
-            
-            c_corners, c_ids = detect_markers_robust(gray, charuco_detector, charuco_dict, parameters)
-            if c_ids is not None and len(c_ids) > 6:
-                ret, ch_corners, ch_ids = aruco.interpolateCornersCharuco(c_corners, c_ids, gray, charuco_board)
-                if ret > 12: # Min 12 corners for a robust sample
-                    aruco.drawDetectedCornersCharuco(frame, ch_corners, ch_ids, (0, 0, 255))
-                    
-                    sig = frame_signature(ch_corners, (frame.shape[1], frame.shape[0]))
-                    if time.time() - last_calib_time > 0.5 and len(all_charuco_corners) < 20 and is_diverse(sig, accepted_sigs, 0.14):
-                        all_charuco_corners.append(ch_corners)
-                        all_charuco_ids.append(ch_ids)
-                        accepted_sigs.append(sig)
-                        last_calib_time = time.time()
-                        print(f"[*] Captured ChArUco Calibration Frame {len(all_charuco_corners)}/20!")
-                        
-                        # Briefly flash the screen bright green to indicate a successful capture!
-                        cv2.rectangle(frame, (0,0), (frame.shape[1], frame.shape[0]), (0, 255, 0), 15)
-                        
-                        if len(all_charuco_corners) == 20:
-                            print(">>> RUNNING CHARUCO CAMERA CALIBRATION! PLEASE WAIT... <<<")
-                            cv2.putText(frame, "PROCESSING CALIBRATION...", (30, 150), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 4, cv2.LINE_AA)
-                            cv2.imshow("Multi-Monitor ArUco Constellation Tracker", frame)
-                            cv2.waitKey(1) # Force a tiny frame update so they see the text before it hangs!
-                            
-                            ret_val, temp_cam, temp_dist, _, _ = aruco.calibrateCameraCharuco(all_charuco_corners, all_charuco_ids, charuco_board, gray.shape[::-1], None, None)
-                            camera_matrix = temp_cam
-                            dist_coeffs = temp_dist
-                            
-                            print(f">>> CALIBRATION COMPLETE! RMS Error: {ret_val} <<<")
-                            with open("camera_calibration.json", "w") as f:
-                                json.dump({
-                                    "camera_matrix": camera_matrix.tolist(),
-                                    "dist_coeffs": dist_coeffs.tolist()
-                                }, f, indent=4)
-                                
-                            print("Saved to camera_calibration.json! Perfect Intrinsics locked in!")
-        else:
-            # We have perfect intrinsics! Immediately undistort the raw webcam feed
-            # so the user can visually see the math flattening their curved room!
-            frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
-            
-            # Now run ArUco detection on the mathematically perfect image!
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            corners, ids, rejected = detector.detectMarkers(gray)
-            
         current_frame_screens = []
-        
+        ids = None
+        frame = None
+
+        if camera_paused or cap is None:
+            frame = build_status_frame(
+                "WEBCAM RELEASED",
+                [
+                    "The tracker process is still running.",
+                    "Bridge and websocket sync are still active.",
+                    f"Last capture mode: {active_capture_width}x{active_capture_height}" if active_capture_width and active_capture_height else "Last capture mode: unknown",
+                    f"Last camera index: {active_camera_index}" if active_camera_index is not None else "Last camera index: unknown",
+                    "Press 'v' to reacquire the webcam when you want to scan again.",
+                    "Existing mapped screens are kept in memory until you reset/rescan.",
+                ],
+            )
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                print(">>> Webcam read failed. Releasing capture but keeping tracker alive. Press 'v' to retry. <<<")
+                set_camera_paused(True)
+                frame = build_status_frame(
+                    "WEBCAM UNAVAILABLE",
+                    [
+                        "The tracker could not read a frame from the webcam.",
+                        f"Last capture mode: {active_capture_width}x{active_capture_height}" if active_capture_width and active_capture_height else "Last capture mode: unknown",
+                        f"Last camera index: {active_camera_index}" if active_camera_index is not None else "Last camera index: unknown",
+                        "Press 'v' to try opening the webcam again.",
+                        "Bridge and websocket sync are still active.",
+                    ],
+                )
+             
+        if not camera_paused and cap is not None:
+            # Continuous ChArUco Auto-Calibration
+            if camera_matrix is None:
+                # ArUco detection requires grayscale
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                corners, ids, rejected = detector.detectMarkers(gray)
+                
+                cv2.putText(frame, f"CALIBRATING SENSOR: {len(all_charuco_corners)}/20", (30, 50), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3, cv2.LINE_AA)
+                cv2.putText(frame, "Please slowly tilt the ChArUco board!", (30, 90), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+                send_scan_status(
+                    "camera_calibrating",
+                    "Calibrating webcam intrinsics before layout scanning can begin.",
+                    accepted_frames=len(all_charuco_corners),
+                    target_frames=20
+                )
+                
+                c_corners, c_ids = detect_markers_robust(gray, charuco_detector, charuco_dict, parameters)
+                if c_ids is not None and len(c_ids) > 6:
+                    ret, ch_corners, ch_ids = aruco.interpolateCornersCharuco(c_corners, c_ids, gray, charuco_board)
+                    if ret > 12: # Min 12 corners for a robust sample
+                        aruco.drawDetectedCornersCharuco(frame, ch_corners, ch_ids, (0, 0, 255))
+                        
+                        sig = frame_signature(ch_corners, (frame.shape[1], frame.shape[0]))
+                        if time.time() - last_calib_time > 0.5 and len(all_charuco_corners) < 20 and is_diverse(sig, accepted_sigs, 0.14):
+                            all_charuco_corners.append(ch_corners)
+                            all_charuco_ids.append(ch_ids)
+                            accepted_sigs.append(sig)
+                            last_calib_time = time.time()
+                            print(f"[*] Captured ChArUco Calibration Frame {len(all_charuco_corners)}/20!")
+                            
+                            # Briefly flash the screen bright green to indicate a successful capture!
+                            cv2.rectangle(frame, (0,0), (frame.shape[1], frame.shape[0]), (0, 255, 0), 15)
+                            
+                            if len(all_charuco_corners) == 20:
+                                print(">>> RUNNING CHARUCO CAMERA CALIBRATION! PLEASE WAIT... <<<")
+                                cv2.putText(frame, "PROCESSING CALIBRATION...", (30, 150), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 4, cv2.LINE_AA)
+                                cv2.imshow(TRACKER_WINDOW_NAME, frame)
+                                cv2.waitKey(1) # Force a tiny frame update so they see the text before it hangs!
+                                
+                                ret_val, temp_cam, temp_dist, _, _ = aruco.calibrateCameraCharuco(all_charuco_corners, all_charuco_ids, charuco_board, gray.shape[::-1], None, None)
+                                camera_matrix = temp_cam
+                                dist_coeffs = temp_dist
+                                stored_camera_matrix = temp_cam.copy().astype(np.float32)
+                                stored_dist_coeffs = temp_dist.copy().astype(np.float32)
+                                stored_calibration_size = (int(gray.shape[1]), int(gray.shape[0]))
+                                
+                                print(f">>> CALIBRATION COMPLETE! RMS Error: {ret_val} <<<")
+                                with open("camera_calibration.json", "w") as f:
+                                    json.dump({
+                                        "camera_matrix": camera_matrix.tolist(),
+                                        "dist_coeffs": dist_coeffs.tolist(),
+                                        "image_width": int(gray.shape[1]),
+                                        "image_height": int(gray.shape[0])
+                                    }, f, indent=4)
+                                    
+                                print("Saved to camera_calibration.json! Perfect Intrinsics locked in!")
+            else:
+                # We have perfect intrinsics! Immediately undistort the raw webcam feed
+                # so the user can visually see the math flattening their curved room!
+                frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
+                
+                # Now run ArUco detection on the mathematically perfect image!
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                corners, ids, rejected = detector.detectMarkers(gray)
+         
         if ids is not None:
             # 0. Black out the markers to prevent infinite loops from the webcam seeing the screen!
             for i in range(len(ids)):
@@ -372,8 +698,8 @@ def main():
                 # Caluclate the pixel perimeter of the center marker
                 c_perimeter = cv2.arcLength(corners[c_idx][0], True)
                 
-                # Helper function to extract exact ArUco corners structurally
-                def get_corner_point(target_idx_list, corner_index):
+                # Helper function to select the best-matching corner marker near the center marker.
+                def get_marker_corners(target_idx_list):
                     if not target_idx_list: return None
                     
                     best_idx = None
@@ -395,46 +721,28 @@ def main():
                         return None
                     
                     if best_idx is not None:
-                        marker_corners = corners[best_idx][0]
-                        
-                        # GRAB THE STRUCTURALLY INVARIANT CORNER BY INDEX, ZERO JITTER!
-                        best_pt = marker_corners[corner_index]
-                                
-                        marker_width = np.linalg.norm(marker_corners[0] - marker_corners[1])
-                        godot_pad_pixels = marker_width * 0.15
-                        
-                        direction_vector = best_pt - c_center
-                        direction_vector = direction_vector / np.linalg.norm(direction_vector)
-                        
-                        expanded_pt = best_pt + (direction_vector * godot_pad_pixels)
-                        return expanded_pt
+                        return corners[best_idx][0].astype(np.float32)
                         
                     return None
+
+                def expand_marker_corner(marker_corners, corner_index):
+                    best_pt = marker_corners[corner_index]
+                    marker_width = np.linalg.norm(marker_corners[0] - marker_corners[1])
+                    godot_pad_pixels = marker_width * 0.15
+                    direction_vector = best_pt - c_center
+                    norm = np.linalg.norm(direction_vector)
+                    if norm <= 1e-6:
+                        return best_pt
+                    direction_vector = direction_vector / norm
+                    return best_pt + (direction_vector * godot_pad_pixels)
                 
-                # Fetch structurally invariant indices! 0=TL, 1=TR, 2=BR, 3=BL
-                tl = get_corner_point(tl_ids, 0)
-                tr = get_corner_point(tr_ids, 1)
-                bl = get_corner_point(bl_ids, 3) # Bottom Left is index 3
-                br = get_corner_point(br_ids, 2) # Bottom Right is index 2
+                tl_marker = get_marker_corners(tl_ids)
+                tr_marker = get_marker_corners(tr_ids)
+                bl_marker = get_marker_corners(bl_ids)
+                br_marker = get_marker_corners(br_ids)
                 
                 # If we successfully locked onto all 4 corners + center...
-                if tl is not None and tr is not None and br is not None and bl is not None:
-                    # Construct a polygon defining the physical screen's edge bounds!
-                    pts = np.array([tl, tr, br, bl], np.int32)
-                    pts = pts.reshape((-1, 1, 2))
-                    
-                    # Draw a thick green bounding box tracing the perimeter of the physical monitor
-                    cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
-                    
-                    # Inject a semi-transparent green overlay over the screen
-                    overlay = frame.copy()
-                    cv2.fillPoly(overlay, [pts], (0, 255, 0))
-                    cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
-                    
-                    # Render the Device ID prominently above the screen
-                    cv2.putText(frame, f"Godot Screen ID: {c_id}", (int(tl[0]), int(tl[1] - 15)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
-                                
+                if tl_marker is not None and tr_marker is not None and br_marker is not None and bl_marker is not None:
                     # ---------------------------------------------------------
                     # 3D SPATIAL PROJECTION (DEVICE-SPECIFIC SCALE!)
                     # ---------------------------------------------------------
@@ -444,6 +752,76 @@ def main():
                     if str_id in configs:
                         width_inches = configs[str_id].get("width", 20.9)
                         height_inches = configs[str_id].get("height", 11.7)
+
+                        shortest_dim = min(width_inches, height_inches)
+                        marker_size = shortest_dim * 0.40
+                        marker_pad = marker_size * 0.15
+
+                        plane_points = np.array([
+                            # Top-left marker: TL, TR, BR, BL
+                            [marker_pad, marker_pad],
+                            [marker_pad + marker_size, marker_pad],
+                            [marker_pad + marker_size, marker_pad + marker_size],
+                            [marker_pad, marker_pad + marker_size],
+                            # Top-right marker
+                            [width_inches - marker_pad - marker_size, marker_pad],
+                            [width_inches - marker_pad, marker_pad],
+                            [width_inches - marker_pad, marker_pad + marker_size],
+                            [width_inches - marker_pad - marker_size, marker_pad + marker_size],
+                            # Bottom-left marker
+                            [marker_pad, height_inches - marker_pad - marker_size],
+                            [marker_pad + marker_size, height_inches - marker_pad - marker_size],
+                            [marker_pad + marker_size, height_inches - marker_pad],
+                            [marker_pad, height_inches - marker_pad],
+                            # Bottom-right marker
+                            [width_inches - marker_pad - marker_size, height_inches - marker_pad - marker_size],
+                            [width_inches - marker_pad, height_inches - marker_pad - marker_size],
+                            [width_inches - marker_pad, height_inches - marker_pad],
+                            [width_inches - marker_pad - marker_size, height_inches - marker_pad],
+                        ], dtype=np.float32)
+
+                        image_points_h = np.vstack([
+                            tl_marker,
+                            tr_marker,
+                            bl_marker,
+                            br_marker,
+                        ]).astype(np.float32)
+
+                        homography, _ = cv2.findHomography(plane_points, image_points_h, 0)
+
+                        if homography is not None:
+                            screen_plane_corners = np.array([
+                                [0.0, 0.0],
+                                [width_inches, 0.0],
+                                [width_inches, height_inches],
+                                [0.0, height_inches],
+                            ], dtype=np.float32).reshape(1, 4, 2)
+                            projected_screen_corners = cv2.perspectiveTransform(screen_plane_corners, homography).reshape(4, 2)
+                            tl = projected_screen_corners[0]
+                            tr = projected_screen_corners[1]
+                            br = projected_screen_corners[2]
+                            bl = projected_screen_corners[3]
+                        else:
+                            tl = expand_marker_corner(tl_marker, 0)
+                            tr = expand_marker_corner(tr_marker, 1)
+                            bl = expand_marker_corner(bl_marker, 3)
+                            br = expand_marker_corner(br_marker, 2)
+
+                        # Construct a polygon defining the physical screen's edge bounds!
+                        pts = np.array([tl, tr, br, bl], np.int32)
+                        pts = pts.reshape((-1, 1, 2))
+                        
+                        # Draw a thick green bounding box tracing the perimeter of the physical monitor
+                        cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
+                        
+                        # Inject a semi-transparent green overlay over the screen
+                        overlay = frame.copy()
+                        cv2.fillPoly(overlay, [pts], (0, 255, 0))
+                        cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+                        
+                        # Render the Device ID prominently above the screen
+                        cv2.putText(frame, f"Godot Screen ID: {c_id}", (int(tl[0]), int(tl[1] - 15)), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
                         
                         # Dynamically declare the 3D dimensions of THIS precise screen!
                         w2 = width_inches / 2.0
@@ -602,7 +980,14 @@ def main():
         # ---------------------------------------------------------
         visible_ids = [s["screen_id"] for s in current_frame_screens]
 
-        if camera_matrix is not None:
+        if camera_paused or cap is None:
+            send_scan_status(
+                "camera_paused",
+                "Webcam capture is released. Press 'v' in the tracker window to reacquire it.",
+                visible_screens=[],
+                mapped_screens=sorted(int(sid) for sid in global_transforms.keys())
+            )
+        elif camera_matrix is not None:
             if not visible_ids:
                 send_scan_status(
                     "waiting_for_markers",
@@ -738,14 +1123,33 @@ def main():
             draw_line_3d(room_map, z_bleft, z_left, c_color, 1)
 
         # Output the live webcam feeds
-        cv2.imshow("Multi-Monitor ArUco Constellation Tracker", frame)
-        cv2.imshow("3D Room Spatial Map", room_map)
+        if active_capture_width > 0 and active_capture_height > 0:
+            cv2.putText(
+                frame,
+                f"Capture: {active_capture_width}x{active_capture_height} (idx {active_camera_index})",
+                (30, frame.shape[0] - 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        cv2.imshow(TRACKER_WINDOW_NAME, frame)
+        cv2.imshow(ROOM_MAP_WINDOW_NAME, room_map)
         
-        key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKeyEx(1)
         if key == ord('c'):
             print(">>> COMPILING AND BROADCASTING LAYOUT MAP <<<")
             broadcast_layout()
             print("Successfully sent to WebSocket Router!")
+        elif key == CAMERA_TOGGLE_KEY:
+            set_camera_paused(not camera_paused)
+        elif key in (CAMERA_KEY_LEFT, CAMERA_KEY_DOWN, CAMERA_KEY_LEFT_EX, CAMERA_KEY_DOWN_EX, ord('a'), ord('s')):
+            print(">>> Switching camera index down. <<<")
+            cap = switch_camera_index(-1)
+        elif key in (CAMERA_KEY_RIGHT, CAMERA_KEY_UP, CAMERA_KEY_RIGHT_EX, CAMERA_KEY_UP_EX, ord('d'), ord('w')):
+            print(">>> Switching camera index up. <<<")
+            cap = switch_camera_index(1)
 
         # Press 'q' to quit
         if key == ord('q'):
@@ -756,6 +1160,9 @@ def main():
             print(">>> CLEARING SENSOR CALIBRATION <<<")
             camera_matrix = None
             dist_coeffs = None
+            stored_camera_matrix = None
+            stored_dist_coeffs = None
+            stored_calibration_size = None
             all_charuco_corners.clear()
             all_charuco_ids.clear()
             accepted_sigs.clear()
@@ -763,8 +1170,9 @@ def main():
                 os.remove("camera_calibration.json")
             print("Ready to gather new ChArUco frames!")
             
-    cap.release()
+    release_camera()
     bridge_sock.close()
+    command_sock.close()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":

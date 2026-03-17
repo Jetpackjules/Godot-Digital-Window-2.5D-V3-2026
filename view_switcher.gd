@@ -1,6 +1,8 @@
 @tool
 extends Node3D
 
+@export var fallback_directional_light_path: NodePath
+
 var current_view_name: String = "":
 	set(value):
 		if current_view_name != value:
@@ -10,9 +12,11 @@ var current_view_name: String = "":
 
 var _available_views: Array[String] = []
 var _instantiated_view: Node3D
+var _fallback_directional_light: DirectionalLight3D
 
 func _ready() -> void:
 	_refresh_views()
+	_resolve_fallback_light()
 	
 	if Engine.is_editor_hint() or not Engine.is_editor_hint():
 		# 1. Recover any existing view from a scene load so we don't spawn duplicates
@@ -30,6 +34,8 @@ func _ready() -> void:
 			if not _instantiated_view:
 				# Only load if we didn't just recover one from the saved scene!
 				_load_view(current_view_name)
+			else:
+				_sync_fallback_directional_light()
 
 func _get_property_list() -> Array:
 	var properties: Array = []
@@ -90,6 +96,7 @@ func _load_view(view_file: String) -> void:
 		# Instantiate and inject the new view
 		_instantiated_view = packed_scene.instantiate() as Node3D
 		self.add_child(_instantiated_view)
+		_sync_fallback_directional_light()
 		
 		# Set owner so it shows up in the editor hierarchy cleanly
 		if Engine.is_editor_hint() and get_tree() and get_tree().edited_scene_root:
@@ -97,3 +104,29 @@ func _load_view(view_file: String) -> void:
 			
 	else:
 		push_error("Failed to load view scene: " + scene_path)
+
+func _resolve_fallback_light() -> void:
+	if fallback_directional_light_path.is_empty():
+		_fallback_directional_light = null
+		return
+	_fallback_directional_light = get_node_or_null(fallback_directional_light_path) as DirectionalLight3D
+
+func _sync_fallback_directional_light() -> void:
+	_resolve_fallback_light()
+	if _fallback_directional_light == null:
+		return
+
+	var has_view_directional_light := _view_has_directional_light(_instantiated_view)
+	_fallback_directional_light.visible = not has_view_directional_light
+
+func _view_has_directional_light(node: Node) -> bool:
+	if node == null:
+		return false
+
+	for child in node.get_children():
+		if child is DirectionalLight3D:
+			return true
+		if _view_has_directional_light(child):
+			return true
+
+	return false

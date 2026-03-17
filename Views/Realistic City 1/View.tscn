@@ -12,3 +12,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.697083, 0.021517277, 0.2118
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=517283767]
 environment = ExtResource("2_ku1ww")
 camera_attributes = ExtResource("3_50b3j")
+
+[node name="Light" type="DirectionalLight3D" parent="." unique_id=1115062540]
+transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.6245799, 0.77793354, 0.66801006, -0.5503635, 0.500862, -5.7581205, 7.6799498, 2.5738828)
+shadow_enabled = true
+directional_shadow_mode = 0

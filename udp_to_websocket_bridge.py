@@ -35,6 +35,7 @@ calibration_mode = False
 scan_locked = False
 latest_visible_screen_ids: Set[str] = set()
 latest_mapped_screen_ids: Set[str] = set()
+anaglyph_enabled = False
 
 
 def broadcast_json(payload: dict) -> None:
@@ -108,7 +109,7 @@ def maybe_auto_lock_from_layout(layout_screens: Set[str]) -> None:
 
 async def handle_client(websocket, path=None):
     """Handles an individual WebSocket connection, assigning an ID and listening for toggles."""
-    global client_id_counter, calibration_mode, latest_visible_screen_ids, latest_mapped_screen_ids
+    global client_id_counter, calibration_mode, latest_visible_screen_ids, latest_mapped_screen_ids, anaglyph_enabled
     
     # Assign ID
     client_id = client_id_counter
@@ -123,6 +124,7 @@ async def handle_client(websocket, path=None):
             "device_id": client_id,
             "calibration_mode": calibration_mode,
             "scan_locked": scan_locked,
+            "anaglyph_enabled": anaglyph_enabled,
             "presets": load_presets()
         })
         await websocket.send(init_payload)
@@ -146,6 +148,15 @@ async def handle_client(websocket, path=None):
                     
                     # Broadcast to everyone
                     websockets.broadcast(connected_clients, update_payload)
+
+                elif action == "anaglyph_toggle":
+                    anaglyph_enabled = bool(data.get("enabled", not anaglyph_enabled))
+                    update_payload = {
+                        "type": "anaglyph_toggle",
+                        "enabled": anaglyph_enabled,
+                        "source_id": client_id
+                    }
+                    broadcast_json(update_payload)
                     
                 elif action == "register_screen":
                     # Godot device is reporting its physical dimensions!

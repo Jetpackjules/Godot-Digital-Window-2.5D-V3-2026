@@ -325,6 +325,7 @@ omni_attenuation = 0.5
 
 [node name="Lightfix" type="MeshInstance3D" parent="." unique_id=1638250320]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4.78459, 0)
+visible = false
 mesh = SubResource("PlaneMesh_loc1w")
 
 [editable path="ReflectionModel"]

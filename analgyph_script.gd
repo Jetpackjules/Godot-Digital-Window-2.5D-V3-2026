@@ -19,6 +19,8 @@ var _anaglyph_enabled: bool = false
 var _shader_canvas: CanvasLayer
 var _shader_mat: ShaderMaterial # Keep a reference to update it live
 
+signal anaglyph_toggled(enabled: bool)
+
 func _ready() -> void:
 	if not base_camera: return
 		
@@ -80,11 +82,27 @@ func _process(_delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_T:
-			_anaglyph_enabled = not _anaglyph_enabled
-			_apply_anaglyph_mode()
+			toggle_anaglyph()
 				
 		elif event.keycode == KEY_EQUAL: ipd += 0.005
 		elif event.keycode == KEY_MINUS: ipd = max(0.0, ipd - 0.005)
+
+func set_anaglyph_enabled(enabled: bool, emit_signal: bool = true) -> void:
+	if _anaglyph_enabled == enabled:
+		return
+	_anaglyph_enabled = enabled
+	_apply_anaglyph_mode()
+	if emit_signal:
+		anaglyph_toggled.emit(_anaglyph_enabled)
+
+func toggle_anaglyph(emit_signal: bool = true) -> void:
+	_anaglyph_enabled = not _anaglyph_enabled
+	_apply_anaglyph_mode()
+	if emit_signal:
+		anaglyph_toggled.emit(_anaglyph_enabled)
+
+func get_anaglyph_enabled() -> bool:
+	return _anaglyph_enabled
 
 func _apply_anaglyph_mode() -> void:
 	if _shader_canvas:

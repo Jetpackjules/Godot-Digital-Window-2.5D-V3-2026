@@ -1,7 +1,6 @@
 extends CharacterBody3D
 
-
-const SPEED = 5.0
+@export var move_speed_meters_per_second: float = 1.0
 const JUMP_VELOCITY = 4.5
 
 var mouse_sensitivity := 0.003
@@ -41,11 +40,11 @@ func _physics_process(delta: float) -> void:
 	
 	if direction:
 		# Use full 3D velocity so W/S flies up and down based on pitch
-		velocity = direction * SPEED
+		velocity = direction * move_speed_meters_per_second
 	else:
-		velocity = velocity.move_toward(Vector3.ZERO, SPEED)
+		velocity = velocity.move_toward(Vector3.ZERO, move_speed_meters_per_second)
 
 	# Add vertical flight purely on the Y axis
-	velocity.y += vert_dir * SPEED
+	velocity.y += vert_dir * move_speed_meters_per_second
 
 	move_and_slide()

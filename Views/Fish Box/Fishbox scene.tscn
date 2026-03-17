@@ -1,0 +1,44 @@
+[gd_scene format=3 uid="uid://noo45ymms00j"]
+
+[ext_resource type="PackedScene" uid="uid://xp18kxml17on" path="res://Views/Fish Box/Box/box_aquarium.glb" id="1_cxjd5"]
+
+[node name="Sketchfab_Scene" unique_id=1094774462 instance=ExtResource("1_cxjd5")]
+
+[node name="Circle_010_0" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="0" unique_id=1933632453]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, -0.80703056, 0.80268973, -0.27233505)
+
+[node name="Circle_011_1" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="1" unique_id=711719915]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, -0.80703056, 0.80268973, -0.27233505)
+
+[node name="Circle_012_2" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="2" unique_id=1758912774]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, -0.80703056, 0.80268973, -0.27233505)
+
+[node name="Circle_001_72" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="32" unique_id=524371240]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, -0.19700658, 0.51347756, -0.28097)
+
+[node name="Circle_002_73" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="33" unique_id=760930715]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, -0.19700658, 0.51347756, -0.28097)
+
+[node name="Circle_006_74" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="34" unique_id=1296612614]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, -0.19700658, 0.51347756, -0.28097)
+
+[node name="Circle_003_75" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="35" unique_id=1182763264]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, 0.59742546, 0.52357626, 0.048248082)
+
+[node name="Circle_004_76" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="36" unique_id=507719273]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, 0.59742546, 0.52357626, 0.048248082)
+
+[node name="Circle_005_77" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="37" unique_id=838445979]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, 0.59742546, 0.52357626, 0.048248082)
+
+[node name="Circle_007_78" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="38" unique_id=316506446]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, 0.16194099, 0.39460075, 0.048248064)
+
+[node name="Circle_008_79" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="39" unique_id=926879627]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, 0.16194099, 0.39460075, 0.048248064)
+
+[node name="Circle_009_80" parent="Sketchfab_model/root/GLTF_SceneRootNode" parent_id_path=PackedInt32Array(1231029740) index="40" unique_id=1513241744]
+transform = Transform3D(0, 0, 0, 0, 0, 0, 0, 0, 0, 0.16194099, 0.39460075, 0.048248064)
+
+[node name="AnimationPlayer" parent="." index="1" unique_id=1276903119]
+autoplay = &"Animation"

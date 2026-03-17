@@ -4,10 +4,9 @@
 [ext_resource type="Script" uid="uid://dinc44gw3mrvr" path="res://Perspective_Cam.gd" id="2_r0du0"]
 [ext_resource type="Texture2D" uid="uid://bxl8v6cotb4ak" path="res://icon.svg" id="3_cm0pq"]
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
-[ext_resource type="Texture2D" uid="uid://c74x0p14k8kd1" path="res://Assets/fish.jpg" id="6_3dxm6"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
-[ext_resource type="PackedScene" uid="uid://dk1sfjmbix8yc" path="res://Views/test_box.tscn" id="9_j4qnp"]
+[ext_resource type="PackedScene" uid="uid://dhpdok4bjqver" path="res://Views/Fish Box/View.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
 [ext_resource type="Script" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
@@ -44,11 +43,6 @@ size = Vector2(0.021, 0.37199485)
 [sub_resource type="QuadMesh" id="QuadMesh_fos0i"]
 material = SubResource("StandardMaterial3D_r0du0")
 size = Vector2(0.58665746, 0.021)
-
-[sub_resource type="BoxMesh" id="BoxMesh_rjuhk"]
-lightmap_size_hint = Vector2i(8, 12)
-flip_faces = true
-size = Vector3(0.587, 0.33, 0.33)
 
 [node name="Main" type="Node3D" unique_id=1224428574]
 
@@ -114,21 +108,11 @@ transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.62457
 shadow_enabled = true
 directional_shadow_mode = 0
 
-[node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=1472641536]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.35705173, 1.7418168, 1.8543689)
-visible = false
-light_energy = 1.25
-
 [node name="Analgyph Script" type="Node" parent="." unique_id=503136632 node_paths=PackedStringArray("base_camera")]
 script = ExtResource("5_fos0i")
 base_camera = NodePath("../Player/Head_Cam")
 left_red_mix = 0.23
 left_green_mix = 0.855
-
-[node name="Sprite3D" type="Sprite3D" parent="." unique_id=1462185031]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.94349, 1.8150091, 8.715817)
-visible = false
-texture = ExtResource("6_3dxm6")
 
 [node name="OpenTrackClient" type="Node" parent="." unique_id=1912037640 node_paths=PackedStringArray("camera_node", "player_node", "window_center", "screen_scaler")]
 script = ExtResource("7_lgr22")
@@ -136,6 +120,7 @@ camera_node = NodePath("../Player/Head_Cam")
 player_node = NodePath("../Player")
 window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
+invert_y = true
 websocket_url = "ws://10.20.211.39:8080"
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
@@ -147,11 +132,10 @@ virtual_window_height = 0.3299948403966754
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
-current_view_name = "test_box.tscn"
+fallback_directional_light_path = NodePath("../Light")
+current_view_name = "Fish Box"
 
-[node name="Box" type="MeshInstance3D" parent="View" unique_id=666923875 instance=ExtResource("9_j4qnp")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.165)
-mesh = SubResource("BoxMesh_rjuhk")
+[node name="Fish Box" type="Node3D" parent="View" unique_id=1947931160 instance=ExtResource("9_j4qnp")]
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]
 resources = [PackedStringArray("aruco_0", "aruco_1", "aruco_2", "aruco_3", "aruco_4", "aruco_5"), [ExtResource("10_aruco_0"), ExtResource("11_aruco_1"), ExtResource("12_aruco_2"), ExtResource("13_aruco_3"), ExtResource("14_aruco_4"), ExtResource("15_aruco_5")]]
