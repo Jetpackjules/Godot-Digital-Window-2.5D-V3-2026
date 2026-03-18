@@ -285,8 +285,5 @@ python build_and_patch.py
 The existing repo already includes a web export, so this step is only needed after a new export.
 
 ## Known Caveats
-
-- The README now reflects the current on-screen marker workflow, not the older printed-monitor-marker workflow.
 - The off-axis physical tracking-camera correction is **not** automatically solved yet. There are exported offset fields and optional anchor markers in the repo, but the runtime does not yet convert tracker-camera space into main-screen space automatically.
 - `Main.tscn` currently contains a hardcoded LAN WebSocket URL. Web builds resolve the page host at runtime, but native/editor runs on a different machine may still need that scene property adjusted.
-- `build_and_patch.py` is still tailored to the current export filenames in `WEB_EXPORT`, so if the export name changes, that script also needs updating.
