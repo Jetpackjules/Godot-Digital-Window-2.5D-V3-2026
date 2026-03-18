@@ -42,6 +42,8 @@ var aruco_markers: Array[Texture2D] = []
 @export var finish_scan_key: Key = KEY_P
 @export var rescan_key: Key = KEY_F6
 @export var edit_screen_size_key: Key = KEY_F7
+@export var sync_mode_toggle_key: Key = KEY_F8
+@export var render_mode_toggle_key: Key = KEY_F9
 @export var debug_preview_zoom_step: float = 1.0
 @export var debug_preview_min_size: float = 2.0
 @export var debug_preview_max_size: float = 60.0
@@ -76,6 +78,8 @@ var setup_hint_label: Label
 var setup_diagnostics_label: Label
 var rescan_button: Button
 var edit_size_button: Button
+var sync_mode_button: Button
+var render_mode_button: Button
 var setup_action_row: FlowContainer
 var status_toggle_button: Button
 var connect_details_button: Button
@@ -97,6 +101,9 @@ const VIEWER_POSE_BASIS_EPSILON := 0.0002
 const VIEWER_POSE_INTERPOLATION_RATE := 28.0
 const VIEWER_POSE_REMOTE_TIMEOUT_SEC := 0.12
 const VIEWER_POSE_SNAP_DISTANCE := 0.05
+const VIEWER_POSE_LOW_POWER_APPLY_INTERVAL_SEC := 1.0 / 45.0
+const VIEWER_POSE_LOW_POWER_INTERPOLATION_RATE := 16.0
+const VIEWER_POSE_LOW_POWER_REMOTE_TIMEOUT_SEC := 0.25
 
 enum SetupState {
 	BOOTING,
@@ -104,6 +111,16 @@ enum SetupState {
 	SCANNING,
 	READY,
 	ERROR,
+}
+
+enum ViewerSyncMode {
+	FULL,
+	LOW_POWER,
+}
+
+enum RenderPerformanceMode {
+	FULL,
+	LOW_POWER,
 }
 
 var setup_state: int = SetupState.BOOTING
@@ -150,6 +167,33 @@ const TAB_UI_MODE_NORMAL := 0
 const TAB_UI_MODE_CLEAN := 1
 const TAB_UI_MODE_PREVIEW := 2
 var _tab_ui_mode: int = TAB_UI_MODE_NORMAL
+var _viewer_sync_mode: int = ViewerSyncMode.FULL
+var _render_performance_mode: int = RenderPerformanceMode.FULL
+var _pending_remote_viewer_pose_available: bool = false
+var _pending_remote_viewer_source_slot: int = -1
+var _pending_remote_viewer_target_position: Vector3 = Vector3.ZERO
+var _pending_remote_viewer_target_basis: Basis = Basis.IDENTITY
+var _next_remote_viewer_apply_msec: int = 0
+var _viewer_pose_rx_counter: int = 0
+var _viewer_pose_tx_counter: int = 0
+var _viewer_pose_apply_counter: int = 0
+var _tracking_rx_counter: int = 0
+var _stats_window_elapsed_sec: float = 0.0
+var _stats_frame_count: int = 0
+var _stats_frame_time_accum_sec: float = 0.0
+var _debug_average_frame_time_msec: float = 0.0
+var _debug_viewer_pose_rx_hz: float = 0.0
+var _debug_viewer_pose_tx_hz: float = 0.0
+var _debug_viewer_pose_apply_hz: float = 0.0
+var _debug_tracking_rx_hz: float = 0.0
+var _last_viewer_pose_rx_msec: int = 0
+var _last_remote_viewer_packet_msec: int = 0
+var _viewer_pose_rx_interval_average_msec: float = 0.0
+var _viewer_pose_rx_jitter_average_msec: float = 0.0
+var _cached_light_shadow_states: Dictionary = {}
+var _cached_environment_states: Dictionary = {}
+var _status_panel_layout_dirty: bool = true
+var _last_status_panel_viewport_size: Vector2 = Vector2.ZERO
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
@@ -454,6 +498,11 @@ func _ready():
 			push_error("Could not bind to port 4242. Error code: ", error)
 		
 	_setup_debug_view()
+	_load_local_client_preferences()
+	if get_tree():
+		if not get_tree().node_added.is_connected(_handle_scene_node_added):
+			get_tree().node_added.connect(_handle_scene_node_added)
+	call_deferred("_apply_render_performance_mode")
 	_resolve_anaglyph_controller()
 	_set_setup_state(
 		SetupState.BOOTING,
@@ -523,6 +572,16 @@ func _setup_debug_view():
 	edit_size_button.visible = false
 	edit_size_button.pressed.connect(_show_screen_setup)
 	setup_action_row.add_child(edit_size_button)
+
+	sync_mode_button = Button.new()
+	sync_mode_button.visible = false
+	sync_mode_button.pressed.connect(_toggle_viewer_sync_mode)
+	setup_action_row.add_child(sync_mode_button)
+
+	render_mode_button = Button.new()
+	render_mode_button.visible = false
+	render_mode_button.pressed.connect(_toggle_render_performance_mode)
+	setup_action_row.add_child(render_mode_button)
 
 	connect_details_button = Button.new()
 	connect_details_button.text = "Show Details"
@@ -748,19 +807,37 @@ func _load_local_screen_config() -> Dictionary:
 
 	return {}
 
-func _save_local_screen_config(width_inches: float, height_inches: float, preset_name: String = "") -> void:
+func _write_local_screen_config(payload: Dictionary) -> void:
 	var file = FileAccess.open(LOCAL_SETUP_PATH, FileAccess.WRITE)
 	if file == null:
 		return
+	file.store_string(JSON.stringify(payload, "\t"))
 
-	var payload := {
-		"width": width_inches,
-		"height": height_inches
-	}
+func _save_local_screen_config(width_inches: float, height_inches: float, preset_name: String = "") -> void:
+	var payload := _load_local_screen_config()
+	payload["width"] = width_inches
+	payload["height"] = height_inches
 	if preset_name != "":
 		payload["preset_name"] = preset_name
+	elif payload.has("preset_name"):
+		payload.erase("preset_name")
+	payload["viewer_sync_mode"] = _viewer_sync_mode
+	payload["render_performance_mode"] = _render_performance_mode
+	_write_local_screen_config(payload)
 
-	file.store_string(JSON.stringify(payload, "\t"))
+func _save_local_client_preferences() -> void:
+	var payload := _load_local_screen_config()
+	payload["viewer_sync_mode"] = _viewer_sync_mode
+	payload["render_performance_mode"] = _render_performance_mode
+	_write_local_screen_config(payload)
+
+func _load_local_client_preferences() -> void:
+	var payload := _load_local_screen_config()
+	var requested_mode = int(payload.get("viewer_sync_mode", ViewerSyncMode.FULL))
+	_viewer_sync_mode = clampi(requested_mode, ViewerSyncMode.FULL, ViewerSyncMode.LOW_POWER)
+	var requested_render_mode = int(payload.get("render_performance_mode", RenderPerformanceMode.FULL))
+	_render_performance_mode = clampi(requested_render_mode, RenderPerformanceMode.FULL, RenderPerformanceMode.LOW_POWER)
+	_refresh_setup_controls()
 
 func _find_matching_preset_name(width_inches: float, height_inches: float) -> String:
 	const EPSILON := 0.02
@@ -843,6 +920,176 @@ func _try_connect_websocket(force: bool = false) -> void:
 	else:
 		push_error("Failed to initiate WebSocket connection. Error code: ", err)
 
+func _viewer_sync_mode_label() -> String:
+	return "Low Power" if _viewer_sync_mode == ViewerSyncMode.LOW_POWER else "Full"
+
+func _render_performance_mode_label() -> String:
+	return "Low Power" if _render_performance_mode == RenderPerformanceMode.LOW_POWER else "Full"
+
+func _viewer_pose_remote_timeout_msec() -> int:
+	var timeout_sec = VIEWER_POSE_LOW_POWER_REMOTE_TIMEOUT_SEC if _viewer_sync_mode == ViewerSyncMode.LOW_POWER else VIEWER_POSE_REMOTE_TIMEOUT_SEC
+	return int(timeout_sec * 1000.0)
+
+func _viewer_pose_interpolation_rate() -> float:
+	return VIEWER_POSE_LOW_POWER_INTERPOLATION_RATE if _viewer_sync_mode == ViewerSyncMode.LOW_POWER else VIEWER_POSE_INTERPOLATION_RATE
+
+func _viewer_pose_apply_interval_msec() -> int:
+	if _viewer_sync_mode != ViewerSyncMode.LOW_POWER:
+		return 0
+	return max(1, int(VIEWER_POSE_LOW_POWER_APPLY_INTERVAL_SEC * 1000.0))
+
+func _toggle_viewer_sync_mode() -> void:
+	_viewer_sync_mode = ViewerSyncMode.LOW_POWER if _viewer_sync_mode == ViewerSyncMode.FULL else ViewerSyncMode.FULL
+	_next_remote_viewer_apply_msec = Time.get_ticks_msec()
+	if _viewer_sync_mode == ViewerSyncMode.FULL and _pending_remote_viewer_pose_available:
+		_commit_remote_viewer_pose(
+			_pending_remote_viewer_source_slot,
+			_pending_remote_viewer_target_position,
+			_pending_remote_viewer_target_basis
+		)
+		_pending_remote_viewer_pose_available = false
+	_save_local_client_preferences()
+	_refresh_setup_controls()
+	_layout_setup_status_panel()
+	print("Viewer sync mode set to ", _viewer_sync_mode_label())
+
+func _toggle_render_performance_mode() -> void:
+	_render_performance_mode = RenderPerformanceMode.LOW_POWER if _render_performance_mode == RenderPerformanceMode.FULL else RenderPerformanceMode.FULL
+	_apply_render_performance_mode()
+	_save_local_client_preferences()
+	_refresh_setup_controls()
+	_layout_setup_status_panel()
+	print("Render performance mode set to ", _render_performance_mode_label())
+
+func _handle_scene_node_added(node: Node) -> void:
+	if _render_performance_mode != RenderPerformanceMode.LOW_POWER:
+		return
+	_apply_low_power_to_node(node)
+
+func _object_has_property(obj: Object, property_name: String) -> bool:
+	if obj == null:
+		return false
+	for prop in obj.get_property_list():
+		if str(prop.get("name", "")) == property_name:
+			return true
+	return false
+
+func _cache_environment_state(env: Environment) -> void:
+	if env == null:
+		return
+	var key = env.get_instance_id()
+	if _cached_environment_states.has(key):
+		return
+	var state := {}
+	for property_name in ["glow_enabled", "fog_enabled", "volumetric_fog_enabled", "ssao_enabled", "ssil_enabled", "sdfgi_enabled", "dof_blur_far_enabled", "dof_blur_near_enabled"]:
+		if _object_has_property(env, property_name):
+			state[property_name] = env.get(property_name)
+	_cached_environment_states[key] = {
+		"resource": env,
+		"state": state
+	}
+
+func _apply_low_power_to_node(node: Node) -> void:
+	if node is Light3D:
+		var light := node as Light3D
+		var light_key = light.get_instance_id()
+		if not _cached_light_shadow_states.has(light_key):
+			_cached_light_shadow_states[light_key] = {
+				"node": light,
+				"shadow_enabled": light.shadow_enabled
+			}
+		light.shadow_enabled = false
+	elif node is WorldEnvironment:
+		var world_env := node as WorldEnvironment
+		if world_env.environment:
+			_cache_environment_state(world_env.environment)
+			for property_name in ["glow_enabled", "fog_enabled", "volumetric_fog_enabled", "ssao_enabled", "ssil_enabled", "sdfgi_enabled", "dof_blur_far_enabled", "dof_blur_near_enabled"]:
+				if _object_has_property(world_env.environment, property_name):
+					world_env.environment.set(property_name, false)
+
+func _apply_render_performance_mode() -> void:
+	var scene_root: Node = get_tree().current_scene if get_tree() else null
+	if _render_performance_mode == RenderPerformanceMode.LOW_POWER:
+		if scene_root:
+			for child in scene_root.find_children("*", "", true, false):
+				_apply_low_power_to_node(child)
+			_apply_low_power_to_node(scene_root)
+	else:
+		for key in _cached_light_shadow_states.keys():
+			var entry = _cached_light_shadow_states[key]
+			var light = entry.get("node", null)
+			if light and is_instance_valid(light):
+				light.shadow_enabled = bool(entry.get("shadow_enabled", true))
+		for key in _cached_environment_states.keys():
+			var entry = _cached_environment_states[key]
+			var env = entry.get("resource", null)
+			if env and is_instance_valid(env):
+				var state: Dictionary = entry.get("state", {})
+				for property_name in state.keys():
+					if _object_has_property(env, str(property_name)):
+						env.set(str(property_name), state[property_name])
+
+func _update_runtime_stats(delta: float) -> void:
+	_stats_window_elapsed_sec += delta
+	_stats_frame_count += 1
+	_stats_frame_time_accum_sec += delta
+	if _stats_window_elapsed_sec < 1.0:
+		return
+
+	var elapsed = max(_stats_window_elapsed_sec, 0.001)
+	_debug_average_frame_time_msec = (_stats_frame_time_accum_sec / max(_stats_frame_count, 1)) * 1000.0
+	_debug_viewer_pose_rx_hz = float(_viewer_pose_rx_counter) / elapsed
+	_debug_viewer_pose_tx_hz = float(_viewer_pose_tx_counter) / elapsed
+	_debug_viewer_pose_apply_hz = float(_viewer_pose_apply_counter) / elapsed
+	_debug_tracking_rx_hz = float(_tracking_rx_counter) / elapsed
+
+	_stats_window_elapsed_sec = 0.0
+	_stats_frame_count = 0
+	_stats_frame_time_accum_sec = 0.0
+	_viewer_pose_rx_counter = 0
+	_viewer_pose_tx_counter = 0
+	_viewer_pose_apply_counter = 0
+	_tracking_rx_counter = 0
+
+func _record_viewer_pose_packet_received(now_msec: int) -> void:
+	_viewer_pose_rx_counter += 1
+	_last_remote_viewer_packet_msec = now_msec
+	if _last_viewer_pose_rx_msec > 0:
+		var interval_msec = float(now_msec - _last_viewer_pose_rx_msec)
+		var previous_average = _viewer_pose_rx_interval_average_msec if _viewer_pose_rx_interval_average_msec > 0.0 else interval_msec
+		_viewer_pose_rx_interval_average_msec = lerpf(previous_average, interval_msec, 0.2)
+		var jitter = absf(interval_msec - previous_average)
+		var previous_jitter = _viewer_pose_rx_jitter_average_msec if _viewer_pose_rx_jitter_average_msec > 0.0 else jitter
+		_viewer_pose_rx_jitter_average_msec = lerpf(previous_jitter, jitter, 0.2)
+	else:
+		_viewer_pose_rx_interval_average_msec = 0.0
+		_viewer_pose_rx_jitter_average_msec = 0.0
+	_last_viewer_pose_rx_msec = now_msec
+
+func _commit_remote_viewer_pose(source_slot: int, target_position: Vector3, target_basis: Basis) -> void:
+	if not player_node:
+		return
+
+	_remote_viewer_source_slot = source_slot
+	_remote_viewer_target_position = target_position
+	_remote_viewer_target_basis = target_basis.orthonormalized()
+	_remote_viewer_pose_active = true
+	_remote_viewer_timeout_msec = Time.get_ticks_msec() + _viewer_pose_remote_timeout_msec()
+	_suppress_viewer_pose_broadcast_until_msec = _remote_viewer_timeout_msec
+	_last_broadcast_player_position = _remote_viewer_target_position
+	_last_broadcast_player_basis = _remote_viewer_target_basis
+	_viewer_pose_apply_counter += 1
+
+	if _remote_viewer_first_packet:
+		_remote_viewer_first_packet = false
+		player_node.global_position = _remote_viewer_target_position
+		player_node.global_transform.basis = _remote_viewer_target_basis
+		return
+
+	if player_node.global_position.distance_to(_remote_viewer_target_position) > VIEWER_POSE_SNAP_DISTANCE:
+		player_node.global_position = _remote_viewer_target_position
+		player_node.global_transform.basis = _remote_viewer_target_basis
+
 func _is_marker_mode_active() -> bool:
 	return calibration_mode and calibration_ui_panel != null and not calibration_ui_panel.visible
 
@@ -885,6 +1132,7 @@ func _basis_euler_degrees(basis: Basis) -> Vector3:
 	return Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
 func _build_diagnostics_text() -> String:
+	var now_msec = Time.get_ticks_msec()
 	var scale_mult = screen_scaler.tracking_scale_multiplier if screen_scaler else 1.0
 	var cam_pos = camera_node.global_position if camera_node else Vector3.ZERO
 	var player_pos = player_node.global_position if player_node else Vector3.ZERO
@@ -904,6 +1152,14 @@ func _build_diagnostics_text() -> String:
 	var layout_ids = ", ".join(_last_layout_screen_ids) if not _last_layout_screen_ids.is_empty() else "none"
 	var preset_label = _active_screen_preset_name if _active_screen_preset_name != "" else "Manual/Custom"
 	var preset_dims = "%.2f x %.2f in" % [_active_screen_width_inches, _active_screen_height_inches]
+	var remote_source_label = str(_remote_viewer_source_slot) if _remote_viewer_source_slot >= 0 else "none"
+	var remote_active_label = "yes" if _remote_viewer_pose_active else "no"
+	var viewer_packet_age_msec = float(now_msec - _last_remote_viewer_packet_msec) if _last_remote_viewer_packet_msec > 0 else -1.0
+	var viewer_packet_age_text = "n/a"
+	if _remote_viewer_pose_active and viewer_packet_age_msec >= 0.0:
+		viewer_packet_age_text = "%.0f ms" % viewer_packet_age_msec
+	elif _last_remote_viewer_packet_msec > 0:
+		viewer_packet_age_text = "stale"
 	if camera_node and window_center and screen_scaler:
 		var window_basis = window_center.global_transform.basis.orthonormalized()
 		var window_to_camera = cam_pos - window_center.global_position
@@ -920,6 +1176,11 @@ func _build_diagnostics_text() -> String:
 Source: %s | Raw(cm): X %.2f | Y %.2f | Z %.2f
 Preset: %s (%s)
 My Slot: %s | Origin: %s | Origin Raw: %s | Layout IDs: %s
+Render: %.0f fps | %.1f ms
+Render Mode: %s
+Sync Mode: %s | Remote Active: %s | Remote Slot: %s
+Viewer Sync: RX %.1f/s | Apply %.1f/s | TX %.1f/s | Age %s
+Viewer Packet: Gap %.1f ms | Jitter %.1f ms | Tracking RX %.1f/s
 Scale: %.3f x | Tracking Base: %s
 Window Dist: %.3f m (%.1f cm) | V-FOV: %.1f deg
 Player: X %.2f | Y %.2f | Z %.2f
@@ -936,6 +1197,11 @@ Frustum Offset: X %.4f | Y %.4f
 		_raw_x, _raw_y, _raw_z,
 		preset_label, preset_dims,
 		my_slot, origin_label, _last_layout_origin_raw, layout_ids,
+		float(Engine.get_frames_per_second()), _debug_average_frame_time_msec,
+		_render_performance_mode_label(),
+		_viewer_sync_mode_label(), remote_active_label, remote_source_label,
+		_debug_viewer_pose_rx_hz, _debug_viewer_pose_apply_hz, _debug_viewer_pose_tx_hz, viewer_packet_age_text,
+		_viewer_pose_rx_interval_average_msec, _viewer_pose_rx_jitter_average_msec, _debug_tracking_rx_hz,
 		scale_mult,
 		base_distance_text,
 		distance_to_window, distance_to_window * 100.0,
@@ -1057,6 +1323,14 @@ func _refresh_setup_controls() -> void:
 	if edit_size_button:
 		edit_size_button.text = "Edit Screen Size"
 
+	if sync_mode_button:
+		sync_mode_button.visible = _has_received_config
+		sync_mode_button.text = "Sync: %s" % _viewer_sync_mode_label()
+
+	if render_mode_button:
+		render_mode_button.visible = _has_received_config
+		render_mode_button.text = "Render: %s" % _render_performance_mode_label()
+
 	if status_toggle_button:
 		status_toggle_button.text = "Show Status" if _status_panel_hidden_by_user else "Hide Status"
 
@@ -1137,7 +1411,7 @@ func _apply_setup_ui_metrics() -> void:
 	if calibration_info_label:
 		calibration_info_label.add_theme_font_size_override("font_size", body_font)
 
-	for control in [rescan_button, edit_size_button, status_toggle_button, start_scan_button, save_preset_button, preset_dropdown, w_input, h_input]:
+	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, status_toggle_button, start_scan_button, save_preset_button, preset_dropdown, w_input, h_input]:
 		if control == null:
 			continue
 		control.custom_minimum_size = Vector2(0.0, control_height)
@@ -1158,6 +1432,7 @@ func _apply_setup_ui_metrics() -> void:
 	if setup_action_row:
 		setup_action_row.add_theme_constant_override("h_separation", int(round(clampf(10.0 * ui_scale, 8.0, 10.0))))
 		setup_action_row.add_theme_constant_override("v_separation", int(round(clampf(8.0 * ui_scale, 6.0, 8.0))))
+	_status_panel_layout_dirty = true
 
 func _layout_setup_status_panel() -> void:
 	if not setup_status_panel:
@@ -1170,8 +1445,13 @@ func _layout_setup_status_panel() -> void:
 		return
 
 	var viewport_size = _effective_ui_viewport_size()
+	_last_status_panel_viewport_size = viewport_size
 	var gutter = clampf(minf(viewport_size.x, viewport_size.y) * 0.03, 18.0, 30.0)
-	var max_panel_height = max(180.0, viewport_size.y - gutter * 2.0)
+	var button_height = 0.0
+	if status_toggle_button:
+		button_height = maxf(status_toggle_button.custom_minimum_size.y, status_toggle_button.get_combined_minimum_size().y)
+	var button_reserve = button_height + 10.0 + gutter
+	var max_panel_height = max(120.0, viewport_size.y - gutter * 2.0 - button_reserve)
 	var vertical_margins = 0.0
 	if setup_status_stylebox:
 		vertical_margins = setup_status_stylebox.content_margin_top + setup_status_stylebox.content_margin_bottom
@@ -1188,6 +1468,7 @@ func _layout_setup_status_panel() -> void:
 			status_toggle_button.position = Vector2(gutter, setup_status_panel.position.y + setup_status_panel.size.y + 10.0)
 		else:
 			status_toggle_button.position = Vector2(gutter, gutter)
+	_status_panel_layout_dirty = false
 
 func _toggle_status_panel() -> void:
 	_status_panel_hidden_by_user = not _status_panel_hidden_by_user
@@ -1311,38 +1592,49 @@ func _handle_viewer_pose(data: Dictionary) -> void:
 	if not (pos is Array and pos.size() == 3 and basis_rows is Array and basis_rows.size() == 3):
 		return
 
-	_remote_viewer_source_slot = source_slot
-	_remote_viewer_target_position = Vector3(pos[0], pos[1], pos[2])
-	_remote_viewer_target_basis = _basis_from_payload(basis_rows).orthonormalized()
-	_remote_viewer_pose_active = true
-	_remote_viewer_timeout_msec = Time.get_ticks_msec() + int(VIEWER_POSE_REMOTE_TIMEOUT_SEC * 1000.0)
-	_suppress_viewer_pose_broadcast_until_msec = _remote_viewer_timeout_msec
-	_last_broadcast_player_position = _remote_viewer_target_position
-	_last_broadcast_player_basis = _remote_viewer_target_basis
+	var now = Time.get_ticks_msec()
+	_record_viewer_pose_packet_received(now)
 
-	if _remote_viewer_first_packet:
-		_remote_viewer_first_packet = false
-		player_node.global_position = _remote_viewer_target_position
-		player_node.global_transform.basis = _remote_viewer_target_basis
+	var target_position = Vector3(pos[0], pos[1], pos[2])
+	var target_basis = _basis_from_payload(basis_rows).orthonormalized()
+
+	if _viewer_sync_mode == ViewerSyncMode.LOW_POWER:
+		_pending_remote_viewer_pose_available = true
+		_pending_remote_viewer_source_slot = source_slot
+		_pending_remote_viewer_target_position = target_position
+		_pending_remote_viewer_target_basis = target_basis
+		_remote_viewer_timeout_msec = now + _viewer_pose_remote_timeout_msec()
+		_suppress_viewer_pose_broadcast_until_msec = _remote_viewer_timeout_msec
+		if _remote_viewer_first_packet:
+			_commit_remote_viewer_pose(source_slot, target_position, target_basis)
+			_pending_remote_viewer_pose_available = false
+			_next_remote_viewer_apply_msec = now + _viewer_pose_apply_interval_msec()
 		return
 
-	if player_node.global_position.distance_to(_remote_viewer_target_position) > VIEWER_POSE_SNAP_DISTANCE:
-		player_node.global_position = _remote_viewer_target_position
-		player_node.global_transform.basis = _remote_viewer_target_basis
-		return
+	_commit_remote_viewer_pose(source_slot, target_position, target_basis)
 
 func _update_remote_viewer_pose(delta: float) -> void:
+	var now = Time.get_ticks_msec()
+	if _viewer_sync_mode == ViewerSyncMode.LOW_POWER and _pending_remote_viewer_pose_available and now >= _next_remote_viewer_apply_msec:
+		_commit_remote_viewer_pose(
+			_pending_remote_viewer_source_slot,
+			_pending_remote_viewer_target_position,
+			_pending_remote_viewer_target_basis
+		)
+		_pending_remote_viewer_pose_available = false
+		_next_remote_viewer_apply_msec = now + _viewer_pose_apply_interval_msec()
+
 	if not _remote_viewer_pose_active or not player_node:
 		return
 
-	var now = Time.get_ticks_msec()
 	if now > _remote_viewer_timeout_msec:
 		_remote_viewer_pose_active = false
 		_remote_viewer_source_slot = -1
 		_remote_viewer_first_packet = true
+		_pending_remote_viewer_pose_available = false
 		return
 
-	var alpha = 1.0 - exp(-VIEWER_POSE_INTERPOLATION_RATE * delta)
+	var alpha = 1.0 - exp(-_viewer_pose_interpolation_rate() * delta)
 	player_node.global_position = player_node.global_position.lerp(_remote_viewer_target_position, alpha)
 
 	var current_quat = player_node.global_transform.basis.orthonormalized().get_rotation_quaternion()
@@ -1385,6 +1677,7 @@ func _maybe_broadcast_viewer_pose() -> void:
 		"basis": _basis_to_payload(current_basis)
 	}
 	ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+	_viewer_pose_tx_counter += 1
 
 func _request_finish_scan() -> void:
 	if not use_websocket or ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
@@ -1517,6 +1810,10 @@ func _input(event):
 			_restart_scan_flow()
 		elif event.keycode == edit_screen_size_key:
 			_show_screen_setup()
+		elif event.keycode == sync_mode_toggle_key:
+			_toggle_viewer_sync_mode()
+		elif event.keycode == render_mode_toggle_key:
+			_toggle_render_performance_mode()
 	elif event is InputEventMouseButton and event.pressed and _tab_ui_mode == TAB_UI_MODE_PREVIEW:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_adjust_debug_preview_zoom(-debug_preview_zoom_step)
@@ -1633,7 +1930,16 @@ var _was_ws_connected: bool = false
 var _initial_apply_done: bool = false
 
 func _process(_delta):
-	if setup_overlay and setup_overlay.visible and setup_status_panel and setup_status_panel.visible:
+	if (
+		setup_overlay
+		and setup_overlay.visible
+		and setup_status_panel
+		and setup_status_panel.visible
+		and (
+			_status_panel_layout_dirty
+			or _last_status_panel_viewport_size != _effective_ui_viewport_size()
+		)
+	):
 		_layout_setup_status_panel()
 
 	# DYNAMICALLY RESIZE CONSTELLATION SQUARES
@@ -1766,6 +2072,7 @@ func _process(_delta):
 						_raw_y = data.get("y", 0.0)
 						_raw_z = data.get("z", 0.0)
 						_has_live_tracking_data = true
+						_tracking_rx_counter += 1
 						has_new_data = true
 						
 					elif msg_type == "layout_map":
@@ -1880,6 +2187,7 @@ func _process(_delta):
 						_raw_y = data.get("y", 0.0)
 						_raw_z = data.get("z", 0.0)
 						_has_live_tracking_data = true
+						_tracking_rx_counter += 1
 						has_new_data = true
 						
 		elif state == WebSocketPeer.STATE_CLOSED and _was_ws_connected:
@@ -1902,8 +2210,10 @@ func _process(_delta):
 				_raw_y = packet.decode_double(8)
 				_raw_z = packet.decode_double(16)
 				_has_live_tracking_data = true
+				_tracking_rx_counter += 1
 				has_new_data = true
 			
+	_update_runtime_stats(_delta)
 	_update_remote_viewer_pose(_delta)
 
 	if has_new_data:
@@ -1911,24 +2221,44 @@ func _process(_delta):
 
 	_maybe_broadcast_viewer_pose()
 
-	var diagnostics_text = _build_diagnostics_text()
-	if setup_diagnostics_label:
-		setup_diagnostics_label.text = diagnostics_text
+	var status_diagnostics_visible = (
+		setup_overlay
+		and setup_overlay.visible
+		and setup_status_panel
+		and setup_status_panel.visible
+		and setup_diagnostics_label
+		and setup_diagnostics_label.visible
+	)
+	var floating_diagnostics_visible = (
+		debug_canvas
+		and debug_canvas.visible
+		and diagnostics_label
+		and diagnostics_label.visible
+	)
+	if status_diagnostics_visible or floating_diagnostics_visible:
+		var diagnostics_text = _build_diagnostics_text()
+		if status_diagnostics_visible and setup_diagnostics_label.text != diagnostics_text:
+			setup_diagnostics_label.text = diagnostics_text
 
-	if debug_canvas and debug_canvas.visible:
+		if debug_canvas and debug_canvas.visible:
+			if camera_node:
+				head_dot.global_position = camera_node.global_position
+			if window_center:
+				debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
+				
+			if floating_diagnostics_visible:
+				diagnostics_label.text = diagnostics_text
+				var diag_view_size = get_viewport().get_visible_rect().size
+				var diag_height = diagnostics_label.get_combined_minimum_size().y
+				diagnostics_label.position = Vector2(
+					18.0,
+					clampf(250.0, 18.0, maxf(18.0, diag_view_size.y - diag_height - 18.0))
+				)
+	elif debug_canvas and debug_canvas.visible:
 		if camera_node:
 			head_dot.global_position = camera_node.global_position
 		if window_center:
 			debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
-			
-		if diagnostics_label and diagnostics_label.visible:
-			diagnostics_label.text = diagnostics_text
-			var diag_view_size = get_viewport().get_visible_rect().size
-			var diag_height = diagnostics_label.get_combined_minimum_size().y
-			diagnostics_label.position = Vector2(
-				18.0,
-				clampf(250.0, 18.0, maxf(18.0, diag_view_size.y - diag_height - 18.0))
-			)
 
 func _apply_tracking_data():
 	# The first time we successfully get a real tracking packet:

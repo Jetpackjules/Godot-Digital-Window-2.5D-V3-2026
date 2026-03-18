@@ -6,7 +6,7 @@
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
-[ext_resource type="PackedScene" uid="uid://dhpdok4bjqver" path="res://Views/Fish Box/View.tscn" id="9_j4qnp"]
+[ext_resource type="PackedScene" uid="uid://chp7psjus1a61" path="res://Views/Low Poly City/View.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
 [ext_resource type="Script" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
@@ -133,9 +133,9 @@ virtual_window_height = 0.3299948403966754
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
 fallback_directional_light_path = NodePath("../Light")
-current_view_name = "Fish Box"
+current_view_name = "Low Poly City"
 
-[node name="Fish Box" type="Node3D" parent="View" unique_id=1947931160 instance=ExtResource("9_j4qnp")]
+[node name="View" type="Node3D" parent="View" unique_id=1279291071 instance=ExtResource("9_j4qnp")]
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]
 resources = [PackedStringArray("aruco_0", "aruco_1", "aruco_2", "aruco_3", "aruco_4", "aruco_5"), [ExtResource("10_aruco_0"), ExtResource("11_aruco_1"), ExtResource("12_aruco_2"), ExtResource("13_aruco_3"), ExtResource("14_aruco_4"), ExtResource("15_aruco_5")]]

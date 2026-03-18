@@ -63,7 +63,12 @@ if EXPORT_PATH.exists():
     with open(EXPORT_PATH, 'r', encoding='utf-8') as f:
         html_content = f.read()
 
-    if "function promptScreenSize" not in html_content:
+    render_scale_helper_pattern = r"\s*<script>\s*// Per-device web render scale override for weak mobile clients\..*?window\.resetGodotRenderScale.*?</script>\s*"
+    html_content, removed_render_scale_helpers = re.subn(render_scale_helper_pattern, "\n", html_content, count=1, flags=re.S)
+    if removed_render_scale_helpers > 0:
+        print("  -> Removed legacy browser-wide render scale helper from HTML.")
+
+    if "window.promptScreenSize" not in html_content:
         # Inject standard JS prompt at the bottom of the body
         injection = """
         <script>

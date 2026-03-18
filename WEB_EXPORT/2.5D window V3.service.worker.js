@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1773702073|9401927867';
+const CACHE_VERSION = '1773875258|14239767169';
 /** @type {string} */
 const CACHE_PREFIX = '2.5D window V3-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -17,7 +17,7 @@ const ENSURE_CROSSORIGIN_ISOLATION_HEADERS = false;
 const CACHED_FILES = ["2.5D window V3.html","2.5D window V3.js","2.5D window V3.offline.html","2.5D window V3.icon.png","2.5D window V3.apple-touch-icon.png","2.5D window V3.audio.worklet.js","2.5D window V3.audio.position.worklet.js"];
 // Files that we might not want the user to preload, and will only be cached on first load.
 /** @type {string[]} */
-const CACHEABLE_FILES = ["2.5D window V3.wasm","2.5D window V3.pck","2.5D window V3.side.wasm"];
+const CACHEABLE_FILES = ["2.5D window V3.wasm","2.5D window V3.pck"];
 const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {

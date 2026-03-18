@@ -1,5 +1,11 @@
 # 2.5D Window Hologram Tracker
 
+> ⚠️ **Work In Progress**
+>
+> This repo is still an active prototype / WIP. It is **not** a polished turnkey product yet, and it will usually require extra setup, calibration, debugging, device-specific tweaks, and sometimes code changes to get working reliably on a new machine or multi-screen setup.
+>
+> Expect rough edges around browser/device performance, camera setup, tracking-camera placement, calibration stability, and export / patch / launch workflow.
+
 This project turns one or more displays into a tracked "window into a 3D world" using:
 
 - Godot for rendering
@@ -203,12 +209,14 @@ Notes:
 - `P`: finish the current scan
 - `F6`: rescan all registered screens
 - `F7`: reopen screen-size setup for this screen
+- `F8`: toggle per-client viewer sync mode (`Full` / `Low Power`)
+- `F9`: toggle per-client render mode (`Full` / `Low Power`)
 - `Tab`: cycle `normal UI -> clean view -> overhead red-dot preview`
 - mouse wheel in `Tab` preview mode: zoom the red-dot preview
 - `R`: toggle the floating diagnostics overlay
 - `T`: toggle anaglyph mode, synced across connected clients
 
-There is also a touch-friendly status toggle button in the setup overlay.
+There are also touch-friendly status-panel buttons in the setup overlay for sync mode and render mode.
 
 ## Marker Assets
 
