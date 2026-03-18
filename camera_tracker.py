@@ -31,6 +31,8 @@ PREFERRED_CAMERA_MODES = [
     (1280, 720),
 ]
 PREFERRED_CAMERA_FPS = 30
+WORLD_ANCHOR_MARKER_IDS = [45, 46, 47, 48, 49]
+WORLD_ANCHOR_MARKER_SIZE_INCHES = 6.0
 SUBPIX_WIN_SIZE = (5, 5)
 SUBPIX_ZERO_ZONE = (-1, -1)
 SUBPIX_CRITERIA = (
@@ -249,7 +251,9 @@ def main():
     global_origin_id = None
     # Dictionary mapping screen_id (int) -> {"transform": 4x4 ndarray, "width": float, "height": float}
     global_transforms = {}
+    global_anchor_transforms = {} # anchor_id -> {"transform": 4x4 ndarray, "size": float}
     screen_trackers = {} # c_id -> {"rvec": rvec, "tvec": tvec}
+    anchor_trackers = {} # anchor_id -> {"rvec": rvec, "tvec": tvec}
     
     # Temporal Smoothing
     smoothed_T_cam = None
@@ -325,9 +329,11 @@ def main():
         nonlocal global_origin_id, smoothed_T_cam
         print(">>> WIPING SPATIAL MAP RE-INITIALIZING <<<")
         global_transforms.clear()
+        global_anchor_transforms.clear()
         global_origin_id = None
         rendered_screen_centers.clear()
         screen_trackers.clear()
+        anchor_trackers.clear()
         smoothed_T_cam = None
 
     def configure_active_calibration():
@@ -570,6 +576,7 @@ def main():
             print(f"[tracker] Failed to process control command: {exc}")
 
         current_frame_screens = []
+        current_frame_anchors = []
         ids = None
         frame = None
 
@@ -678,6 +685,7 @@ def main():
             aruco.drawDetectedMarkers(frame, corners, ids)
             
             ids_list = ids.flatten().tolist()
+            anchor_ids = [i for i, id_val in enumerate(ids_list) if id_val in WORLD_ANCHOR_MARKER_IDS]
             
             # 2. Extract our defined layout markers
             center_ids = [i for i, id_val in enumerate(ids_list) if id_val in range(6)]
@@ -895,6 +903,95 @@ def main():
                         cv2.putText(frame, "[?] Uncalibrated Screen Size", (int(tl[0]), int(tl[1] - 40)), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
 
+            # 4. Detect reserved world-anchor markers without feeding them into screen stitching.
+            anchor_half = WORLD_ANCHOR_MARKER_SIZE_INCHES / 2.0
+            anchor_object_points = np.array([
+                [-anchor_half, -anchor_half, 0.0],
+                [ anchor_half, -anchor_half, 0.0],
+                [ anchor_half,  anchor_half, 0.0],
+                [-anchor_half,  anchor_half, 0.0],
+            ], dtype=np.float32)
+
+            for anchor_idx in anchor_ids:
+                anchor_id = int(ids_list[anchor_idx])
+                anchor_corners = corners[anchor_idx][0].astype(np.float32)
+
+                if camera_matrix is not None:
+                    cam_mat_use = camera_matrix
+                    dist_use = np.zeros((5, 1), dtype=np.float32)
+                    pnp_flags = cv2.SOLVEPNP_IPPE
+                else:
+                    focal_length = frame.shape[1]
+                    center_pt = (frame.shape[1] / 2.0, frame.shape[0] / 2.0)
+                    cam_mat_use = np.array([
+                        [focal_length, 0, center_pt[0]],
+                        [0, focal_length, center_pt[1]],
+                        [0, 0, 1]
+                    ], dtype=np.float32)
+                    dist_use = np.zeros((5, 1), dtype=np.float32)
+                    pnp_flags = cv2.SOLVEPNP_ITERATIVE
+
+                tracker = anchor_trackers.get(anchor_id)
+                use_guess = False
+                r_guess, t_guess = None, None
+                if tracker is not None and camera_matrix is not None:
+                    r_guess = tracker["rvec"].copy()
+                    t_guess = tracker["tvec"].copy()
+                    use_guess = True
+                    pnp_flags = cv2.SOLVEPNP_ITERATIVE
+
+                if use_guess:
+                    success, rvec, tvec = cv2.solvePnP(
+                        anchor_object_points,
+                        anchor_corners,
+                        cam_mat_use,
+                        dist_use,
+                        rvec=r_guess,
+                        tvec=t_guess,
+                        useExtrinsicGuess=True,
+                        flags=pnp_flags,
+                    )
+                else:
+                    success, rvec, tvec = cv2.solvePnP(
+                        anchor_object_points,
+                        anchor_corners,
+                        cam_mat_use,
+                        dist_use,
+                        flags=pnp_flags,
+                    )
+
+                if success:
+                    anchor_trackers[anchor_id] = {"rvec": rvec, "tvec": tvec}
+                    anchor_dist_inches = float(np.linalg.norm(tvec))
+                    cv2.drawFrameAxes(frame, cam_mat_use, dist_use, rvec, tvec, WORLD_ANCHOR_MARKER_SIZE_INCHES * 0.35, 2)
+                    label_pos = anchor_corners[0].astype(np.int32)
+                    cv2.putText(
+                        frame,
+                        f"World Anchor {anchor_id}",
+                        (int(label_pos[0]), int(label_pos[1] - 16)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.65,
+                        (0, 215, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        frame,
+                        f'{WORLD_ANCHOR_MARKER_SIZE_INCHES:.1f}" square | {anchor_dist_inches:.1f}"',
+                        (int(label_pos[0]), int(label_pos[1] - 40)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (0, 215, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                    current_frame_anchors.append({
+                        "anchor_id": anchor_id,
+                        "size": WORLD_ANCHOR_MARKER_SIZE_INCHES,
+                        "rvec": rvec,
+                        "tvec": tvec,
+                    })
+
         # ---------------------------------------------------------
         # SPATIAL GRAPH MAPPING (SLAM)
         # ---------------------------------------------------------
@@ -975,10 +1072,21 @@ def main():
                             "height": s["height"]
                         }
 
+                # Optional world anchors: visible, mappable into the same room space,
+                # but intentionally excluded from the screen layout graph and broadcasts.
+                for a in current_frame_anchors:
+                    T_cam_to_anchor = create_transform_matrix(a["rvec"], a["tvec"])
+                    T_origin_to_anchor = T_origin_to_cam @ T_cam_to_anchor
+                    global_anchor_transforms[a["anchor_id"]] = {
+                        "transform": T_origin_to_anchor,
+                        "size": a["size"],
+                    }
+
         # ---------------------------------------------------------
         # 3D ROOM LAYOUT VISUALIZER (INTERACTIVE 3D PERSPECTIVE)
         # ---------------------------------------------------------
         visible_ids = [s["screen_id"] for s in current_frame_screens]
+        visible_anchor_ids = [a["anchor_id"] for a in current_frame_anchors]
 
         if camera_paused or cap is None:
             send_scan_status(
@@ -1094,6 +1202,44 @@ def main():
                 cv2.circle(room_map, pt_center, 4, color, -1)
                 cv2.putText(room_map, f"Screen {s_id}", (max(0, pt_center[0]-30), max(0, pt_center[1]-10)), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+        for anchor_id, anchor_data in global_anchor_transforms.items():
+            T = anchor_data["transform"]
+            half = anchor_data["size"] / 2.0
+            tl_local = np.array([-half, -half, 0, 1])
+            tr_local = np.array([ half, -half, 0, 1])
+            bl_local = np.array([-half,  half, 0, 1])
+            br_local = np.array([ half,  half, 0, 1])
+            normal_local = np.array([0, 0, -max(half, 2.0), 1])
+
+            tl_global = T @ tl_local
+            tr_global = T @ tr_local
+            bl_global = T @ bl_local
+            br_global = T @ br_local
+            normal_global = T @ normal_local
+            center_global = T @ np.array([0, 0, 0, 1])
+
+            is_visible = anchor_id in visible_anchor_ids
+            color = (0, 215, 255) if is_visible else (90, 120, 140)
+
+            draw_line_3d(room_map, tl_global, tr_global, color, 2)
+            draw_line_3d(room_map, tr_global, br_global, color, 2)
+            draw_line_3d(room_map, br_global, bl_global, color, 2)
+            draw_line_3d(room_map, bl_global, tl_global, color, 2)
+            draw_line_3d(room_map, center_global, normal_global, (0, 140, 255), 2)
+
+            pt_center, ok = project_3d(center_global)
+            if ok:
+                cv2.circle(room_map, pt_center, 4, color, -1)
+                cv2.putText(
+                    room_map,
+                    f"Anchor {anchor_id}",
+                    (max(0, pt_center[0] - 32), max(0, pt_center[1] - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    color,
+                    1,
+                )
 
         # Draw Camera Frustum
         if T_origin_to_cam is not None:
