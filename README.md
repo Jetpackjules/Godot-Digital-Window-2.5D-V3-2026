@@ -211,12 +211,13 @@ Notes:
 - `F7`: reopen screen-size setup for this screen
 - `F8`: toggle per-client viewer sync mode (`Full` / `Low Power`)
 - `F9`: toggle per-client render mode (`Full` / `Low Power`)
+- `F10`: cycle per-client camera range mode (`50 cm -> 1 m -> 2 m -> 3 m -> 5 m -> 10 m -> Full`)
 - `Tab`: cycle `normal UI -> clean view -> overhead red-dot preview`
 - mouse wheel in `Tab` preview mode: zoom the red-dot preview
 - `R`: toggle the floating diagnostics overlay
 - `T`: toggle anaglyph mode, synced across connected clients
 
-There are also touch-friendly status-panel buttons in the setup overlay for sync mode and render mode.
+There are also touch-friendly status-panel buttons in the setup overlay for sync mode, render mode, camera range mode, and fullscreen.
 
 ## Marker Assets
 

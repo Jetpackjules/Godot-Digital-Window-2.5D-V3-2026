@@ -44,9 +44,12 @@ var aruco_markers: Array[Texture2D] = []
 @export var edit_screen_size_key: Key = KEY_F7
 @export var sync_mode_toggle_key: Key = KEY_F8
 @export var render_mode_toggle_key: Key = KEY_F9
+@export var far_plane_toggle_key: Key = KEY_F10
 @export var debug_preview_zoom_step: float = 1.0
 @export var debug_preview_min_size: float = 2.0
 @export var debug_preview_max_size: float = 60.0
+@export_group("Camera Range")
+@export var camera_range_steps_meters: PackedFloat32Array = PackedFloat32Array([0.5, 1.0, 2.0, 3.0, 5.0, 10.0])
 
 var udp := PacketPeerUDP.new()
 var ws := WebSocketPeer.new()
@@ -80,6 +83,8 @@ var rescan_button: Button
 var edit_size_button: Button
 var sync_mode_button: Button
 var render_mode_button: Button
+var far_plane_button: Button
+var fullscreen_button: Button
 var setup_action_row: FlowContainer
 var status_toggle_button: Button
 var connect_details_button: Button
@@ -169,6 +174,7 @@ const TAB_UI_MODE_PREVIEW := 2
 var _tab_ui_mode: int = TAB_UI_MODE_NORMAL
 var _viewer_sync_mode: int = ViewerSyncMode.FULL
 var _render_performance_mode: int = RenderPerformanceMode.FULL
+var _camera_range_index: int = 0
 var _pending_remote_viewer_pose_available: bool = false
 var _pending_remote_viewer_source_slot: int = -1
 var _pending_remote_viewer_target_position: Vector3 = Vector3.ZERO
@@ -192,6 +198,7 @@ var _viewer_pose_rx_interval_average_msec: float = 0.0
 var _viewer_pose_rx_jitter_average_msec: float = 0.0
 var _cached_light_shadow_states: Dictionary = {}
 var _cached_environment_states: Dictionary = {}
+var _cached_camera_far_states: Dictionary = {}
 var _status_panel_layout_dirty: bool = true
 var _last_status_panel_viewport_size: Vector2 = Vector2.ZERO
 
@@ -503,6 +510,7 @@ func _ready():
 		if not get_tree().node_added.is_connected(_handle_scene_node_added):
 			get_tree().node_added.connect(_handle_scene_node_added)
 	call_deferred("_apply_render_performance_mode")
+	call_deferred("_apply_camera_range_mode")
 	_resolve_anaglyph_controller()
 	_set_setup_state(
 		SetupState.BOOTING,
@@ -582,6 +590,16 @@ func _setup_debug_view():
 	render_mode_button.visible = false
 	render_mode_button.pressed.connect(_toggle_render_performance_mode)
 	setup_action_row.add_child(render_mode_button)
+
+	far_plane_button = Button.new()
+	far_plane_button.visible = false
+	far_plane_button.pressed.connect(_toggle_camera_range_mode)
+	setup_action_row.add_child(far_plane_button)
+
+	fullscreen_button = Button.new()
+	fullscreen_button.visible = false
+	fullscreen_button.pressed.connect(_toggle_fullscreen)
+	setup_action_row.add_child(fullscreen_button)
 
 	connect_details_button = Button.new()
 	connect_details_button.text = "Show Details"
@@ -823,12 +841,14 @@ func _save_local_screen_config(width_inches: float, height_inches: float, preset
 		payload.erase("preset_name")
 	payload["viewer_sync_mode"] = _viewer_sync_mode
 	payload["render_performance_mode"] = _render_performance_mode
+	payload["camera_range_index"] = _camera_range_index
 	_write_local_screen_config(payload)
 
 func _save_local_client_preferences() -> void:
 	var payload := _load_local_screen_config()
 	payload["viewer_sync_mode"] = _viewer_sync_mode
 	payload["render_performance_mode"] = _render_performance_mode
+	payload["camera_range_index"] = _camera_range_index
 	_write_local_screen_config(payload)
 
 func _load_local_client_preferences() -> void:
@@ -837,6 +857,14 @@ func _load_local_client_preferences() -> void:
 	_viewer_sync_mode = clampi(requested_mode, ViewerSyncMode.FULL, ViewerSyncMode.LOW_POWER)
 	var requested_render_mode = int(payload.get("render_performance_mode", RenderPerformanceMode.FULL))
 	_render_performance_mode = clampi(requested_render_mode, RenderPerformanceMode.FULL, RenderPerformanceMode.LOW_POWER)
+	if payload.has("camera_range_index"):
+		var requested_camera_range_index = int(payload.get("camera_range_index", 0))
+		_camera_range_index = clampi(requested_camera_range_index, 0, camera_range_steps_meters.size())
+	elif payload.has("camera_range_mode"):
+		var legacy_camera_range_mode = int(payload.get("camera_range_mode", 0))
+		_camera_range_index = 2 if legacy_camera_range_mode > 0 else 0
+	else:
+		_camera_range_index = 0
 	_refresh_setup_controls()
 
 func _find_matching_preset_name(width_inches: float, height_inches: float) -> String:
@@ -926,6 +954,26 @@ func _viewer_sync_mode_label() -> String:
 func _render_performance_mode_label() -> String:
 	return "Low Power" if _render_performance_mode == RenderPerformanceMode.LOW_POWER else "Full"
 
+func _current_camera_range_limit_meters() -> float:
+	if _camera_range_index <= 0 or _camera_range_index > camera_range_steps_meters.size():
+		return -1.0
+	return float(camera_range_steps_meters[_camera_range_index - 1])
+
+func _camera_range_mode_label() -> String:
+	var limit = _current_camera_range_limit_meters()
+	return "%.1fm" % limit if limit > 0.0 else "Full"
+
+func _is_fullscreen_active() -> bool:
+	if OS.has_feature("web"):
+		var fullscreen_value = JavaScriptBridge.eval("Boolean(document.fullscreenElement)")
+		if fullscreen_value != null:
+			return bool(fullscreen_value)
+	var window = get_window()
+	return window != null and window.mode == Window.MODE_FULLSCREEN
+
+func _fullscreen_button_label() -> String:
+	return "Fullscreen: On" if _is_fullscreen_active() else "Fullscreen: Off"
+
 func _viewer_pose_remote_timeout_msec() -> int:
 	var timeout_sec = VIEWER_POSE_LOW_POWER_REMOTE_TIMEOUT_SEC if _viewer_sync_mode == ViewerSyncMode.LOW_POWER else VIEWER_POSE_REMOTE_TIMEOUT_SEC
 	return int(timeout_sec * 1000.0)
@@ -961,10 +1009,39 @@ func _toggle_render_performance_mode() -> void:
 	_layout_setup_status_panel()
 	print("Render performance mode set to ", _render_performance_mode_label())
 
+func _toggle_camera_range_mode() -> void:
+	_camera_range_index += 1
+	if _camera_range_index > camera_range_steps_meters.size():
+		_camera_range_index = 0
+	_apply_camera_range_mode()
+	_save_local_client_preferences()
+	_refresh_setup_controls()
+	_layout_setup_status_panel()
+	print("Camera range mode set to ", _camera_range_mode_label())
+
+func _toggle_fullscreen() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("""
+			(function() {
+				if (document.fullscreenElement) {
+					document.exitFullscreen();
+				} else if (document.documentElement && document.documentElement.requestFullscreen) {
+					document.documentElement.requestFullscreen();
+				}
+			})();
+		""")
+	else:
+		var window = get_window()
+		if window:
+			window.mode = Window.MODE_WINDOWED if window.mode == Window.MODE_FULLSCREEN else Window.MODE_FULLSCREEN
+	_refresh_setup_controls()
+	_layout_setup_status_panel()
+
 func _handle_scene_node_added(node: Node) -> void:
-	if _render_performance_mode != RenderPerformanceMode.LOW_POWER:
-		return
-	_apply_low_power_to_node(node)
+	if _render_performance_mode == RenderPerformanceMode.LOW_POWER:
+		_apply_low_power_to_node(node)
+	if _current_camera_range_limit_meters() > 0.0:
+		_apply_camera_range_mode_to_node(node)
 
 func _object_has_property(obj: Object, property_name: String) -> bool:
 	if obj == null:
@@ -1028,6 +1105,37 @@ func _apply_render_performance_mode() -> void:
 				for property_name in state.keys():
 					if _object_has_property(env, str(property_name)):
 						env.set(str(property_name), state[property_name])
+
+func _apply_camera_range_mode_to_node(node: Node) -> void:
+	if node is not Camera3D:
+		return
+	var range_limit = _current_camera_range_limit_meters()
+	if range_limit <= 0.0:
+		return
+	var camera := node as Camera3D
+	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
+		return
+	var camera_key = camera.get_instance_id()
+	if not _cached_camera_far_states.has(camera_key):
+		_cached_camera_far_states[camera_key] = {
+			"node": camera,
+			"far": camera.far
+		}
+	camera.far = minf(camera.far, maxf(camera.near + 0.1, range_limit))
+
+func _apply_camera_range_mode() -> void:
+	var scene_root: Node = get_tree().current_scene if get_tree() else null
+	if _current_camera_range_limit_meters() > 0.0:
+		if scene_root:
+			for child in scene_root.find_children("*", "", true, false):
+				_apply_camera_range_mode_to_node(child)
+			_apply_camera_range_mode_to_node(scene_root)
+	else:
+		for key in _cached_camera_far_states.keys():
+			var entry = _cached_camera_far_states[key]
+			var camera = entry.get("node", null)
+			if camera and is_instance_valid(camera):
+				camera.far = float(entry.get("far", camera.far))
 
 func _update_runtime_stats(delta: float) -> void:
 	_stats_window_elapsed_sec += delta
@@ -1331,6 +1439,14 @@ func _refresh_setup_controls() -> void:
 		render_mode_button.visible = _has_received_config
 		render_mode_button.text = "Render: %s" % _render_performance_mode_label()
 
+	if far_plane_button:
+		far_plane_button.visible = _has_received_config
+		far_plane_button.text = "Range: %s" % _camera_range_mode_label()
+
+	if fullscreen_button:
+		fullscreen_button.visible = setup_state != SetupState.BOOTING
+		fullscreen_button.text = _fullscreen_button_label()
+
 	if status_toggle_button:
 		status_toggle_button.text = "Show Status" if _status_panel_hidden_by_user else "Hide Status"
 
@@ -1411,7 +1527,7 @@ func _apply_setup_ui_metrics() -> void:
 	if calibration_info_label:
 		calibration_info_label.add_theme_font_size_override("font_size", body_font)
 
-	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, status_toggle_button, start_scan_button, save_preset_button, preset_dropdown, w_input, h_input]:
+	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, far_plane_button, fullscreen_button, status_toggle_button, start_scan_button, save_preset_button, preset_dropdown, w_input, h_input]:
 		if control == null:
 			continue
 		control.custom_minimum_size = Vector2(0.0, control_height)
@@ -1448,9 +1564,10 @@ func _layout_setup_status_panel() -> void:
 	_last_status_panel_viewport_size = viewport_size
 	var gutter = clampf(minf(viewport_size.x, viewport_size.y) * 0.03, 18.0, 30.0)
 	var button_height = 0.0
+	var button_spacing = 10.0
 	if status_toggle_button:
 		button_height = maxf(status_toggle_button.custom_minimum_size.y, status_toggle_button.get_combined_minimum_size().y)
-	var button_reserve = button_height + 10.0 + gutter
+	var button_reserve = button_height + button_spacing + gutter
 	var max_panel_height = max(120.0, viewport_size.y - gutter * 2.0 - button_reserve)
 	var vertical_margins = 0.0
 	if setup_status_stylebox:
@@ -1464,10 +1581,12 @@ func _layout_setup_status_panel() -> void:
 		setup_status_panel.position = Vector2(gutter, gutter)
 
 	if status_toggle_button:
+		var max_button_y = maxf(gutter, viewport_size.y - gutter - button_height)
 		if setup_status_panel.visible:
-			status_toggle_button.position = Vector2(gutter, setup_status_panel.position.y + setup_status_panel.size.y + 10.0)
+			var desired_button_y = setup_status_panel.position.y + setup_status_panel.size.y + button_spacing
+			status_toggle_button.position = Vector2(gutter, minf(desired_button_y, max_button_y))
 		else:
-			status_toggle_button.position = Vector2(gutter, gutter)
+			status_toggle_button.position = Vector2(gutter, minf(gutter, max_button_y))
 	_status_panel_layout_dirty = false
 
 func _toggle_status_panel() -> void:
@@ -1814,6 +1933,8 @@ func _input(event):
 			_toggle_viewer_sync_mode()
 		elif event.keycode == render_mode_toggle_key:
 			_toggle_render_performance_mode()
+		elif event.keycode == far_plane_toggle_key:
+			_toggle_camera_range_mode()
 	elif event is InputEventMouseButton and event.pressed and _tab_ui_mode == TAB_UI_MODE_PREVIEW:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_adjust_debug_preview_zoom(-debug_preview_zoom_step)

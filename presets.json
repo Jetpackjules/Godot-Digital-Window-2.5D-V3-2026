@@ -14,5 +14,9 @@
     "Iphone 16 Pro (Landscape)": {
         "width": 5.3125,
         "height": 2.5625
+    },
+    "Android Tablet": {
+        "width": 6.73,
+        "height": 4.1875
     }
 }
