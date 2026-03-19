@@ -553,14 +553,18 @@ func _setup_debug_view():
 	setup_status_scroll.add_child(setup_status_box)
 
 	setup_title_label = Label.new()
+	setup_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	setup_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	setup_status_box.add_child(setup_title_label)
 
 	setup_body_label = Label.new()
 	setup_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	setup_body_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	setup_status_box.add_child(setup_body_label)
 
 	setup_hint_label = Label.new()
 	setup_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	setup_hint_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	setup_hint_label.add_theme_color_override("font_color", Color(0.82, 0.82, 0.82, 1))
 	setup_status_box.add_child(setup_hint_label)
 
@@ -608,7 +612,8 @@ func _setup_debug_view():
 	setup_action_row.add_child(connect_details_button)
 
 	setup_diagnostics_label = Label.new()
-	setup_diagnostics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	setup_diagnostics_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	setup_diagnostics_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	setup_diagnostics_label.add_theme_color_override("font_color", Color(0.92, 0.92, 0.92, 1))
 	setup_status_box.add_child(setup_diagnostics_label)
 
@@ -1490,9 +1495,10 @@ func _apply_setup_ui_metrics() -> void:
 	var hint_font = int(round(clampf(12.0 * ui_scale, 11.0, 12.0)))
 	var button_font = int(round(clampf(14.0 * ui_scale, 12.0, 14.0)))
 	var control_height = clampf(36.0 * ui_scale, 30.0, 36.0)
-	var status_width = clampf(effective_size.x * 0.20, 250.0, 340.0)
-	var setup_width = clampf(effective_size.x * 0.34, 300.0, 460.0)
-	var status_content_width = max(180.0, status_width - padding_x * 2.0)
+	var available_width = maxf(180.0, effective_size.x - gutter * 2.0)
+	var status_width = minf(clampf(effective_size.x * 0.20, 220.0, 340.0), available_width)
+	var setup_width = minf(clampf(effective_size.x * 0.34, 260.0, 460.0), available_width)
+	var status_content_width = max(140.0, status_width - padding_x * 2.0)
 
 	if setup_status_stylebox:
 		setup_status_stylebox.set_corner_radius_all(corner_radius)
