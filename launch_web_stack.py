@@ -9,11 +9,17 @@ PROJECT_DIR = Path(__file__).parent.resolve()
 WEB_DIR = PROJECT_DIR / "WEB_EXPORT"
 
 
-def start_process(label: str, script_path: Path, cwd: Path) -> subprocess.Popen:
+def start_process(
+    label: str,
+    script_path: Path,
+    cwd: Path,
+    *,
+    inherit_stdin: bool = False,
+) -> subprocess.Popen:
     process = subprocess.Popen(
         [sys.executable, str(script_path)],
         cwd=str(cwd),
-        stdin=subprocess.DEVNULL,
+        stdin=None if inherit_stdin else subprocess.DEVNULL,
     )
     print(f"[stack] started {label} (pid={process.pid})")
     return process
@@ -63,7 +69,15 @@ def main() -> int:
 
         if not args.no_tracker:
             processes.append(
-                ("tracker", start_process("tracker", PROJECT_DIR / "camera_tracker.py", PROJECT_DIR))
+                (
+                    "tracker",
+                    start_process(
+                        "tracker",
+                        PROJECT_DIR / "camera_tracker.py",
+                        PROJECT_DIR,
+                        inherit_stdin=True,
+                    ),
+                )
             )
 
         print("[stack] running. Press Ctrl+C to stop all services.")

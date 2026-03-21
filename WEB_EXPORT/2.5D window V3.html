@@ -112,7 +112,7 @@ body {
 
 		<script src="2.5D window V3.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"2.5D window V3","experimentalVK":false,"fileSizes":{"2.5D window V3.pck":10656840,"2.5D window V3.wasm":35739700},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"2.5D window V3.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"2.5D window V3","experimentalVK":false,"fileSizes":{"2.5D window V3.pck":315888,"2.5D window V3.wasm":37685705},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"2.5D window V3.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -216,61 +216,6 @@ const engine = new Engine(GODOT_CONFIG);
 	}
 }());
 		</script>
-	
-        <script>
-            // Native UI fallback designed specifically to conquer the iOS Safari WebGL virtual keyboard bug!
-            window.promptScreenSize = function(dimensionName) {
-                return window.prompt("Enter the physical " + dimensionName + " of THIS screen (in inches):", "0.0");
-            };
-        </script>
-        
-
-        <script>
-            // Best-effort mobile wake lock so calibration/scan screens do not dim out mid-session.
-            window.__godotWakeLock = null;
-            window.enableWakeLock = async function () {
-                if (!('wakeLock' in navigator) || document.hidden) {
-                    return false;
-                }
-                try {
-                    if (window.__godotWakeLock) {
-                        return true;
-                    }
-                    window.__godotWakeLock = await navigator.wakeLock.request('screen');
-                    window.__godotWakeLock.addEventListener('release', function () {
-                        window.__godotWakeLock = null;
-                    });
-                    return true;
-                } catch (err) {
-                    console.warn('Wake lock request failed:', err);
-                    return false;
-                }
-            };
-
-            window.disableWakeLock = async function () {
-                if (window.__godotWakeLock) {
-                    await window.__godotWakeLock.release();
-                    window.__godotWakeLock = null;
-                }
-            };
-
-            document.addEventListener('visibilitychange', function () {
-                if (!document.hidden) {
-                    window.enableWakeLock();
-                }
-            });
-
-            ['click', 'touchend', 'keydown'].forEach(function (eventName) {
-                window.addEventListener(eventName, function () {
-                    window.enableWakeLock();
-                }, { passive: true });
-            });
-
-            window.addEventListener('load', function () {
-                window.enableWakeLock();
-            });
-        </script>
-        
-</body>
+	</body>
 </html>
 

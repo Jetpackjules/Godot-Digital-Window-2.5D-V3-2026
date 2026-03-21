@@ -5,6 +5,7 @@ import json
 import asyncio
 import websockets
 import logging
+import time
 from typing import Dict, Set
 
 # Configuration
@@ -13,6 +14,10 @@ UDP_PORT = 4243
 WS_PORT = 8080
 TRACKER_CONTROL_PORT = 4244
 AUTO_FINISH_SCAN_WHEN_ALL_REGISTERED_MAPPED = False
+# Allow brief tracker flicker during lock. If the tracker had a valid localized
+# camera pose within the last few seconds, freeze that last known pose instead
+# of dropping back to the default head-tracking frame.
+TRACKER_CAMERA_POSE_FRESHNESS_SEC = 5.0
 
 def load_presets():
     import os
@@ -30,12 +35,16 @@ logger = logging.getLogger("OpenTrackBridge")
 # Global State
 connected_clients: Set[websockets.WebSocketServerProtocol] = set()
 registered_screens_by_client: Dict[websockets.WebSocketServerProtocol, str] = {}
+registered_screen_dimensions_by_client: Dict[websockets.WebSocketServerProtocol, dict] = {}
 client_id_counter = 0
 calibration_mode = False
 scan_locked = False
 latest_visible_screen_ids: Set[str] = set()
 latest_mapped_screen_ids: Set[str] = set()
 anaglyph_enabled = False
+latest_tracker_camera_pose = None
+latest_tracker_camera_pose_time = 0.0
+locked_tracking_reference = None
 
 
 def broadcast_json(payload: dict) -> None:
@@ -47,10 +56,28 @@ def get_registered_screen_ids() -> Set[str]:
     return {screen_id for screen_id in registered_screens_by_client.values()}
 
 
+def get_registered_screen_dimensions() -> Dict[str, dict]:
+    payload: Dict[str, dict] = {}
+    for websocket, screen_id in registered_screens_by_client.items():
+        dims = registered_screen_dimensions_by_client.get(websocket)
+        if dims is None:
+            continue
+        payload[str(screen_id)] = {
+            "width": float(dims.get("width", 0.0)),
+            "height": float(dims.get("height", 0.0)),
+        }
+    return payload
+
+
 def set_scan_lock(locked: bool, reason: str) -> None:
-    global scan_locked
+    global scan_locked, locked_tracking_reference
     if scan_locked == locked:
         return
+
+    if locked:
+        locked_tracking_reference = freeze_tracking_reference()
+    else:
+        locked_tracking_reference = None
 
     scan_locked = locked
     payload = {
@@ -58,8 +85,10 @@ def set_scan_lock(locked: bool, reason: str) -> None:
         "locked": locked,
         "reason": reason,
         "expected_screens": sorted(get_registered_screen_ids()),
+        "registered_screens": get_registered_screen_dimensions(),
         "visible_screens": sorted(latest_visible_screen_ids),
         "mapped_screens": sorted(latest_mapped_screen_ids),
+        "tracking_reference": locked_tracking_reference,
     }
     logger.info(
         "Scan lock %s (%s). expected=%s visible=%s mapped=%s",
@@ -77,6 +106,7 @@ def broadcast_scan_start(reason: str) -> None:
         "type": "scan_start",
         "reason": reason,
         "expected_screens": sorted(get_registered_screen_ids()),
+        "registered_screens": get_registered_screen_dimensions(),
         "visible_screens": sorted(latest_visible_screen_ids),
         "mapped_screens": sorted(latest_mapped_screen_ids),
     }
@@ -96,6 +126,25 @@ def send_tracker_command(payload: dict) -> None:
         sock.close()
 
 
+def freeze_tracking_reference():
+    if latest_tracker_camera_pose is None:
+        logger.info("No tracker camera pose available at scan lock; keeping default head-tracking frame.")
+        return None
+
+    age = time.monotonic() - latest_tracker_camera_pose_time
+    if age > TRACKER_CAMERA_POSE_FRESHNESS_SEC:
+        logger.info("Tracker camera pose is stale at scan lock (%.3fs); keeping default head-tracking frame.", age)
+        return None
+
+    frozen = {
+        "origin_screen": latest_tracker_camera_pose.get("origin_screen"),
+        "R": latest_tracker_camera_pose.get("R"),
+        "T": latest_tracker_camera_pose.get("T"),
+    }
+    logger.info("Frozen tracker camera reference at scan lock for origin screen %s.", frozen.get("origin_screen"))
+    return frozen
+
+
 def maybe_auto_lock_from_layout(layout_screens: Set[str]) -> None:
     if not AUTO_FINISH_SCAN_WHEN_ALL_REGISTERED_MAPPED:
         return
@@ -110,6 +159,7 @@ def maybe_auto_lock_from_layout(layout_screens: Set[str]) -> None:
 async def handle_client(websocket, path=None):
     """Handles an individual WebSocket connection, assigning an ID and listening for toggles."""
     global client_id_counter, calibration_mode, latest_visible_screen_ids, latest_mapped_screen_ids, anaglyph_enabled
+    global latest_tracker_camera_pose, latest_tracker_camera_pose_time
     
     # Assign ID
     client_id = client_id_counter
@@ -125,6 +175,8 @@ async def handle_client(websocket, path=None):
             "calibration_mode": calibration_mode,
             "scan_locked": scan_locked,
             "anaglyph_enabled": anaglyph_enabled,
+            "tracking_reference": locked_tracking_reference,
+            "registered_screens": get_registered_screen_dimensions(),
             "presets": load_presets()
         })
         await websocket.send(init_payload)
@@ -165,8 +217,14 @@ async def handle_client(websocket, path=None):
                     h = data.get("height", 11.7)
 
                     registered_screens_by_client[websocket] = d_id
+                    registered_screen_dimensions_by_client[websocket] = {
+                        "width": float(w),
+                        "height": float(h),
+                    }
                     latest_visible_screen_ids = set()
                     latest_mapped_screen_ids = set()
+                    latest_tracker_camera_pose = None
+                    latest_tracker_camera_pose_time = 0.0
                     set_scan_lock(False, "register_screen")
                     broadcast_scan_start("register_screen")
                     
@@ -194,6 +252,8 @@ async def handle_client(websocket, path=None):
                     logger.info("Device %s requested a full room rescan.", client_id)
                     latest_visible_screen_ids = set()
                     latest_mapped_screen_ids = set()
+                    latest_tracker_camera_pose = None
+                    latest_tracker_camera_pose_time = 0.0
                     set_scan_lock(False, "rescan_layout")
                     send_tracker_command({"type": "reset_spatial_map"})
                     broadcast_scan_start("rescan_layout")
@@ -235,6 +295,7 @@ async def handle_client(websocket, path=None):
     finally:
         connected_clients.remove(websocket)
         registered_screens_by_client.pop(websocket, None)
+        registered_screen_dimensions_by_client.pop(websocket, None)
         logger.info(f"Godot Device '{client_id}' disconnected. Total devices: {len(connected_clients)}")
 
 async def udp_listener_task():
@@ -255,7 +316,7 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        global latest_visible_screen_ids, latest_mapped_screen_ids
+        global latest_visible_screen_ids, latest_mapped_screen_ids, latest_tracker_camera_pose, latest_tracker_camera_pose_time
         # 1. Intercept OpenCV JSON Layout Maps
         if data.startswith(b'{'):
             try:
@@ -271,7 +332,10 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
                         latest_visible_screen_ids = {str(screen_id) for screen_id in json_data.get("visible_screens", [])}
                         latest_mapped_screen_ids = {str(screen_id) for screen_id in json_data.get("mapped_screens", [])}
                         print(f"Tracker status: {json_data.get('state', 'unknown')}")
-                    if connected_clients:
+                    elif msg_type == "tracker_camera_pose":
+                        latest_tracker_camera_pose = json_data
+                        latest_tracker_camera_pose_time = time.monotonic()
+                    if connected_clients and msg_type != "tracker_camera_pose":
                         websockets.broadcast(connected_clients, decoded)
                     if msg_type == "layout_map":
                         maybe_auto_lock_from_layout(set(json_data.get("screens", {}).keys()))

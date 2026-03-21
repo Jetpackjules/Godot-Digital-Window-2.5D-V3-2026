@@ -48,6 +48,7 @@ var aruco_markers: Array[Texture2D] = []
 @export var debug_preview_zoom_step: float = 1.0
 @export var debug_preview_min_size: float = 2.0
 @export var debug_preview_max_size: float = 60.0
+@export var debug_preview_cone_distance_meters: float = 0.6
 @export_group("Camera Range")
 @export var camera_range_steps_meters: PackedFloat32Array = PackedFloat32Array([0.5, 1.0, 2.0, 3.0, 5.0, 10.0])
 
@@ -63,6 +64,8 @@ var debugging: bool = false
 var debug_canvas: CanvasLayer
 var debug_cam: Camera3D
 var head_dot: MeshInstance3D
+var tracker_camera_dot: MeshInstance3D
+var tracker_camera_cone: MeshInstance3D
 var diagnostics_label: Label
 var calibration_ui_panel: PanelContainer
 var aruco_canvas: CanvasLayer
@@ -145,11 +148,15 @@ var _has_main_screen_reference: bool = false
 var _main_screen_id: String = ""
 var _main_screen_position: Vector3 = Vector3.ZERO
 var _main_screen_basis: Basis = Basis.IDENTITY
+var _tracking_reference_active: bool = false
+var _tracking_reference_origin_screen: String = ""
+var _tracking_reference_transform: Transform3D = Transform3D.IDENTITY
 var _layout_anchor_initialized: bool = false
 var _layout_anchor_window_local_transform: Transform3D = Transform3D.IDENTITY
 var _default_window_local_transform: Transform3D = Transform3D.IDENTITY
 var _last_layout_screen_ids: PackedStringArray = PackedStringArray()
 var _last_layout_origin_raw: String = "none"
+var _registered_screen_dimensions: Dictionary = {}
 var _active_screen_width_inches: float = 0.0
 var _active_screen_height_inches: float = 0.0
 var _active_screen_preset_name: String = ""
@@ -534,7 +541,7 @@ func _setup_debug_view():
 
 	setup_status_panel = PanelContainer.new()
 	setup_status_panel.visible = true
-	setup_status_panel.custom_minimum_size = Vector2(460, 0)
+	setup_status_panel.custom_minimum_size = Vector2(560, 0)
 	setup_status_panel.position = Vector2(24, 24)
 
 	setup_status_stylebox = StyleBoxFlat.new()
@@ -542,7 +549,7 @@ func _setup_debug_view():
 	setup_status_panel.add_theme_stylebox_override("panel", setup_status_stylebox)
 
 	setup_status_scroll = ScrollContainer.new()
-	setup_status_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	setup_status_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	setup_status_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	setup_status_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	setup_status_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -796,6 +803,29 @@ func _setup_debug_view():
 	head_dot.mesh = sphere
 	head_dot.visible = show_debug_view
 	vp.add_child(head_dot)
+
+	tracker_camera_dot = MeshInstance3D.new()
+	var tracker_sphere = SphereMesh.new()
+	tracker_sphere.radius = 0.03
+	tracker_sphere.height = 0.06
+	var tracker_dot_material = StandardMaterial3D.new()
+	tracker_dot_material.albedo_color = Color(0.15, 0.75, 1.0, 1.0)
+	tracker_dot_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	tracker_sphere.material = tracker_dot_material
+	tracker_camera_dot.mesh = tracker_sphere
+	tracker_camera_dot.visible = show_debug_view
+	vp.add_child(tracker_camera_dot)
+
+	tracker_camera_cone = MeshInstance3D.new()
+	var cone_material = StandardMaterial3D.new()
+	cone_material.albedo_color = Color(0.15, 0.75, 1.0, 0.30)
+	cone_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	cone_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	cone_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	cone_material.no_depth_test = true
+	tracker_camera_cone.material_override = cone_material
+	tracker_camera_cone.visible = show_debug_view
+	vp.add_child(tracker_camera_cone)
 	
 	diagnostics_label = Label.new()
 	diagnostics_label.position = Vector2(18, 250)
@@ -806,6 +836,68 @@ func _setup_debug_view():
 	diagnostics_label.add_theme_constant_override("outline_size", 4)
 	diagnostics_label.visible = false
 	debug_canvas.add_child(diagnostics_label)
+
+func _tracking_reference_matches_origin() -> bool:
+	return (
+		_tracking_reference_origin_screen == ""
+		or _main_screen_id == ""
+		or _tracking_reference_origin_screen == _main_screen_id
+	)
+
+func _tracking_alignment_basis(raw_basis: Basis) -> Basis:
+	# The localized tracker camera pose arrives with its optical forward flipped
+	# relative to the screen-space frame used for head placement. Correct that
+	# once here so the off-axis math and the minimap gizmo use the same basis.
+	return (raw_basis.orthonormalized() * Basis(Vector3.UP, PI)).orthonormalized()
+
+func _get_tracking_camera_global_transform() -> Transform3D:
+	var reference_origin := Vector3.ZERO
+	var reference_basis := Basis.IDENTITY
+	if _has_main_screen_reference:
+		reference_origin = _main_screen_position
+		reference_basis = _main_screen_basis.orthonormalized()
+	elif window_center:
+		reference_origin = window_center.global_position
+		reference_basis = window_center.global_transform.basis.orthonormalized()
+	elif player_node:
+		reference_origin = player_node.global_position
+		reference_basis = player_node.global_transform.basis.orthonormalized()
+
+	if _tracking_reference_active and _tracking_reference_matches_origin():
+		return Transform3D(
+			(reference_basis * _tracking_alignment_basis(_tracking_reference_transform.basis)).orthonormalized(),
+			reference_origin + (reference_basis * _tracking_reference_transform.origin)
+		)
+
+	return Transform3D(reference_basis, reference_origin)
+
+func _build_debug_preview_cone_mesh(horizontal_fov_rad: float) -> ImmediateMesh:
+	var cone_distance = maxf(0.2, debug_preview_cone_distance_meters)
+	var clamped_fov = clampf(horizontal_fov_rad, deg_to_rad(5.0), deg_to_rad(170.0))
+	var half_width = maxf(0.04, tan(clamped_fov * 0.5) * cone_distance)
+	var mesh := ImmediateMesh.new()
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	mesh.surface_add_vertex(Vector3(0.0, 0.0, 0.0))
+	mesh.surface_add_vertex(Vector3(-half_width, 0.0, cone_distance))
+	mesh.surface_add_vertex(Vector3(half_width, 0.0, cone_distance))
+	mesh.surface_end()
+	return mesh
+
+func _update_debug_preview_camera_gizmos() -> void:
+	if head_dot:
+		head_dot.visible = camera_node != null
+		if camera_node:
+			head_dot.global_position = camera_node.global_position
+	if not tracker_camera_dot or not tracker_camera_cone:
+		return
+
+	var tracker_transform = _get_tracking_camera_global_transform()
+	tracker_camera_dot.global_position = tracker_transform.origin + Vector3(0.0, 0.03, 0.0)
+	tracker_camera_cone.mesh = _build_debug_preview_cone_mesh(deg_to_rad(90.0))
+	tracker_camera_cone.global_transform = Transform3D(
+		tracker_transform.basis.orthonormalized(),
+		tracker_transform.origin + Vector3(0.0, 0.03, 0.0)
+	)
 
 func _rebuild_preset_dropdown():
 	if preset_dropdown:
@@ -906,6 +998,89 @@ func _apply_screen_dimensions_to_scaler(width_inches: float, height_inches: floa
 	if screen_scaler:
 		screen_scaler.physical_width_meters = width_inches * 0.0254
 		screen_scaler.physical_height_meters = height_inches * 0.0254
+		_restore_local_window_scale_authority()
+
+func _restore_local_window_scale_authority() -> void:
+	if not screen_scaler:
+		return
+	screen_scaler.match_virtual_window_to_physical_height = true
+
+func _resolve_largest_screen_entry(screens: Dictionary) -> Dictionary:
+	var best_screen_id := ""
+	var best_screen: Dictionary = {}
+	var best_height := -1.0
+	for raw_screen_id in screens.keys():
+		var normalized_screen_id = _normalize_screen_id(raw_screen_id)
+		var screen_data = screens[raw_screen_id]
+		if not (screen_data is Dictionary):
+			continue
+		var screen_height = float(screen_data.get("height", 0.0))
+		if screen_height > best_height:
+			best_height = screen_height
+			best_screen_id = normalized_screen_id
+			best_screen = screen_data
+
+	if not best_screen.is_empty():
+		return {
+			"id": best_screen_id,
+			"screen": best_screen,
+		}
+	return {}
+
+func _resolve_scale_authority_screen(screens: Dictionary, fallback_screen_id: String = "") -> Dictionary:
+	var registered_authority = _resolve_largest_screen_entry(_registered_screen_dimensions)
+	if not registered_authority.is_empty():
+		return registered_authority
+
+	var normalized_fallback_id = _normalize_screen_id(fallback_screen_id)
+	var mapped_authority = _resolve_largest_screen_entry(screens)
+	if not mapped_authority.is_empty():
+		return mapped_authority
+
+	if normalized_fallback_id == "":
+		return {}
+	for raw_screen_id in screens.keys():
+		var normalized_screen_id = _normalize_screen_id(raw_screen_id)
+		if normalized_screen_id == normalized_fallback_id and screens[raw_screen_id] is Dictionary:
+			return {
+				"id": normalized_screen_id,
+				"screen": screens[raw_screen_id],
+			}
+	return {}
+
+func _update_registered_screen_dimensions(payload: Variant) -> void:
+	_registered_screen_dimensions = {}
+	if not (payload is Dictionary):
+		return
+	for raw_screen_id in payload.keys():
+		var screen_data = payload[raw_screen_id]
+		if not (screen_data is Dictionary):
+			continue
+		var normalized_screen_id = _normalize_screen_id(raw_screen_id)
+		if normalized_screen_id == "":
+			continue
+		_registered_screen_dimensions[normalized_screen_id] = {
+			"width": float(screen_data.get("width", 0.0)),
+			"height": float(screen_data.get("height", 0.0)),
+		}
+
+func _apply_scale_authority_window_scale(screens: Dictionary, fallback_screen_id: String = "") -> void:
+	if not screen_scaler:
+		return
+	var authority_screen_info = _resolve_scale_authority_screen(screens, fallback_screen_id)
+	if authority_screen_info.is_empty():
+		_restore_local_window_scale_authority()
+		return
+	var authority_screen = authority_screen_info.get("screen", {})
+	if not (authority_screen is Dictionary):
+		_restore_local_window_scale_authority()
+		return
+	var authority_height_inches = float(authority_screen.get("height", 0.0))
+	if authority_height_inches <= 0.0:
+		_restore_local_window_scale_authority()
+		return
+	screen_scaler.match_virtual_window_to_physical_height = false
+	screen_scaler.virtual_window_height = authority_height_inches * 0.0254
 
 func _current_marker_slot() -> int:
 	return posmod(device_id, MARKER_SLOT_COUNT)
@@ -1244,6 +1419,41 @@ func _basis_euler_degrees(basis: Basis) -> Vector3:
 	var euler = basis.orthonormalized().get_euler()
 	return Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
+func _normalize_screen_id(value: Variant) -> String:
+	if value == null:
+		return ""
+	if value is int:
+		return str(int(value))
+	if value is float:
+		var f := float(value)
+		if is_equal_approx(f, round(f)):
+			return str(int(round(f)))
+		return str(f)
+
+	var text := str(value).strip_edges()
+	if text == "":
+		return ""
+	var parsed := text.to_float()
+	if text.is_valid_int():
+		return str(int(text))
+	if parsed != 0.0 or text == "0" or text == "0.0":
+		if is_equal_approx(parsed, round(parsed)):
+			return str(int(round(parsed)))
+	return text
+
+func _clear_tracking_reference() -> void:
+	_tracking_reference_active = false
+	_tracking_reference_origin_screen = ""
+	_tracking_reference_transform = Transform3D.IDENTITY
+
+func _set_tracking_reference_from_payload(payload: Variant) -> void:
+	if payload is Dictionary and payload.has("R") and payload.has("T"):
+		_tracking_reference_active = true
+		_tracking_reference_origin_screen = _normalize_screen_id(payload.get("origin_screen", ""))
+		_tracking_reference_transform = _transform_from_layout_payload(payload)
+	else:
+		_clear_tracking_reference()
+
 func _build_diagnostics_text() -> String:
 	var now_msec = Time.get_ticks_msec()
 	var scale_mult = screen_scaler.tracking_scale_multiplier if screen_scaler else 1.0
@@ -1263,6 +1473,16 @@ func _build_diagnostics_text() -> String:
 	var my_slot = str(_current_marker_slot())
 	var origin_label = _main_screen_id if _main_screen_id != "" else "none"
 	var layout_ids = ", ".join(_last_layout_screen_ids) if not _last_layout_screen_ids.is_empty() else "none"
+	var tracking_reference_label = "active" if _tracking_reference_active else "default"
+	var tracking_reference_origin = _tracking_reference_origin_screen if _tracking_reference_origin_screen != "" else "none"
+	var tracking_reference_matches_origin = _tracking_reference_matches_origin()
+	var tracking_alignment_mode = "default"
+	if _tracking_reference_active and tracking_reference_matches_origin:
+		tracking_alignment_mode = "off-axis active" if _has_live_tracking_data else "off-axis armed"
+	elif _tracking_reference_active:
+		tracking_alignment_mode = "default (ref mismatch)"
+	var tracking_alignment_offset = _tracking_reference_transform.origin if _tracking_reference_active else Vector3.ZERO
+	var tracking_alignment_rot = _basis_euler_degrees(_tracking_alignment_basis(_tracking_reference_transform.basis)) if _tracking_reference_active else Vector3.ZERO
 	var preset_label = _active_screen_preset_name if _active_screen_preset_name != "" else "Manual/Custom"
 	var preset_dims = "%.2f x %.2f in" % [_active_screen_width_inches, _active_screen_height_inches]
 	var remote_source_label = str(_remote_viewer_source_slot) if _remote_viewer_source_slot >= 0 else "none"
@@ -1288,12 +1508,19 @@ func _build_diagnostics_text() -> String:
 --- DIAGNOSTICS ---
 Source: %s | Raw(cm): X %.2f | Y %.2f | Z %.2f
 Preset: %s (%s)
-My Slot: %s | Origin: %s | Origin Raw: %s | Layout IDs: %s
+My Slot: %s | Origin: %s | Origin Raw: %s
+Layout IDs: %s
+Tracking Ref: %s | Ref Origin: %s
+Tracking Mode: %s | Ref Matches Origin: %s
+Tracker Align Pos: X %.3f | Y %.3f | Z %.3f
+Tracker Align Rot(deg): X %.1f | Y %.1f | Z %.1f
 Render: %.0f fps | %.1f ms
 Render Mode: %s
-Sync Mode: %s | Remote Active: %s | Remote Slot: %s
-Viewer Sync: RX %.1f/s | Apply %.1f/s | TX %.1f/s | Age %s
-Viewer Packet: Gap %.1f ms | Jitter %.1f ms | Tracking RX %.1f/s
+Sync Mode: %s
+Remote Viewer: Active %s | Slot %s | Age %s
+Viewer Sync: RX %.1f/s | Apply %.1f/s | TX %.1f/s
+Viewer Packet: Gap %.1f ms | Jitter %.1f ms
+Tracking RX: %.1f/s
 Scale: %.3f x | Tracking Base: %s
 Window Dist: %.3f m (%.1f cm) | V-FOV: %.1f deg
 Player: X %.2f | Y %.2f | Z %.2f
@@ -1309,12 +1536,19 @@ Frustum Offset: X %.4f | Y %.4f
 		tracking_source,
 		_raw_x, _raw_y, _raw_z,
 		preset_label, preset_dims,
-		my_slot, origin_label, _last_layout_origin_raw, layout_ids,
+		my_slot, origin_label, _last_layout_origin_raw,
+		layout_ids,
+		tracking_reference_label, tracking_reference_origin,
+		tracking_alignment_mode, "yes" if tracking_reference_matches_origin else "no",
+		tracking_alignment_offset.x, tracking_alignment_offset.y, tracking_alignment_offset.z,
+		tracking_alignment_rot.x, tracking_alignment_rot.y, tracking_alignment_rot.z,
 		float(Engine.get_frames_per_second()), _debug_average_frame_time_msec,
 		_render_performance_mode_label(),
-		_viewer_sync_mode_label(), remote_active_label, remote_source_label,
-		_debug_viewer_pose_rx_hz, _debug_viewer_pose_apply_hz, _debug_viewer_pose_tx_hz, viewer_packet_age_text,
-		_viewer_pose_rx_interval_average_msec, _viewer_pose_rx_jitter_average_msec, _debug_tracking_rx_hz,
+		_viewer_sync_mode_label(),
+		remote_active_label, remote_source_label, viewer_packet_age_text,
+		_debug_viewer_pose_rx_hz, _debug_viewer_pose_apply_hz, _debug_viewer_pose_tx_hz,
+		_viewer_pose_rx_interval_average_msec, _viewer_pose_rx_jitter_average_msec,
+		_debug_tracking_rx_hz,
 		scale_mult,
 		base_distance_text,
 		distance_to_window, distance_to_window * 100.0,
@@ -1389,6 +1623,10 @@ func _apply_global_ui_visibility() -> void:
 		debug_canvas.visible = show_debug_overlay
 	if head_dot:
 		head_dot.visible = show_debug_overlay
+	if tracker_camera_dot:
+		tracker_camera_dot.visible = show_debug_overlay
+	if tracker_camera_cone:
+		tracker_camera_cone.visible = show_debug_overlay
 
 func _advance_tab_ui_mode() -> void:
 	_tab_ui_mode = (_tab_ui_mode + 1) % 3
@@ -1496,7 +1734,7 @@ func _apply_setup_ui_metrics() -> void:
 	var button_font = int(round(clampf(14.0 * ui_scale, 12.0, 14.0)))
 	var control_height = clampf(36.0 * ui_scale, 30.0, 36.0)
 	var available_width = maxf(180.0, effective_size.x - gutter * 2.0)
-	var status_width = minf(clampf(effective_size.x * 0.20, 220.0, 340.0), available_width)
+	var status_width = minf(clampf(effective_size.x * 0.28, 320.0, 520.0), available_width)
 	var setup_width = minf(clampf(effective_size.x * 0.34, 260.0, 460.0), available_width)
 	var status_content_width = max(140.0, status_width - padding_x * 2.0)
 
@@ -1625,6 +1863,7 @@ func _begin_scan_flow() -> void:
 	_screen_registered = true
 	_last_scan_state = ""
 	_scan_locked = false
+	_clear_tracking_reference()
 	_has_layout_solution = false
 	_has_main_screen_reference = false
 	_main_screen_id = ""
@@ -1634,6 +1873,7 @@ func _begin_scan_flow() -> void:
 		window_center.transform = _default_window_local_transform
 	_layout_anchor_window_local_transform = _default_window_local_transform
 	_layout_anchor_initialized = true
+	_restore_local_window_scale_authority()
 	_set_calibration_mode(true)
 	_set_setup_state(
 		SetupState.SCANNING,
@@ -1693,6 +1933,7 @@ func _restart_scan_flow() -> void:
 func _handle_scan_start(data: Dictionary) -> void:
 	if not _screen_registered:
 		return
+	_update_registered_screen_dimensions(data.get("registered_screens", {}))
 
 	_begin_scan_flow()
 
@@ -1843,6 +2084,8 @@ func _handle_scan_lock(data: Dictionary) -> void:
 	var locked = bool(data.get("locked", false))
 	var reason = str(data.get("reason", ""))
 	_scan_locked = locked
+	_update_registered_screen_dimensions(data.get("registered_screens", {}))
+	_set_tracking_reference_from_payload(data.get("tracking_reference", null))
 
 	if locked:
 		_complete_scan_lock(reason)
@@ -2156,6 +2399,8 @@ func _process(_delta):
 						print("Server assigned Godot Device ID: ", device_id)
 						_has_received_config = true
 						_scan_locked = bool(data.get("scan_locked", false))
+						_update_registered_screen_dimensions(data.get("registered_screens", {}))
+						_set_tracking_reference_from_payload(data.get("tracking_reference", null))
 						_set_calibration_mode(data.get("calibration_mode", false))
 						if data.has("anaglyph_enabled"):
 							_set_anaglyph_enabled_from_sync(bool(data.get("anaglyph_enabled", false)))
@@ -2206,14 +2451,14 @@ func _process(_delta):
 						var screens = data.get("screens", {})
 						_last_layout_screen_ids = PackedStringArray()
 						for screen_id in screens.keys():
-							_last_layout_screen_ids.append(str(screen_id))
+							_last_layout_screen_ids.append(_normalize_screen_id(screen_id))
 						_last_layout_screen_ids.sort()
-						var my_id_str = str(_current_marker_slot())
+						var my_id_str = _normalize_screen_id(_current_marker_slot())
 						var single_screen_payload = screens.size() == 1 and screens.has(my_id_str)
 						var origin_variant = data.get("origin_screen", null)
 						var origin_screen_id = ""
 						if origin_variant != null:
-							origin_screen_id = str(origin_variant)
+							origin_screen_id = _normalize_screen_id(origin_variant)
 						_last_layout_origin_raw = origin_screen_id if origin_screen_id != "" else "none"
 						var origin_tracker_transform := Transform3D.IDENTITY
 						var origin_resolved = false
@@ -2270,10 +2515,16 @@ func _process(_delta):
 						else:
 							_has_main_screen_reference = false
 							_main_screen_id = ""
+							_restore_local_window_scale_authority()
 
 						if origin_resolved and single_screen_payload and origin_screen_id == my_id_str:
 							_main_screen_position = Vector3.ZERO
 							_main_screen_basis = Basis.IDENTITY
+
+						if origin_resolved:
+							_apply_scale_authority_window_scale(screens, origin_screen_id)
+						else:
+							_restore_local_window_scale_authority()
 
 						if screens.has(my_id_str):
 							var screen_transform = _layout_transform_from_payload(screens[my_id_str])
@@ -2368,8 +2619,7 @@ func _process(_delta):
 			setup_diagnostics_label.text = diagnostics_text
 
 		if debug_canvas and debug_canvas.visible:
-			if camera_node:
-				head_dot.global_position = camera_node.global_position
+			_update_debug_preview_camera_gizmos()
 			if window_center:
 				debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
 				
@@ -2382,8 +2632,7 @@ func _process(_delta):
 					clampf(250.0, 18.0, maxf(18.0, diag_view_size.y - diag_height - 18.0))
 				)
 	elif debug_canvas and debug_canvas.visible:
-		if camera_node:
-			head_dot.global_position = camera_node.global_position
+		_update_debug_preview_camera_gizmos()
 		if window_center:
 			debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
 
@@ -2404,19 +2653,24 @@ func _apply_tracking_data():
 		var x_dir = -1.0 if invert_x else 1.0
 		var y_dir = -1.0 if invert_y else 1.0
 		var z_dir = -1.0 if invert_z else 1.0
-		
-		# Keep a persistent baseline eye distance in front of the screen so neutral
-		# tracking data represents a sensible viewing position instead of the glass plane.
-		var base_distance = default_viewer_distance_meters
-		var scaled_offset = Vector3(
+
+		var scaled_tracking_offset = Vector3(
 			(_raw_x * x_dir) * sensitivity.x * mult,
 			(_raw_y * y_dir) * sensitivity.y * mult,
-			((_raw_z * z_dir) * sensitivity.z + base_distance) * mult
+			(_raw_z * z_dir) * sensitivity.z * mult
 		)
+		var final_local_offset = scaled_tracking_offset
+		var tracking_reference_matches_origin = _tracking_reference_matches_origin()
+		if _has_live_tracking_data and _tracking_reference_active and tracking_reference_matches_origin:
+			final_local_offset = _tracking_reference_transform.origin + (_tracking_alignment_basis(_tracking_reference_transform.basis) * scaled_tracking_offset)
+		else:
+			# Keep a persistent baseline eye distance in front of the screen so neutral
+			# tracking data represents a sensible viewing position instead of the glass plane.
+			final_local_offset.z += default_viewer_distance_meters * mult
 		
 		var reference_pos = player_node.global_position if player_node else window_center.global_position
 		var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
 
-		var final_pos = reference_pos + reference_basis * scaled_offset
+		var final_pos = reference_pos + reference_basis * final_local_offset
 			
 		camera_node.global_position = final_pos

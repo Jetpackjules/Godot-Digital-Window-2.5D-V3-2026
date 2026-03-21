@@ -294,5 +294,5 @@ python build_and_patch.py
 The existing repo already includes a web export, so this step is only needed after a new export.
 
 ## Known Caveats
-- The off-axis physical tracking-camera correction is **not** automatically solved yet. There are exported offset fields and optional anchor markers in the repo, but the runtime does not yet convert tracker-camera space into main-screen space automatically.
+- Off-axis physical tracking-camera correction now only applies if a valid tracker-camera pose was visible and frozen when the scan was finished. If you press `P` without a fresh camera solve, the client falls back to the default head-tracking frame.
 - `Main.tscn` currently contains a hardcoded LAN WebSocket URL. Web builds resolve the page host at runtime, but native/editor runs on a different machine may still need that scene property adjusted.

@@ -4,11 +4,18 @@ import numpy as np
 import json
 import os
 import socket
+import sys
 import time
+
+if os.name == "nt":
+    import msvcrt
 
 TRACKER_CONTROL_PORT = 4244
 TRACKER_WINDOW_NAME = "Multi-Monitor ArUco Constellation Tracker"
 ROOM_MAP_WINDOW_NAME = "3D Room Spatial Map"
+ROOM_MAP_WINDOW_DEFAULT_WIDTH = 400
+ROOM_MAP_WINDOW_DEFAULT_HEIGHT = 320
+ROOM_MAP_DEFAULT_VIEW_DIST = 60.0
 CAMERA_TOGGLE_KEY = ord('v')
 CAMERA_KEY_LEFT = 81
 CAMERA_KEY_UP = 82
@@ -18,7 +25,7 @@ CAMERA_KEY_LEFT_EX = 2424832
 CAMERA_KEY_UP_EX = 2490368
 CAMERA_KEY_RIGHT_EX = 2555904
 CAMERA_KEY_DOWN_EX = 2621440
-CAMERA_INDEX_DEFAULT = 1
+CAMERA_INDEX_DEFAULT = 0
 CAMERA_INDEX_ENV = "CAMERA_INDEX"
 CAMERA_INDEX_AUTO_MAX = 6
 PREFERRED_CAMERA_MODES = [
@@ -152,6 +159,13 @@ def get_capture_dimensions(capture):
 def camera_mode_score(width, height):
     return width * height
 
+def get_camera_backends():
+    backends = []
+    if os.name == "nt" and hasattr(cv2, "CAP_DSHOW"):
+        backends.append(cv2.CAP_DSHOW)
+    backends.append(cv2.CAP_ANY)
+    return backends
+
 def open_capture_for_index(index, backends):
     for backend in backends:
         capture = cv2.VideoCapture(index, backend)
@@ -159,6 +173,95 @@ def open_capture_for_index(index, backends):
             return capture
         capture.release()
     return None
+
+def probe_camera_candidates(backends, active_index=None, active_mode=None):
+    candidates = []
+    for index in range(CAMERA_INDEX_AUTO_MAX):
+        if active_index is not None and index == active_index and active_mode is not None:
+            candidates.append(
+                {
+                    "index": index,
+                    "width": int(active_mode[0]),
+                    "height": int(active_mode[1]),
+                }
+            )
+            continue
+        capture = open_capture_for_index(index, backends)
+        if capture is None:
+            continue
+        if hasattr(cv2, "CAP_PROP_FOURCC"):
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        if hasattr(cv2, "CAP_PROP_FPS"):
+            capture.set(cv2.CAP_PROP_FPS, PREFERRED_CAMERA_FPS)
+        best_mode = get_capture_dimensions(capture)
+        best_score = camera_mode_score(*best_mode)
+        for width, height in PREFERRED_CAMERA_MODES:
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            actual_mode = get_capture_dimensions(capture)
+            actual_score = camera_mode_score(*actual_mode)
+            if actual_score > best_score:
+                best_mode = actual_mode
+                best_score = actual_score
+        capture.release()
+        candidates.append(
+            {
+                "index": index,
+                "width": best_mode[0],
+                "height": best_mode[1],
+            }
+        )
+    return candidates
+
+def pick_camera_index_in_terminal(candidates, active_camera_index):
+    if not sys.stdin.isatty() or os.name != "nt":
+        print(">>> Interactive camera picker requires a Windows terminal with stdin attached. <<<")
+        return None
+    if not candidates:
+        print(">>> No camera candidates were detected. <<<")
+        return None
+
+    selected = 0
+    for idx, candidate in enumerate(candidates):
+        if candidate["index"] == active_camera_index:
+            selected = idx
+            break
+
+    def render():
+        os.system("cls")
+        print("=== Camera Picker ===")
+        print("Use terminal Up/Down to choose, Enter to confirm, Esc to cancel.\n")
+        for idx, candidate in enumerate(candidates):
+            prefix = ">" if idx == selected else " "
+            current = " (current)" if candidate["index"] == active_camera_index else ""
+            print(
+                f"{prefix} Camera {candidate['index']}: "
+                f"{candidate['width']}x{candidate['height']}{current}"
+            )
+
+    render()
+    while True:
+        key = msvcrt.getwch()
+        if key in ("\x00", "\xe0"):
+            special = msvcrt.getwch()
+            if special == "H":  # up
+                selected = (selected - 1) % len(candidates)
+                render()
+                continue
+            if special == "P":  # down
+                selected = (selected + 1) % len(candidates)
+                render()
+                continue
+            if special in ("K", "M"):  # left/right
+                render()
+                continue
+        if key == "\r":
+            chosen = candidates[selected]["index"]
+            print(f"\n>>> Selected camera {chosen}. <<<")
+            return chosen
+        if key == "\x1b":
+            print("\n>>> Camera picker canceled. <<<")
+            return None
 
 def select_best_camera_index(backends):
     best_index = None
@@ -210,6 +313,7 @@ def main():
     print("Starting ArUco Constellation Tracker...")
     print("Press 'v' in the camera window to release/reacquire the webcam without stopping the tracker.")
     print("Press 'q' in the camera window to quit.\n")
+    os.environ.pop(CAMERA_INDEX_ENV, None)
 
     # Load the 4x4_50 dictionary we used in Godot
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
@@ -260,7 +364,7 @@ def main():
 
     view_pitch = 45.0
     view_yaw = -45.0
-    view_dist = 150.0
+    view_dist = ROOM_MAP_DEFAULT_VIEW_DIST
     view_pan_x = 0.0
     view_pan_y = 0.0
     mouse_is_down = False
@@ -277,6 +381,7 @@ def main():
     last_status_blob = ""
     last_status_time = 0.0
     last_layout_send_time = 0.0
+    last_tracker_pose_send_time = 0.0
     cap = None
     camera_paused = False
     active_capture_width = 0
@@ -324,6 +429,19 @@ def main():
 
         send_udp_json(layout_payload)
         last_layout_send_time = time.time()
+
+    def broadcast_tracker_camera_pose(T_origin_to_cam):
+        nonlocal last_tracker_pose_send_time
+        if global_origin_id is None or T_origin_to_cam is None:
+            return
+        payload = {
+            "type": "tracker_camera_pose",
+            "origin_screen": int(global_origin_id),
+            "R": T_origin_to_cam[:3, :3].tolist(),
+            "T": T_origin_to_cam[:3, 3].tolist(),
+        }
+        send_udp_json(payload)
+        last_tracker_pose_send_time = time.time()
 
     def reset_spatial_map():
         nonlocal global_origin_id, smoothed_T_cam
@@ -388,10 +506,7 @@ def main():
     def open_camera():
         nonlocal active_capture_width, active_capture_height, active_camera_index
 
-        backends = []
-        if os.name == "nt" and hasattr(cv2, "CAP_DSHOW"):
-            backends.append(cv2.CAP_DSHOW)
-        backends.append(cv2.CAP_ANY)
+        backends = get_camera_backends()
 
         forced_index = os.environ.get(CAMERA_INDEX_ENV, "").strip()
         if forced_index != "":
@@ -478,6 +593,46 @@ def main():
         camera_paused = False
         return cap_local
 
+    def switch_camera_to_index(target_index):
+        nonlocal active_camera_index, camera_paused, cap
+        prev_index = active_camera_index
+        prev_cap = cap
+
+        if target_index is None:
+            return prev_cap
+
+        release_camera()
+        active_camera_index = int(target_index)
+        os.environ[CAMERA_INDEX_ENV] = str(active_camera_index)
+        cap_local = open_camera()
+        if cap_local is None:
+            active_camera_index = prev_index
+            if active_camera_index is not None:
+                os.environ[CAMERA_INDEX_ENV] = str(active_camera_index)
+            cap_local = prev_cap
+            if cap_local is None and active_camera_index is not None:
+                cap_local = open_camera()
+            if cap_local is None:
+                camera_paused = True
+                print(">>> Camera switch failed; staying paused. <<<")
+                return None
+
+        camera_paused = False
+        return cap_local
+
+    def open_camera_picker():
+        nonlocal cap
+        backends = get_camera_backends()
+        print(">>> Probing available cameras for selection... <<<")
+        active_mode = None
+        if active_capture_width > 0 and active_capture_height > 0:
+            active_mode = (active_capture_width, active_capture_height)
+        candidates = probe_camera_candidates(backends, active_camera_index, active_mode)
+        chosen_index = pick_camera_index_in_terminal(candidates, active_camera_index)
+        if chosen_index is None:
+            return
+        cap = switch_camera_to_index(chosen_index)
+
     def release_camera():
         nonlocal cap, active_capture_width, active_capture_height, active_camera_index
         if cap is not None:
@@ -552,7 +707,7 @@ def main():
 
     cv2.namedWindow(TRACKER_WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.namedWindow(ROOM_MAP_WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(ROOM_MAP_WINDOW_NAME, 1200, 960)
+    cv2.resizeWindow(ROOM_MAP_WINDOW_NAME, ROOM_MAP_WINDOW_DEFAULT_WIDTH, ROOM_MAP_WINDOW_DEFAULT_HEIGHT)
     cv2.setMouseCallback(ROOM_MAP_WINDOW_NAME, mouse_callback)
     cap = open_camera()
     camera_paused = cap is None
@@ -1004,76 +1159,91 @@ def main():
                 global_origin_id = first_screen["screen_id"]
                 # The "Origin" Screen defines the absolute center (0,0,0) of the virtual room.
                 global_transforms[global_origin_id] = {
-                    "transform": np.eye(4, dtype=np.float32), 
+                    "transform": np.eye(4, dtype=np.float32),
                     "width": first_screen["width"],
                     "height": first_screen["height"]
                 }
                 print(f"[{global_origin_id}] locked as the Global Graph Origin.")
-            
-            # Localization: Where is the camera?
-            # Find a screen in the current frame that is already mapped in our Graph.
-            known_screen = None
-            
+
+        # Localization: Where is the camera?
+        # Prefer a known screen, otherwise fall back to a known world anchor.
+        known_screen = None
+        if current_frame_screens:
             # Prioritize the global origin if it's visible to eliminate chaining drift
             for s in current_frame_screens:
                 if s["screen_id"] == global_origin_id:
                     known_screen = s
                     break
-                    
+
             # Fallback to any other known screen if the origin isn't visible
             if known_screen is None:
                 for s in current_frame_screens:
                     if s["screen_id"] in global_transforms:
                         known_screen = s
                         break
-                    
-            if known_screen is not None:
-                # Calculate Camera Position relative to the Origin
-                T_cam_to_known_screen = create_transform_matrix(known_screen["rvec"], known_screen["tvec"])
-                T_origin_to_known_screen = global_transforms[known_screen["screen_id"]]["transform"]
-                
-                # Equation: T_origin_to_screen = T_origin_to_cam * T_cam_to_screen
-                # Therefore: T_origin_to_cam = T_origin_to_screen * (T_cam_to_screen)^(-1)
-                raw_T_cam = T_origin_to_known_screen @ np.linalg.inv(T_cam_to_known_screen)
-                
-                # --- Exponential Moving Average (EMA) Smoothing ---
-                if smoothed_T_cam is None:
-                    smoothed_T_cam = raw_T_cam.copy()
-                else:
-                    alpha_t = 0.25 # Translation smoothing speed (1.0 = instant, 0.01 = glacial)
-                    alpha_r = 0.15 # Rotation smoothing speed
-                    
-                    # Smooth Translation
-                    smoothed_T_cam[:3, 3] = (alpha_t * raw_T_cam[:3, 3]) + ((1.0 - alpha_t) * smoothed_T_cam[:3, 3])
-                    
-                    # Smooth Rotation (Simple Matrix LERP with SVD Orthogonalization)
-                    R_blend = (alpha_r * raw_T_cam[:3, :3]) + ((1.0 - alpha_r) * smoothed_T_cam[:3, :3])
-                    U, _, Vt = np.linalg.svd(R_blend)
-                    smoothed_T_cam[:3, :3] = U @ Vt
-                
-                T_origin_to_cam = smoothed_T_cam
-                
-                # Discovery & Continuous Updating: Map newly seen screens into the Graph, and update existing ones!
-                for s in current_frame_screens:
-                    c_id = s["screen_id"]
-                    # Do not re-update the position of the screen we are currently using as our anchor!
-                    # Doing so with a smoothed camera position creates a feedback loop that drags the screen!
-                    if c_id != known_screen["screen_id"]:
-                        T_cam_to_screen = create_transform_matrix(s["rvec"], s["tvec"])
-                        T_origin_to_screen = T_origin_to_cam @ T_cam_to_screen
-                        
-                        if c_id not in global_transforms:
-                            print(f"[{c_id}] mathematical position locked into the Global Graph!")
-                            
-                        # Continuously update the position of the screen relative to the known camera
-                        global_transforms[c_id] = {
-                            "transform": T_origin_to_screen,
-                            "width": s["width"],
-                            "height": s["height"]
-                        }
 
-                # Optional world anchors: visible, mappable into the same room space,
-                # but intentionally excluded from the screen layout graph and broadcasts.
+        known_anchor = None
+        if known_screen is None and current_frame_anchors:
+            for a in current_frame_anchors:
+                if a["anchor_id"] in global_anchor_transforms:
+                    known_anchor = a
+                    break
+
+        if known_screen is not None or known_anchor is not None:
+            # Calculate Camera Position relative to the Origin
+            if known_screen is not None:
+                T_cam_to_known = create_transform_matrix(known_screen["rvec"], known_screen["tvec"])
+                T_origin_to_known = global_transforms[known_screen["screen_id"]]["transform"]
+            else:
+                T_cam_to_known = create_transform_matrix(known_anchor["rvec"], known_anchor["tvec"])
+                T_origin_to_known = global_anchor_transforms[known_anchor["anchor_id"]]["transform"]
+
+            # Equation: T_origin_to_known = T_origin_to_cam * T_cam_to_known
+            # Therefore: T_origin_to_cam = T_origin_to_known * (T_cam_to_known)^(-1)
+            raw_T_cam = T_origin_to_known @ np.linalg.inv(T_cam_to_known)
+
+            # --- Exponential Moving Average (EMA) Smoothing ---
+            if smoothed_T_cam is None:
+                smoothed_T_cam = raw_T_cam.copy()
+            else:
+                alpha_t = 0.25 # Translation smoothing speed (1.0 = instant, 0.01 = glacial)
+                alpha_r = 0.15 # Rotation smoothing speed
+
+                # Smooth Translation
+                smoothed_T_cam[:3, 3] = (alpha_t * raw_T_cam[:3, 3]) + ((1.0 - alpha_t) * smoothed_T_cam[:3, 3])
+
+                # Smooth Rotation (Simple Matrix LERP with SVD Orthogonalization)
+                R_blend = (alpha_r * raw_T_cam[:3, :3]) + ((1.0 - alpha_r) * smoothed_T_cam[:3, :3])
+                U, _, Vt = np.linalg.svd(R_blend)
+                smoothed_T_cam[:3, :3] = U @ Vt
+
+            T_origin_to_cam = smoothed_T_cam
+
+            # Discovery & Continuous Updating: Map newly seen screens into the Graph, and update existing ones!
+            for s in current_frame_screens:
+                c_id = s["screen_id"]
+                # Do not re-update the position of the screen we are currently using as our anchor!
+                # Doing so with a smoothed camera position creates a feedback loop that drags the screen!
+                if known_screen is None or c_id != known_screen["screen_id"]:
+                    T_cam_to_screen = create_transform_matrix(s["rvec"], s["tvec"])
+                    T_origin_to_screen = T_origin_to_cam @ T_cam_to_screen
+
+                    if c_id not in global_transforms:
+                        print(f"[{c_id}] mathematical position locked into the Global Graph!")
+
+                    # Continuously update the position of the screen relative to the known camera
+                    global_transforms[c_id] = {
+                        "transform": T_origin_to_screen,
+                        "width": s["width"],
+                        "height": s["height"]
+                    }
+
+            # Optional world anchors: visible, mappable into the same room space,
+            # but intentionally excluded from the screen layout graph and broadcasts.
+            # Only update anchor world transforms when the camera pose is backed by a
+            # known screen. If we let an anchor-only solve rewrite the anchors, the
+            # anchor drags around with the smoothed camera instead of staying fixed.
+            if known_screen is not None:
                 for a in current_frame_anchors:
                     T_cam_to_anchor = create_transform_matrix(a["rvec"], a["tvec"])
                     T_origin_to_anchor = T_origin_to_cam @ T_cam_to_anchor
@@ -1087,6 +1257,9 @@ def main():
         # ---------------------------------------------------------
         visible_ids = [s["screen_id"] for s in current_frame_screens]
         visible_anchor_ids = [a["anchor_id"] for a in current_frame_anchors]
+
+        if T_origin_to_cam is not None and time.time() - last_tracker_pose_send_time > 0.1:
+            broadcast_tracker_camera_pose(T_origin_to_cam)
 
         if camera_paused or cap is None:
             send_scan_status(
@@ -1290,10 +1463,21 @@ def main():
             print("Successfully sent to WebSocket Router!")
         elif key == CAMERA_TOGGLE_KEY:
             set_camera_paused(not camera_paused)
-        elif key in (CAMERA_KEY_LEFT, CAMERA_KEY_DOWN, CAMERA_KEY_LEFT_EX, CAMERA_KEY_DOWN_EX, ord('a'), ord('s')):
+        elif key in (
+            CAMERA_KEY_LEFT,
+            CAMERA_KEY_DOWN,
+            CAMERA_KEY_LEFT_EX,
+            CAMERA_KEY_DOWN_EX,
+            CAMERA_KEY_RIGHT,
+            CAMERA_KEY_UP,
+            CAMERA_KEY_RIGHT_EX,
+            CAMERA_KEY_UP_EX,
+        ):
+            open_camera_picker()
+        elif key in (ord('a'), ord('s')):
             print(">>> Switching camera index down. <<<")
             cap = switch_camera_index(-1)
-        elif key in (CAMERA_KEY_RIGHT, CAMERA_KEY_UP, CAMERA_KEY_RIGHT_EX, CAMERA_KEY_UP_EX, ord('d'), ord('w')):
+        elif key in (ord('d'), ord('w')):
             print(">>> Switching camera index up. <<<")
             cap = switch_camera_index(1)
 

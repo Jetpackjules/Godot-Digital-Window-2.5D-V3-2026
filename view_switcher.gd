@@ -7,7 +7,7 @@ var current_view_name: String = "":
 	set(value):
 		if current_view_name != value:
 			current_view_name = value
-			if Engine.is_editor_hint():
+			if Engine.is_editor_hint() and is_inside_tree():
 				_load_view(current_view_name)
 
 var _available_views: Array[String] = []
