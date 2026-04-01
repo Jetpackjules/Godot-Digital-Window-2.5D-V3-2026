@@ -40,6 +40,16 @@ PREFERRED_CAMERA_MODES = [
 PREFERRED_CAMERA_FPS = 30
 WORLD_ANCHOR_MARKER_IDS = [45, 46, 47, 48, 49]
 WORLD_ANCHOR_MARKER_SIZE_INCHES = 6.0
+DEFAULT_VIEWER_DISTANCE_METERS = 0.5
+METERS_TO_WORLD_UNITS = 39.37007874015748
+CM_TO_WORLD_UNITS = 0.3937007874015748
+TRACKING_POSE_TIMEOUT_SEC = 0.5
+TRACKING_DEFAULT_HEAD_DISTANCE = DEFAULT_VIEWER_DISTANCE_METERS * METERS_TO_WORLD_UNITS
+TRACKING_INVERT_X = True
+TRACKING_INVERT_Y = True
+TRACKING_INVERT_Z = True
+TRACKING_INVERT_ROLL = True
+TRACKING_FORWARD_FLIP = True
 SUBPIX_WIN_SIZE = (5, 5)
 SUBPIX_ZERO_ZONE = (-1, -1)
 SUBPIX_CRITERIA = (
@@ -130,6 +140,87 @@ def create_transform_matrix(rvec, tvec):
     T[:3, :3] = rmat
     T[:3, 3] = tvec.flatten()
     return T
+
+def transform_from_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+    r_rows = payload.get("R")
+    t_vals = payload.get("T")
+    if not (isinstance(r_rows, list) and isinstance(t_vals, list) and len(r_rows) == 3 and len(t_vals) == 3):
+        return None
+    try:
+        transform = np.eye(4, dtype=np.float32)
+        transform[:3, :3] = np.array(r_rows, dtype=np.float32)
+        transform[:3, 3] = np.array(t_vals, dtype=np.float32)
+        return transform
+    except Exception:
+        return None
+
+def normalize_screen_id(value):
+    if value is None:
+        return ""
+    if isinstance(value, int):
+        return str(int(value))
+    if isinstance(value, float):
+        rounded = round(float(value))
+        if abs(float(value) - rounded) <= 1e-6:
+            return str(int(rounded))
+        return str(float(value))
+    text = str(value).strip()
+    if text == "":
+        return ""
+    try:
+        parsed = float(text)
+        rounded = round(parsed)
+        if abs(parsed - rounded) <= 1e-6:
+            return str(int(rounded))
+    except ValueError:
+        pass
+    return text
+
+def tracking_alignment_rotation(raw_rotation):
+    yaw_flip = np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, -1.0],
+        ],
+        dtype=np.float32,
+    )
+    corrected = raw_rotation.astype(np.float32) @ yaw_flip
+    u, _, vt = np.linalg.svd(corrected)
+    return (u @ vt).astype(np.float32)
+
+def opentrack_rotation_matrix(yaw_deg, pitch_deg, roll_deg):
+    yaw = np.radians(float(yaw_deg))
+    pitch = np.radians(float(pitch_deg))
+    roll_sign = -1.0 if TRACKING_INVERT_ROLL else 1.0
+    roll = np.radians(float(roll_deg) * roll_sign)
+    ry = np.array(
+        [
+            [np.cos(yaw), 0.0, np.sin(yaw)],
+            [0.0, 1.0, 0.0],
+            [-np.sin(yaw), 0.0, np.cos(yaw)],
+        ],
+        dtype=np.float32,
+    )
+    rx = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, np.cos(pitch), -np.sin(pitch)],
+            [0.0, np.sin(pitch), np.cos(pitch)],
+        ],
+        dtype=np.float32,
+    )
+    rz = np.array(
+        [
+            [np.cos(roll), -np.sin(roll), 0.0],
+            [np.sin(roll), np.cos(roll), 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    return ry @ rx @ rz
 
 def load_screen_configs():
     if os.path.exists("monitor_configs.json"):
@@ -387,6 +478,11 @@ def main():
     active_capture_width = 0
     active_capture_height = 0
     active_camera_index = None
+    scan_locked_state = False
+    locked_tracking_reference = None
+    locked_tracking_reference_origin = ""
+    latest_live_tracking_pose = None
+    latest_live_tracking_time = 0.0
 
     def send_udp_json(payload):
         bridge_sock.sendto(json.dumps(payload).encode('utf-8'), ("127.0.0.1", 4243))
@@ -714,17 +810,42 @@ def main():
 
     while True:
         try:
-            cmd_data, _ = command_sock.recvfrom(65535)
-            cmd_json = json.loads(cmd_data.decode("utf-8"))
-            cmd_type = cmd_json.get("type")
-            if cmd_type == "reset_spatial_map":
-                reset_spatial_map()
-            elif cmd_type == "pause_camera_capture":
-                set_camera_paused(True)
-            elif cmd_type == "resume_camera_capture":
-                set_camera_paused(False)
-            elif cmd_type == "toggle_camera_capture":
-                set_camera_paused(not camera_paused)
+            while True:
+                cmd_data, _ = command_sock.recvfrom(65535)
+                cmd_json = json.loads(cmd_data.decode("utf-8"))
+                cmd_type = cmd_json.get("type")
+                if cmd_type == "reset_spatial_map":
+                    reset_spatial_map()
+                    scan_locked_state = False
+                    locked_tracking_reference = None
+                    locked_tracking_reference_origin = ""
+                    latest_live_tracking_pose = None
+                    latest_live_tracking_time = 0.0
+                elif cmd_type == "pause_camera_capture":
+                    set_camera_paused(True)
+                elif cmd_type == "resume_camera_capture":
+                    set_camera_paused(False)
+                elif cmd_type == "toggle_camera_capture":
+                    set_camera_paused(not camera_paused)
+                elif cmd_type == "scan_lock_state":
+                    scan_locked_state = bool(cmd_json.get("locked", False))
+                    locked_tracking_reference = transform_from_payload(cmd_json.get("tracking_reference"))
+                    locked_tracking_reference_origin = normalize_screen_id(
+                        (cmd_json.get("tracking_reference") or {}).get("origin_screen", "")
+                    )
+                    if not scan_locked_state:
+                        locked_tracking_reference = None
+                        locked_tracking_reference_origin = ""
+                elif cmd_type == "live_tracking_pose":
+                    latest_live_tracking_pose = {
+                        "x": float(cmd_json.get("x", 0.0)),
+                        "y": float(cmd_json.get("y", 0.0)),
+                        "z": float(cmd_json.get("z", 0.0)),
+                        "yaw": float(cmd_json.get("yaw", 0.0)),
+                        "pitch": float(cmd_json.get("pitch", 0.0)),
+                        "roll": float(cmd_json.get("roll", 0.0)),
+                    }
+                    latest_live_tracking_time = time.time()
         except BlockingIOError:
             pass
         except Exception as exc:
@@ -1293,6 +1414,58 @@ def main():
             if global_transforms and visible_ids and time.time() - last_layout_send_time > 0.75:
                 broadcast_layout()
 
+        tracker_camera_debug_transform = T_origin_to_cam
+        if scan_locked_state and locked_tracking_reference is not None:
+            origin_matches = (
+                locked_tracking_reference_origin == ""
+                or global_origin_id is None
+                or locked_tracking_reference_origin == normalize_screen_id(global_origin_id)
+            )
+            if origin_matches:
+                tracker_camera_debug_transform = locked_tracking_reference
+
+        debug_head_position = None
+        debug_head_forward = None
+        if scan_locked_state and global_origin_id is not None:
+            debug_head_position = np.array([0.0, 0.0, TRACKING_DEFAULT_HEAD_DISTANCE], dtype=np.float32)
+            debug_head_forward = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+            if latest_live_tracking_pose is not None and (time.time() - latest_live_tracking_time) <= TRACKING_POSE_TIMEOUT_SEC:
+                tracking_offset = np.array(
+                    [
+                        latest_live_tracking_pose["x"] * CM_TO_WORLD_UNITS * (-1.0 if TRACKING_INVERT_X else 1.0),
+                        latest_live_tracking_pose["y"] * CM_TO_WORLD_UNITS * (-1.0 if TRACKING_INVERT_Y else 1.0),
+                        latest_live_tracking_pose["z"] * CM_TO_WORLD_UNITS * (-1.0 if TRACKING_INVERT_Z else 1.0),
+                    ],
+                    dtype=np.float32,
+                )
+                debug_head_position = tracking_offset.copy()
+                head_rotation = opentrack_rotation_matrix(
+                    latest_live_tracking_pose["yaw"],
+                    latest_live_tracking_pose["pitch"],
+                    latest_live_tracking_pose["roll"],
+                )
+                debug_head_forward = head_rotation @ np.array([0.0, 0.0, -1.0], dtype=np.float32)
+                if TRACKING_FORWARD_FLIP:
+                    debug_head_forward *= -1.0
+
+                origin_matches = (
+                    locked_tracking_reference is not None
+                    and (
+                        locked_tracking_reference_origin == ""
+                        or locked_tracking_reference_origin == normalize_screen_id(global_origin_id)
+                    )
+                )
+                if origin_matches:
+                    aligned_rotation = tracking_alignment_rotation(locked_tracking_reference[:3, :3])
+                    debug_head_position = locked_tracking_reference[:3, 3] + (aligned_rotation @ tracking_offset)
+                    debug_head_forward = aligned_rotation @ debug_head_forward
+
+                debug_head_position[2] += TRACKING_DEFAULT_HEAD_DISTANCE
+
+            forward_norm = float(np.linalg.norm(debug_head_forward))
+            if forward_norm > 1e-6:
+                debug_head_forward = (debug_head_forward / forward_norm).astype(np.float32)
+
         room_map = np.zeros((800, 800, 3), dtype=np.uint8)
         
         cx, cy = 400, 400
@@ -1414,23 +1587,25 @@ def main():
                     1,
                 )
 
-        # Draw Camera Frustum
-        if T_origin_to_cam is not None:
-            c_pos = T_origin_to_cam[:3, 3]
+        # Draw the tracker camera frustum. After scan lock, prefer the frozen
+        # off-axis reference so the room view keeps showing the calibrated
+        # tracker-camera pose even when no markers are visible anymore.
+        if tracker_camera_debug_transform is not None:
+            c_pos = tracker_camera_debug_transform[:3, 3]
             c_global = np.array([c_pos[0], c_pos[1], c_pos[2], 1])
             
             pt_c, ok = project_3d(c_global)
             if ok:
-                cv2.circle(room_map, pt_c, 6, (0, 0, 255), -1)
-                cv2.putText(room_map, "Camera", (max(0, pt_c[0]+10), max(0, pt_c[1]+10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                cv2.circle(room_map, pt_c, 6, (255, 120, 0), -1)
+                cv2.putText(room_map, "Tracker Cam", (max(0, pt_c[0]+10), max(0, pt_c[1]+10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 120, 0), 1)
             
-            z_forward = T_origin_to_cam @ np.array([0, 0, 20, 1])
-            z_left = T_origin_to_cam @ np.array([-10, -10, 20, 1])
-            z_right = T_origin_to_cam @ np.array([ 10, -10, 20, 1])
-            z_bleft = T_origin_to_cam @ np.array([-10, 10, 20, 1])
-            z_bright = T_origin_to_cam @ np.array([ 10, 10, 20, 1])
+            z_forward = tracker_camera_debug_transform @ np.array([0, 0, 20, 1])
+            z_left = tracker_camera_debug_transform @ np.array([-10, -10, 20, 1])
+            z_right = tracker_camera_debug_transform @ np.array([ 10, -10, 20, 1])
+            z_bleft = tracker_camera_debug_transform @ np.array([-10, 10, 20, 1])
+            z_bright = tracker_camera_debug_transform @ np.array([ 10, 10, 20, 1])
             
-            c_color = (0, 0, 255)
+            c_color = (255, 120, 0)
             draw_line_3d(room_map, c_global, z_left, c_color, 1)
             draw_line_3d(room_map, c_global, z_right, c_color, 1)
             draw_line_3d(room_map, c_global, z_bleft, c_color, 1)
@@ -1440,6 +1615,39 @@ def main():
             draw_line_3d(room_map, z_right, z_bright, c_color, 1)
             draw_line_3d(room_map, z_bright, z_bleft, c_color, 1)
             draw_line_3d(room_map, z_bleft, z_left, c_color, 1)
+
+        # Draw the virtual viewer head/camera that the Godot clients will use.
+        # Before live tracking arrives, keep it at the default 50 cm reference
+        # position in front of the primary screen so debugging stays meaningful.
+        if debug_head_position is not None and debug_head_forward is not None:
+            head_global = np.array([debug_head_position[0], debug_head_position[1], debug_head_position[2], 1.0], dtype=np.float32)
+            pt_head, ok = project_3d(head_global)
+            if ok:
+                cv2.circle(room_map, pt_head, 6, (255, 0, 255), -1)
+                cv2.putText(room_map, "Viewer", (max(0, pt_head[0] + 10), max(0, pt_head[1] + 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
+            up_vector = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            right_vector = np.cross(debug_head_forward, up_vector)
+            if float(np.linalg.norm(right_vector)) <= 1e-6:
+                right_vector = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            right_vector = right_vector / max(float(np.linalg.norm(right_vector)), 1e-6)
+            head_up = np.cross(right_vector, debug_head_forward)
+            head_up = head_up / max(float(np.linalg.norm(head_up)), 1e-6)
+
+            cone_length = 14.0
+            cone_radius = 6.0
+            cone_tip = debug_head_position + (debug_head_forward * cone_length)
+            cone_left = cone_tip - (right_vector * cone_radius)
+            cone_right = cone_tip + (right_vector * cone_radius)
+            cone_top = cone_tip + (head_up * (cone_radius * 0.8))
+
+            head_color = (255, 0, 255)
+            draw_line_3d(room_map, head_global, np.append(cone_left, 1.0), head_color, 1)
+            draw_line_3d(room_map, head_global, np.append(cone_right, 1.0), head_color, 1)
+            draw_line_3d(room_map, head_global, np.append(cone_top, 1.0), head_color, 1)
+            draw_line_3d(room_map, np.append(cone_left, 1.0), np.append(cone_right, 1.0), head_color, 1)
+            draw_line_3d(room_map, np.append(cone_right, 1.0), np.append(cone_top, 1.0), head_color, 1)
+            draw_line_3d(room_map, np.append(cone_top, 1.0), np.append(cone_left, 1.0), head_color, 1)
 
         # Output the live webcam feeds
         if active_capture_width > 0 and active_capture_height > 0:

@@ -2,6 +2,9 @@
 extends Node3D
 
 @export var fallback_directional_light_path: NodePath
+@export var screen_scaling_path: NodePath = NodePath("../ScreenScaling")
+
+const AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS := 0.3299948403966754
 
 var current_view_name: String = "":
 	set(value):
@@ -13,10 +16,15 @@ var current_view_name: String = "":
 var _available_views: Array[String] = []
 var _instantiated_view: Node3D
 var _fallback_directional_light: DirectionalLight3D
+var _screen_scaler: ScreenScaling
+var _instantiated_view_base_scale: Vector3 = Vector3.ONE
+var _last_applied_view_scale: float = -1.0
 
 func _ready() -> void:
 	_refresh_views()
 	_resolve_fallback_light()
+	_resolve_screen_scaler()
+	set_process(true)
 	
 	if Engine.is_editor_hint() or not Engine.is_editor_hint():
 		# 1. Recover any existing view from a scene load so we don't spawn duplicates
@@ -35,7 +43,13 @@ func _ready() -> void:
 				# Only load if we didn't just recover one from the saved scene!
 				_load_view(current_view_name)
 			else:
+				_capture_instantiated_view_base_scale()
 				_sync_fallback_directional_light()
+				_apply_view_scale(true)
+
+func _process(_delta: float) -> void:
+	_resolve_screen_scaler()
+	_apply_view_scale(false)
 
 func _get_property_list() -> Array:
 	var properties: Array = []
@@ -96,6 +110,8 @@ func _load_view(view_file: String) -> void:
 		# Instantiate and inject the new view
 		_instantiated_view = packed_scene.instantiate() as Node3D
 		self.add_child(_instantiated_view)
+		_capture_instantiated_view_base_scale()
+		_apply_view_scale(true)
 		_sync_fallback_directional_light()
 		
 		# Set owner so it shows up in the editor hierarchy cleanly
@@ -110,6 +126,34 @@ func _resolve_fallback_light() -> void:
 		_fallback_directional_light = null
 		return
 	_fallback_directional_light = get_node_or_null(fallback_directional_light_path) as DirectionalLight3D
+
+func _resolve_screen_scaler() -> void:
+	if screen_scaling_path.is_empty():
+		_screen_scaler = null
+		return
+	_screen_scaler = get_node_or_null(screen_scaling_path) as ScreenScaling
+
+func _capture_instantiated_view_base_scale() -> void:
+	if _instantiated_view == null:
+		return
+	_instantiated_view_base_scale = _instantiated_view.scale
+	_last_applied_view_scale = -1.0
+
+func _apply_view_scale(force: bool) -> void:
+	if _instantiated_view == null:
+		return
+
+	var target_scale := 1.0
+	if _screen_scaler != null and AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS > 0.0:
+		var virtual_height := _screen_scaler.virtual_window_height
+		if virtual_height > 0.0:
+			target_scale = virtual_height / AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS
+
+	if not force and is_equal_approx(target_scale, _last_applied_view_scale):
+		return
+
+	_last_applied_view_scale = target_scale
+	_instantiated_view.scale = _instantiated_view_base_scale * target_scale
 
 func _sync_fallback_directional_light() -> void:
 	_resolve_fallback_light()

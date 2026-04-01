@@ -18,5 +18,13 @@
     "Android Tablet": {
         "width": 6.73,
         "height": 4.1875
+    },
+    "Ancient Lenovo Laptop": {
+        "width": 10.8125,
+        "height": 6.125
+    },
+    "New Lenovo laptop": {
+        "width": 11.1875,
+        "height": 7.333
     }
 }

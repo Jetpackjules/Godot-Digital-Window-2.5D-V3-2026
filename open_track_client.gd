@@ -20,8 +20,8 @@ var aruco_markers: Array[Texture2D] = []
 
 @export_group("Tracking Axis Calibration")
 @export var invert_x: bool = true
-@export var invert_y: bool = false
-@export var invert_z: bool = false
+@export var invert_y: bool = true
+@export var invert_z: bool = true
 
 @export_group("Physical Camera Offset")
 ## Where the camera sits physically relative to the center of your monitor (in meters)
@@ -849,6 +849,23 @@ func _tracking_alignment_basis(raw_basis: Basis) -> Basis:
 	# relative to the screen-space frame used for head placement. Correct that
 	# once here so the off-axis math and the minimap gizmo use the same basis.
 	return (raw_basis.orthonormalized() * Basis(Vector3.UP, PI)).orthonormalized()
+
+func _screen_space_tracking_offset(mult: float) -> Vector3:
+	var x_dir = -1.0 if invert_x else 1.0
+	var y_dir = -1.0 if invert_y else 1.0
+	var z_dir = -1.0 if invert_z else 1.0
+	return Vector3(
+		(_raw_x * x_dir) * sensitivity.x * mult,
+		(_raw_y * y_dir) * sensitivity.y * mult,
+		(_raw_z * z_dir) * sensitivity.z * mult
+	)
+
+func _tracking_offset_in_aligned_camera_frame(screen_space_offset: Vector3) -> Vector3:
+	# Narrow Godot-side off-axis correction: X is already aligned with the
+	# Python debug view, but Y/Z still arrive mirrored relative to the current
+	# player/world frame usage. Keep the player-basis path intact and only flip
+	# those two axes for the off-axis interpretation.
+	return Vector3(screen_space_offset.x, -screen_space_offset.y, -screen_space_offset.z)
 
 func _get_tracking_camera_global_transform() -> Transform3D:
 	var reference_origin := Vector3.ZERO
@@ -2028,7 +2045,6 @@ func _maybe_broadcast_viewer_pose() -> void:
 		or current_basis.y.distance_to(_last_broadcast_player_basis.y) > VIEWER_POSE_BASIS_EPSILON
 		or current_basis.z.distance_to(_last_broadcast_player_basis.z) > VIEWER_POSE_BASIS_EPSILON
 	)
-
 	if current_pos.distance_to(_last_broadcast_player_position) <= VIEWER_POSE_POSITION_EPSILON and not basis_changed:
 		return
 
@@ -2649,20 +2665,12 @@ func _apply_tracking_data():
 	
 	if camera_node and window_center and screen_scaler:
 		var mult = screen_scaler.tracking_scale_multiplier
-		
-		var x_dir = -1.0 if invert_x else 1.0
-		var y_dir = -1.0 if invert_y else 1.0
-		var z_dir = -1.0 if invert_z else 1.0
-
-		var scaled_tracking_offset = Vector3(
-			(_raw_x * x_dir) * sensitivity.x * mult,
-			(_raw_y * y_dir) * sensitivity.y * mult,
-			(_raw_z * z_dir) * sensitivity.z * mult
-		)
-		var final_local_offset = scaled_tracking_offset
+		var screen_space_tracking_offset = _screen_space_tracking_offset(mult)
+		var final_local_offset = screen_space_tracking_offset
 		var tracking_reference_matches_origin = _tracking_reference_matches_origin()
 		if _has_live_tracking_data and _tracking_reference_active and tracking_reference_matches_origin:
-			final_local_offset = _tracking_reference_transform.origin + (_tracking_alignment_basis(_tracking_reference_transform.basis) * scaled_tracking_offset)
+			var aligned_camera_offset = _tracking_offset_in_aligned_camera_frame(screen_space_tracking_offset)
+			final_local_offset = _tracking_reference_transform.origin + (_tracking_alignment_basis(_tracking_reference_transform.basis) * aligned_camera_offset)
 		else:
 			# Keep a persistent baseline eye distance in front of the screen so neutral
 			# tracking data represents a sensible viewing position instead of the glass plane.

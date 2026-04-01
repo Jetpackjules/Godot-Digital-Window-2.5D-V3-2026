@@ -45,6 +45,7 @@ anaglyph_enabled = False
 latest_tracker_camera_pose = None
 latest_tracker_camera_pose_time = 0.0
 locked_tracking_reference = None
+tracker_command_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 
 def broadcast_json(payload: dict) -> None:
@@ -80,6 +81,14 @@ def set_scan_lock(locked: bool, reason: str) -> None:
         locked_tracking_reference = None
 
     scan_locked = locked
+    send_tracker_command(
+        {
+            "type": "scan_lock_state",
+            "locked": locked,
+            "reason": reason,
+            "tracking_reference": locked_tracking_reference,
+        }
+    )
     payload = {
         "type": "scan_lock",
         "locked": locked,
@@ -119,11 +128,7 @@ def broadcast_scan_start(reason: str) -> None:
 
 
 def send_tracker_command(payload: dict) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.sendto(json.dumps(payload).encode("utf-8"), (UDP_IP, TRACKER_CONTROL_PORT))
-    finally:
-        sock.close()
+    tracker_command_sock.sendto(json.dumps(payload).encode("utf-8"), (UDP_IP, TRACKER_CONTROL_PORT))
 
 
 def freeze_tracking_reference():
@@ -346,6 +351,17 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
         # 2. OpenTrack sends 48 bytes (6 doubles: X, Y, Z, Yaw, Pitch, Roll)
         if len(data) >= 48:
             unpacked_data = struct.unpack('dddddd', data[:48])
+            send_tracker_command(
+                {
+                    "type": "live_tracking_pose",
+                    "x": unpacked_data[0],
+                    "y": unpacked_data[1],
+                    "z": unpacked_data[2],
+                    "yaw": unpacked_data[3],
+                    "pitch": unpacked_data[4],
+                    "roll": unpacked_data[5],
+                }
+            )
             # Broadcast the tracking data ONLY if clients are actually listening
             print(f"OT Data received! Z={unpacked_data[2]} cm")
             if connected_clients:
