@@ -20,8 +20,8 @@ var aruco_markers: Array[Texture2D] = []
 
 @export_group("Tracking Axis Calibration")
 @export var invert_x: bool = true
-@export var invert_y: bool = true
-@export var invert_z: bool = true
+@export var invert_y: bool = false
+@export var invert_z: bool = false
 
 @export_group("Physical Camera Offset")
 ## Where the camera sits physically relative to the center of your monitor (in meters)
@@ -844,11 +844,18 @@ func _tracking_reference_matches_origin() -> bool:
 		or _tracking_reference_origin_screen == _main_screen_id
 	)
 
-func _tracking_alignment_basis(raw_basis: Basis) -> Basis:
+func _tracking_camera_visual_basis(raw_basis: Basis) -> Basis:
 	# The localized tracker camera pose arrives with its optical forward flipped
-	# relative to the screen-space frame used for head placement. Correct that
-	# once here so the off-axis math and the minimap gizmo use the same basis.
+	# relative to the solved screen-space frame. This correction matches the
+	# Python room-map camera cone and should stay camera-only.
 	return (raw_basis.orthonormalized() * Basis(Vector3.UP, PI)).orthonormalized()
+
+func _tracking_alignment_basis(raw_basis: Basis) -> Basis:
+	# Head-position alignment needs one additional 180-degree X rotation beyond
+	# the camera-visual basis. This moves the Y/Z reconciliation into the
+	# tracking-reference frame itself instead of carrying a Godot-only offset
+	# patch after the fact.
+	return (_tracking_camera_visual_basis(raw_basis) * Basis(Vector3.RIGHT, PI)).orthonormalized()
 
 func _screen_space_tracking_offset(mult: float) -> Vector3:
 	var x_dir = -1.0 if invert_x else 1.0
@@ -861,13 +868,9 @@ func _screen_space_tracking_offset(mult: float) -> Vector3:
 	)
 
 func _tracking_offset_in_aligned_camera_frame(screen_space_offset: Vector3) -> Vector3:
-	# Narrow Godot-side off-axis correction: X is already aligned with the
-	# Python debug view, but Y/Z still arrive mirrored relative to the current
-	# player/world frame usage. Keep the player-basis path intact and only flip
-	# those two axes for the off-axis interpretation.
 	return Vector3(screen_space_offset.x, -screen_space_offset.y, -screen_space_offset.z)
 
-func _get_tracking_camera_global_transform() -> Transform3D:
+func _get_tracking_reference_global_transform() -> Transform3D:
 	var reference_origin := Vector3.ZERO
 	var reference_basis := Basis.IDENTITY
 	if _has_main_screen_reference:
@@ -880,9 +883,16 @@ func _get_tracking_camera_global_transform() -> Transform3D:
 		reference_origin = player_node.global_position
 		reference_basis = player_node.global_transform.basis.orthonormalized()
 
+	return Transform3D(reference_basis, reference_origin)
+
+func _get_tracking_camera_global_transform() -> Transform3D:
+	var reference_transform = _get_tracking_reference_global_transform()
+	var reference_origin = reference_transform.origin
+	var reference_basis = reference_transform.basis
+
 	if _tracking_reference_active and _tracking_reference_matches_origin():
 		return Transform3D(
-			(reference_basis * _tracking_alignment_basis(_tracking_reference_transform.basis)).orthonormalized(),
+			(reference_basis * _tracking_camera_visual_basis(_tracking_reference_transform.basis)).orthonormalized(),
 			reference_origin + (reference_basis * _tracking_reference_transform.origin)
 		)
 
@@ -2666,19 +2676,18 @@ func _apply_tracking_data():
 	if camera_node and window_center and screen_scaler:
 		var mult = screen_scaler.tracking_scale_multiplier
 		var screen_space_tracking_offset = _screen_space_tracking_offset(mult)
-		var final_local_offset = screen_space_tracking_offset
 		var tracking_reference_matches_origin = _tracking_reference_matches_origin()
 		if _has_live_tracking_data and _tracking_reference_active and tracking_reference_matches_origin:
+			var reference_transform = _get_tracking_reference_global_transform()
 			var aligned_camera_offset = _tracking_offset_in_aligned_camera_frame(screen_space_tracking_offset)
-			final_local_offset = _tracking_reference_transform.origin + (_tracking_alignment_basis(_tracking_reference_transform.basis) * aligned_camera_offset)
+			var tracker_local_offset = _tracking_reference_transform.origin + (_tracking_alignment_basis(_tracking_reference_transform.basis) * aligned_camera_offset)
+			camera_node.global_position = reference_transform.origin + (reference_transform.basis * tracker_local_offset)
 		else:
+			var final_local_offset = screen_space_tracking_offset
 			# Keep a persistent baseline eye distance in front of the screen so neutral
 			# tracking data represents a sensible viewing position instead of the glass plane.
 			final_local_offset.z += default_viewer_distance_meters * mult
-		
-		var reference_pos = player_node.global_position if player_node else window_center.global_position
-		var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
-
-		var final_pos = reference_pos + reference_basis * final_local_offset
-			
-		camera_node.global_position = final_pos
+			var reference_pos = player_node.global_position if player_node else window_center.global_position
+			var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
+			var final_pos = reference_pos + reference_basis * final_local_offset
+			camera_node.global_position = final_pos

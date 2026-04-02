@@ -28,6 +28,7 @@ CAMERA_KEY_DOWN_EX = 2621440
 CAMERA_INDEX_DEFAULT = 0
 CAMERA_INDEX_ENV = "CAMERA_INDEX"
 CAMERA_INDEX_AUTO_MAX = 6
+HEAD_TO_CAMERA_DEBUG_KEY = ord('f')
 PREFERRED_CAMERA_MODES = [
     (2560, 1440),
     (2560, 1080),
@@ -46,8 +47,8 @@ CM_TO_WORLD_UNITS = 0.3937007874015748
 TRACKING_POSE_TIMEOUT_SEC = 0.5
 TRACKING_DEFAULT_HEAD_DISTANCE = DEFAULT_VIEWER_DISTANCE_METERS * METERS_TO_WORLD_UNITS
 TRACKING_INVERT_X = True
-TRACKING_INVERT_Y = True
-TRACKING_INVERT_Z = True
+TRACKING_INVERT_Y = False
+TRACKING_INVERT_Z = False
 TRACKING_INVERT_ROLL = True
 TRACKING_FORWARD_FLIP = True
 SUBPIX_WIN_SIZE = (5, 5)
@@ -188,6 +189,19 @@ def tracking_alignment_rotation(raw_rotation):
         dtype=np.float32,
     )
     corrected = raw_rotation.astype(np.float32) @ yaw_flip
+    u, _, vt = np.linalg.svd(corrected)
+    return (u @ vt).astype(np.float32)
+
+def tracking_position_alignment_rotation(raw_rotation):
+    x_flip = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, -1.0],
+        ],
+        dtype=np.float32,
+    )
+    corrected = tracking_alignment_rotation(raw_rotation) @ x_flip
     u, _, vt = np.linalg.svd(corrected)
     return (u @ vt).astype(np.float32)
 
@@ -483,6 +497,7 @@ def main():
     locked_tracking_reference_origin = ""
     latest_live_tracking_pose = None
     latest_live_tracking_time = 0.0
+    show_head_to_camera_debug = False
 
     def send_udp_json(payload):
         bridge_sock.sendto(json.dumps(payload).encode('utf-8'), ("127.0.0.1", 4243))
@@ -1456,9 +1471,10 @@ def main():
                     )
                 )
                 if origin_matches:
-                    aligned_rotation = tracking_alignment_rotation(locked_tracking_reference[:3, :3])
-                    debug_head_position = locked_tracking_reference[:3, 3] + (aligned_rotation @ tracking_offset)
-                    debug_head_forward = aligned_rotation @ debug_head_forward
+                    aligned_position_rotation = tracking_position_alignment_rotation(locked_tracking_reference[:3, :3])
+                    debug_head_position = locked_tracking_reference[:3, 3] + (aligned_position_rotation @ tracking_offset)
+                    aligned_visual_rotation = tracking_alignment_rotation(locked_tracking_reference[:3, :3])
+                    debug_head_forward = aligned_visual_rotation @ debug_head_forward
 
                 debug_head_position[2] += TRACKING_DEFAULT_HEAD_DISTANCE
 
@@ -1548,6 +1564,19 @@ def main():
                 cv2.circle(room_map, pt_center, 4, color, -1)
                 cv2.putText(room_map, f"Screen {s_id}", (max(0, pt_center[0]-30), max(0, pt_center[1]-10)), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                if show_head_to_camera_debug and tracker_camera_debug_transform is not None:
+                    c_pos = tracker_camera_debug_transform[:3, 3]
+                    screen_distance_meters = float(np.linalg.norm(center_global[:3] - c_pos)) * 0.0254
+                    cv2.putText(
+                        room_map,
+                        f"{screen_distance_meters:.2f} m",
+                        (max(0, pt_center[0] - 22), max(0, pt_center[1] - 28)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45,
+                        (0, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
         for anchor_id, anchor_data in global_anchor_transforms.items():
             T = anchor_data["transform"]
@@ -1649,6 +1678,29 @@ def main():
             draw_line_3d(room_map, np.append(cone_right, 1.0), np.append(cone_top, 1.0), head_color, 1)
             draw_line_3d(room_map, np.append(cone_top, 1.0), np.append(cone_left, 1.0), head_color, 1)
 
+        if show_head_to_camera_debug and tracker_camera_debug_transform is not None and debug_head_position is not None:
+            c_pos = tracker_camera_debug_transform[:3, 3]
+            head_global = np.array([debug_head_position[0], debug_head_position[1], debug_head_position[2], 1.0], dtype=np.float32)
+            cam_global = np.array([c_pos[0], c_pos[1], c_pos[2], 1.0], dtype=np.float32)
+            draw_line_3d(room_map, head_global, cam_global, (0, 255, 255), 2)
+
+            distance_world_units = float(np.linalg.norm(debug_head_position - c_pos))
+            distance_meters = distance_world_units * 0.0254
+            distance_text = f"Head->Cam: {distance_meters:.3f} m"
+            text_size, baseline = cv2.getTextSize(distance_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            text_x = max(10, room_map.shape[1] - text_size[0] - 18)
+            text_y = max(text_size[1] + 10, room_map.shape[0] - 18)
+            cv2.putText(
+                room_map,
+                distance_text,
+                (text_x, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
         # Output the live webcam feeds
         if active_capture_width > 0 and active_capture_height > 0:
             cv2.putText(
@@ -1692,6 +1744,9 @@ def main():
         # Press 'q' to quit
         if key == ord('q'):
             break
+        elif key == HEAD_TO_CAMERA_DEBUG_KEY:
+            show_head_to_camera_debug = not show_head_to_camera_debug
+            print(f">>> Head-to-camera distance overlay {'ON' if show_head_to_camera_debug else 'OFF'}. <<<")
         elif key == ord('r') or key == ord('g'):
             reset_spatial_map()
         elif key == ord('x'):
