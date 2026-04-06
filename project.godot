@@ -13,6 +13,7 @@ config_version=5
 config/name="2.5D window V3"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
+run/max_fps=240
 config/icon="res://icon.svg"
 
 [display]
@@ -24,7 +25,7 @@ window/vsync/vsync_mode=0
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/simplegrasstextured/plugin.cfg")
+enabled=PackedStringArray()
 
 [input]
 

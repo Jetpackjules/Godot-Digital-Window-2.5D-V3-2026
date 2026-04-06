@@ -119,8 +119,7 @@ if EXPORT_PATH.exists():
                     window.enableWakeLock();
                 }
             });
-
-            ['click', 'touchend', 'keydown'].forEach(function (eventName) {
+'].forEach(function (eventName) {
                 window.addEventListener(eventName, function () {
                     window.enableWakeLock();
                 }, { passive: true });
@@ -135,6 +134,51 @@ if EXPORT_PATH.exists():
         print("  -> Successfully injected best-effort screen wake lock helper into HTML.")
     else:
         print("  -> Screen wake lock helper is already injected into the HTML.")
+
+    if "window.enableGodotFullscreen" not in html_content:
+        fullscreen_injection = """
+        <script>
+            // Best-effort fullscreen helper. Browsers usually require a user gesture,
+            // so we try on load and then retry on the first interaction.
+            window.__godotFullscreenAttempted = false;
+            window.enableGodotFullscreen = async function () {
+                if (window.__godotFullscreenAttempted && document.fullscreenElement) {
+                    return true;
+                }
+                var target = document.getElementById('canvas') || document.documentElement;
+                if (!target || document.fullscreenElement) {
+                    return !!document.fullscreenElement;
+                }
+                window.__godotFullscreenAttempted = true;
+                try {
+                    if (target.requestFullscreen) {
+                        await target.requestFullscreen();
+                        return true;
+                    }
+                } catch (err) {
+                    return false;
+                }
+                return false;
+            };
+
+            window.addEventListener('load', function () {
+                window.enableGodotFullscreen();
+            });
+
+            ['click', 'touchend', 'keydown'].forEach(function (eventName) {
+                window.addEventListener(eventName, function tryFullscreenOnce() {
+                    window.enableGodotFullscreen();
+                    if (document.fullscreenElement) {
+                        window.removeEventListener(eventName, tryFullscreenOnce);
+                    }
+                }, { passive: true });
+            });
+        </script>
+        """
+        html_content = html_content.replace('</body>', fullscreen_injection + '\n</body>')
+        print("  -> Successfully injected best-effort fullscreen helper into HTML.")
+    else:
+        print("  -> Fullscreen helper is already injected into the HTML.")
 
     with open(EXPORT_PATH, 'w', encoding='utf-8') as f:
         f.write(html_content)

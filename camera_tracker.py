@@ -1475,8 +1475,12 @@ def main():
                     debug_head_position = locked_tracking_reference[:3, 3] + (aligned_position_rotation @ tracking_offset)
                     aligned_visual_rotation = tracking_alignment_rotation(locked_tracking_reference[:3, :3])
                     debug_head_forward = aligned_visual_rotation @ debug_head_forward
-
-                debug_head_position[2] += TRACKING_DEFAULT_HEAD_DISTANCE
+                else:
+                    # Match Godot's fallback live-tracking path: only apply the default
+                    # viewer distance when we are not localizing the head through a frozen
+                    # off-axis tracking reference. In off-axis mode the reference transform
+                    # already defines the tracker-camera relationship to the main screen.
+                    debug_head_position[2] += TRACKING_DEFAULT_HEAD_DISTANCE
 
             forward_norm = float(np.linalg.norm(debug_head_forward))
             if forward_norm > 1e-6:
@@ -1697,6 +1701,45 @@ def main():
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+        cam_debug_pos = tracker_camera_debug_transform[:3, 3] if tracker_camera_debug_transform is not None else None
+        coord_lines = []
+        if cam_debug_pos is not None:
+            coord_lines.append(
+                "Cam: X %.2f  Y %.2f  Z %.2f" % (
+                    float(cam_debug_pos[0]),
+                    float(cam_debug_pos[1]),
+                    float(cam_debug_pos[2]),
+                )
+            )
+        else:
+            coord_lines.append("Cam: n/a")
+        if debug_head_position is not None:
+            coord_lines.append(
+                "Head: X %.2f  Y %.2f  Z %.2f" % (
+                    float(debug_head_position[0]),
+                    float(debug_head_position[1]),
+                    float(debug_head_position[2]),
+                )
+            )
+        else:
+            coord_lines.append("Head: n/a")
+
+        line_sizes = [cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0] for line in coord_lines]
+        block_width = max((size[0] for size in line_sizes), default=0)
+        x = max(10, room_map.shape[1] - block_width - 18)
+        y = 26
+        for idx, line in enumerate(coord_lines):
+            cv2.putText(
+                room_map,
+                line,
+                (x, y + idx * 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (220, 220, 220),
                 2,
                 cv2.LINE_AA,
             )

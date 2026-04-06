@@ -49,6 +49,9 @@ var aruco_markers: Array[Texture2D] = []
 @export var debug_preview_min_size: float = 2.0
 @export var debug_preview_max_size: float = 60.0
 @export var debug_preview_cone_distance_meters: float = 0.6
+@export var debug_preview_camera_distance: float = 10.0
+@export var debug_preview_camera_height: float = 6.0
+@export var debug_preview_camera_fov: float = 55.0
 @export_group("Camera Range")
 @export var camera_range_steps_meters: PackedFloat32Array = PackedFloat32Array([0.5, 1.0, 2.0, 3.0, 5.0, 10.0])
 
@@ -62,11 +65,13 @@ var _raw_z: float = 0.0
 
 var debugging: bool = false
 var debug_canvas: CanvasLayer
+var debug_preview_viewport: SubViewport
 var debug_cam: Camera3D
 var head_dot: MeshInstance3D
 var tracker_camera_dot: MeshInstance3D
 var tracker_camera_cone: MeshInstance3D
 var diagnostics_label: Label
+var debug_preview_coords_label: Label
 var calibration_ui_panel: PanelContainer
 var aruco_canvas: CanvasLayer
 
@@ -778,18 +783,20 @@ func _setup_debug_view():
 	debug_canvas.add_child(container)
 	
 	var vp = SubViewport.new()
-	vp.size = Vector2i(300, 600)
+	vp.size = Vector2i(360, 360)
 	vp.world_3d = get_viewport().world_3d
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	container.add_child(vp)
+	debug_preview_viewport = vp
 	
 	bg.position = container.position - Vector2(5, 5)
 	bg.size = Vector2(vp.size.x, vp.size.y) + Vector2(10, 10)
 	
 	debug_cam = Camera3D.new()
-	debug_cam.position = Vector3(0, 15, 0)
-	debug_cam.rotation_degrees = Vector3(-90, 0, 0)
-	debug_cam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	debug_cam.size = 15.0 # 15 meters to fit the new 8x4.5m scale beautifully
+	debug_cam.position = Vector3(0, debug_preview_camera_height, debug_preview_camera_distance)
+	debug_cam.rotation_degrees = Vector3(-25, 180, 0)
+	debug_cam.projection = Camera3D.PROJECTION_PERSPECTIVE
+	debug_cam.fov = debug_preview_camera_fov
 	vp.add_child(debug_cam)
 	
 	head_dot = MeshInstance3D.new()
@@ -837,6 +844,16 @@ func _setup_debug_view():
 	diagnostics_label.visible = false
 	debug_canvas.add_child(diagnostics_label)
 
+	debug_preview_coords_label = Label.new()
+	debug_preview_coords_label.position = Vector2(container.position.x + 12.0, container.position.y + float(vp.size.y) - 64.0)
+	debug_preview_coords_label.custom_minimum_size = Vector2(336.0, 0.0)
+	debug_preview_coords_label.add_theme_color_override("font_color", Color.WHITE)
+	debug_preview_coords_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	debug_preview_coords_label.add_theme_font_size_override("font_size", 14)
+	debug_preview_coords_label.add_theme_constant_override("outline_size", 4)
+	debug_preview_coords_label.visible = false
+	debug_canvas.add_child(debug_preview_coords_label)
+
 func _tracking_reference_matches_origin() -> bool:
 	return (
 		_tracking_reference_origin_screen == ""
@@ -851,10 +868,11 @@ func _tracking_camera_visual_basis(raw_basis: Basis) -> Basis:
 	return (raw_basis.orthonormalized() * Basis(Vector3.UP, PI)).orthonormalized()
 
 func _tracking_alignment_basis(raw_basis: Basis) -> Basis:
-	# Head-position alignment needs one additional 180-degree X rotation beyond
-	# the camera-visual basis. This moves the Y/Z reconciliation into the
-	# tracking-reference frame itself instead of carrying a Godot-only offset
-	# patch after the fact.
+	# Head-position alignment uses the tracker-camera visual basis plus one
+	# additional 180-degree X rotation. Python uses this exact basis for the
+	# host-side room-map viewer debug pose, so Godot must consume the same
+	# canonical frame directly instead of compensating afterward with a local
+	# Y/Z flip.
 	return (_tracking_camera_visual_basis(raw_basis) * Basis(Vector3.RIGHT, PI)).orthonormalized()
 
 func _screen_space_tracking_offset(mult: float) -> Vector3:
@@ -868,7 +886,7 @@ func _screen_space_tracking_offset(mult: float) -> Vector3:
 	)
 
 func _tracking_offset_in_aligned_camera_frame(screen_space_offset: Vector3) -> Vector3:
-	return Vector3(screen_space_offset.x, -screen_space_offset.y, -screen_space_offset.z)
+	return screen_space_offset
 
 func _get_tracking_reference_global_transform() -> Transform3D:
 	var reference_origin := Vector3.ZERO
@@ -925,6 +943,29 @@ func _update_debug_preview_camera_gizmos() -> void:
 		tracker_transform.basis.orthonormalized(),
 		tracker_transform.origin + Vector3(0.0, 0.03, 0.0)
 	)
+	_update_debug_preview_scene_camera(tracker_transform)
+	_update_debug_preview_coords_label(tracker_transform)
+
+func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
+	if not debug_cam:
+		return
+	var head_pos = camera_node.global_position if camera_node else tracker_transform.origin
+	var focus = (tracker_transform.origin + head_pos) * 0.5
+	var separation = maxf(2.5, tracker_transform.origin.distance_to(head_pos))
+	var distance = clampf(debug_preview_camera_distance + (separation * 0.35), debug_preview_min_size, debug_preview_max_size)
+	var offset = Vector3(distance * 0.55, debug_preview_camera_height + separation * 0.35, distance)
+	debug_cam.global_position = focus + offset
+	debug_cam.look_at(focus + Vector3(0.0, 0.5, 0.0), Vector3.UP)
+
+func _update_debug_preview_coords_label(tracker_transform: Transform3D) -> void:
+	if not debug_preview_coords_label:
+		return
+	var head_pos = camera_node.global_position if camera_node else Vector3.ZERO
+	var cam_pos = tracker_transform.origin
+	debug_preview_coords_label.text = "Cam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f" % [
+		cam_pos.x, cam_pos.y, cam_pos.z,
+		head_pos.x, head_pos.y, head_pos.z
+	]
 
 func _rebuild_preset_dropdown():
 	if preset_dropdown:
@@ -1648,12 +1689,16 @@ func _apply_global_ui_visibility() -> void:
 		aruco_canvas.visible = show_full_ui
 	if debug_canvas:
 		debug_canvas.visible = show_debug_overlay
+	if debug_preview_viewport:
+		debug_preview_viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE if show_debug_overlay else SubViewport.UPDATE_DISABLED
 	if head_dot:
 		head_dot.visible = show_debug_overlay
 	if tracker_camera_dot:
 		tracker_camera_dot.visible = show_debug_overlay
 	if tracker_camera_cone:
 		tracker_camera_cone.visible = show_debug_overlay
+	if debug_preview_coords_label:
+		debug_preview_coords_label.visible = show_debug_overlay
 
 func _advance_tab_ui_mode() -> void:
 	_tab_ui_mode = (_tab_ui_mode + 1) % 3
@@ -2219,7 +2264,7 @@ func _input(event):
 func _adjust_debug_preview_zoom(delta_size: float) -> void:
 	if _tab_ui_mode != TAB_UI_MODE_PREVIEW or not debug_cam:
 		return
-	debug_cam.size = clampf(debug_cam.size + delta_size, debug_preview_min_size, debug_preview_max_size)
+	debug_preview_camera_distance = clampf(debug_preview_camera_distance + delta_size, debug_preview_min_size, debug_preview_max_size)
 
 func _set_calibration_mode(is_on: bool):
 	calibration_mode = is_on
@@ -2646,8 +2691,6 @@ func _process(_delta):
 
 		if debug_canvas and debug_canvas.visible:
 			_update_debug_preview_camera_gizmos()
-			if window_center:
-				debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
 				
 			if floating_diagnostics_visible:
 				diagnostics_label.text = diagnostics_text
@@ -2659,8 +2702,6 @@ func _process(_delta):
 				)
 	elif debug_canvas and debug_canvas.visible:
 		_update_debug_preview_camera_gizmos()
-		if window_center:
-			debug_cam.global_position = window_center.global_position + Vector3(0, 15, 0)
 
 func _apply_tracking_data():
 	# The first time we successfully get a real tracking packet:

@@ -1,0 +1,45 @@
+[remap]
+
+importer="texture"
+type="CompressedTexture2D"
+uid="uid://vwgu8u42v54c"
+path.s3tc="res://.godot/imported/tiny_isometric_room_4.jpg-22f171ba273582a05e2d750662043151.s3tc.ctex"
+path.etc2="res://.godot/imported/tiny_isometric_room_4.jpg-22f171ba273582a05e2d750662043151.etc2.ctex"
+metadata={
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
+}
+generator_parameters={
+"md5": "434df7889212984f8b37d65e47fb248e"
+}
+
+[deps]
+
+source_file="res://Views/stab/tiny_isometric_room_4.jpg"
+dest_files=["res://.godot/imported/tiny_isometric_room_4.jpg-22f171ba273582a05e2d750662043151.s3tc.ctex", "res://.godot/imported/tiny_isometric_room_4.jpg-22f171ba273582a05e2d750662043151.etc2.ctex"]
+
+[params]
+
+compress/mode=2
+compress/high_quality=false
+compress/lossy_quality=0.7
+compress/uastc_level=0
+compress/rdo_quality_loss=0.0
+compress/hdr_compression=1
+compress/normal_map=0
+compress/channel_pack=0
+mipmaps/generate=true
+mipmaps/limit=-1
+roughness/mode=0
+roughness/src_normal=""
+process/channel_remap/red=0
+process/channel_remap/green=1
+process/channel_remap/blue=2
+process/channel_remap/alpha=3
+process/fix_alpha_border=true
+process/premult_alpha=false
+process/normal_map_invert_y=false
+process/hdr_as_srgb=false
+process/hdr_clamp_exposure=false
+process/size_limit=0
+detect_3d/compress_to=0

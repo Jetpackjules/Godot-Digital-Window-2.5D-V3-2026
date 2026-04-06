@@ -112,7 +112,7 @@ body {
 
 		<script src="2.5D window V3.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"2.5D window V3","experimentalVK":false,"fileSizes":{"2.5D window V3.pck":317296,"2.5D window V3.wasm":37685705},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"2.5D window V3.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"2.5D window V3","experimentalVK":false,"fileSizes":{"2.5D window V3.pck":228637720,"2.5D window V3.wasm":35749181},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"2.5D window V3.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -259,8 +259,7 @@ const engine = new Engine(GODOT_CONFIG);
                     window.enableWakeLock();
                 }
             });
-
-            ['click', 'touchend', 'keydown'].forEach(function (eventName) {
+'].forEach(function (eventName) {
                 window.addEventListener(eventName, function () {
                     window.enableWakeLock();
                 }, { passive: true });
@@ -268,6 +267,45 @@ const engine = new Engine(GODOT_CONFIG);
 
             window.addEventListener('load', function () {
                 window.enableWakeLock();
+            });
+        </script>
+        
+
+        <script>
+            // Best-effort fullscreen helper. Browsers usually require a user gesture,
+            // so we try on load and then retry on the first interaction.
+            window.__godotFullscreenAttempted = false;
+            window.enableGodotFullscreen = async function () {
+                if (window.__godotFullscreenAttempted && document.fullscreenElement) {
+                    return true;
+                }
+                var target = document.getElementById('canvas') || document.documentElement;
+                if (!target || document.fullscreenElement) {
+                    return !!document.fullscreenElement;
+                }
+                window.__godotFullscreenAttempted = true;
+                try {
+                    if (target.requestFullscreen) {
+                        await target.requestFullscreen();
+                        return true;
+                    }
+                } catch (err) {
+                    return false;
+                }
+                return false;
+            };
+
+            window.addEventListener('load', function () {
+                window.enableGodotFullscreen();
+            });
+
+            ['click', 'touchend', 'keydown'].forEach(function (eventName) {
+                window.addEventListener(eventName, function tryFullscreenOnce() {
+                    window.enableGodotFullscreen();
+                    if (document.fullscreenElement) {
+                        window.removeEventListener(eventName, tryFullscreenOnce);
+                    }
+                }, { passive: true });
             });
         </script>
         
