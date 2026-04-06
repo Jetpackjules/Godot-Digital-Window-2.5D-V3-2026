@@ -65,6 +65,7 @@ var _raw_z: float = 0.0
 
 var debugging: bool = false
 var debug_canvas: CanvasLayer
+var debug_preview_container: SubViewportContainer
 var debug_preview_viewport: SubViewport
 var debug_cam: Camera3D
 var head_dot: MeshInstance3D
@@ -72,6 +73,8 @@ var tracker_camera_dot: MeshInstance3D
 var tracker_camera_cone: MeshInstance3D
 var diagnostics_label: Label
 var debug_preview_coords_label: Label
+var debug_preview_head_hint_label: Label
+var debug_preview_camera_hint_label: Label
 var calibration_ui_panel: PanelContainer
 var aruco_canvas: CanvasLayer
 
@@ -117,6 +120,7 @@ const VIEWER_POSE_SNAP_DISTANCE := 0.05
 const VIEWER_POSE_LOW_POWER_APPLY_INTERVAL_SEC := 1.0 / 45.0
 const VIEWER_POSE_LOW_POWER_INTERPOLATION_RATE := 16.0
 const VIEWER_POSE_LOW_POWER_REMOTE_TIMEOUT_SEC := 0.25
+const RESOLVED_HEAD_POSE_TIMEOUT_SEC := 0.25
 
 enum SetupState {
 	BOOTING,
@@ -156,6 +160,11 @@ var _main_screen_basis: Basis = Basis.IDENTITY
 var _tracking_reference_active: bool = false
 var _tracking_reference_origin_screen: String = ""
 var _tracking_reference_transform: Transform3D = Transform3D.IDENTITY
+var _resolved_head_pose_active: bool = false
+var _resolved_head_pose_origin_screen: String = ""
+var _resolved_head_position: Vector3 = Vector3.ZERO
+var _resolved_head_camera_transform: Transform3D = Transform3D.IDENTITY
+var _last_resolved_head_pose_msec: int = 0
 var _layout_anchor_initialized: bool = false
 var _layout_anchor_window_local_transform: Transform3D = Transform3D.IDENTITY
 var _default_window_local_transform: Transform3D = Transform3D.IDENTITY
@@ -781,6 +790,7 @@ func _setup_debug_view():
 	container.position = Vector2(20, 20)
 	debug_canvas.add_child(bg)
 	debug_canvas.add_child(container)
+	debug_preview_container = container
 	
 	var vp = SubViewport.new()
 	vp.size = Vector2i(360, 360)
@@ -801,11 +811,15 @@ func _setup_debug_view():
 	
 	head_dot = MeshInstance3D.new()
 	var sphere = SphereMesh.new()
-	sphere.radius = 0.025 # 5 cm diameter debug marker
-	sphere.height = 0.05
+	sphere.radius = 0.25
+	sphere.height = 0.5
 	var mat = StandardMaterial3D.new()
 	mat.albedo_color = Color.RED
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.15, 0.15, 1.0)
+	mat.emission_energy_multiplier = 2.5
 	sphere.material = mat
 	head_dot.mesh = sphere
 	head_dot.visible = show_debug_view
@@ -813,11 +827,15 @@ func _setup_debug_view():
 
 	tracker_camera_dot = MeshInstance3D.new()
 	var tracker_sphere = SphereMesh.new()
-	tracker_sphere.radius = 0.03
-	tracker_sphere.height = 0.06
+	tracker_sphere.radius = 0.12
+	tracker_sphere.height = 0.24
 	var tracker_dot_material = StandardMaterial3D.new()
 	tracker_dot_material.albedo_color = Color(0.15, 0.75, 1.0, 1.0)
 	tracker_dot_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	tracker_dot_material.no_depth_test = true
+	tracker_dot_material.emission_enabled = true
+	tracker_dot_material.emission = Color(0.15, 0.85, 1.0, 1.0)
+	tracker_dot_material.emission_energy_multiplier = 2.5
 	tracker_sphere.material = tracker_dot_material
 	tracker_camera_dot.mesh = tracker_sphere
 	tracker_camera_dot.visible = show_debug_view
@@ -825,11 +843,14 @@ func _setup_debug_view():
 
 	tracker_camera_cone = MeshInstance3D.new()
 	var cone_material = StandardMaterial3D.new()
-	cone_material.albedo_color = Color(0.15, 0.75, 1.0, 0.30)
+	cone_material.albedo_color = Color(0.15, 0.75, 1.0, 0.45)
 	cone_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	cone_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	cone_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	cone_material.no_depth_test = true
+	cone_material.emission_enabled = true
+	cone_material.emission = Color(0.15, 0.85, 1.0, 1.0)
+	cone_material.emission_energy_multiplier = 1.25
 	tracker_camera_cone.material_override = cone_material
 	tracker_camera_cone.visible = show_debug_view
 	vp.add_child(tracker_camera_cone)
@@ -853,6 +874,24 @@ func _setup_debug_view():
 	debug_preview_coords_label.add_theme_constant_override("outline_size", 4)
 	debug_preview_coords_label.visible = false
 	debug_canvas.add_child(debug_preview_coords_label)
+
+	debug_preview_head_hint_label = Label.new()
+	debug_preview_head_hint_label.custom_minimum_size = Vector2(180.0, 0.0)
+	debug_preview_head_hint_label.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
+	debug_preview_head_hint_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	debug_preview_head_hint_label.add_theme_font_size_override("font_size", 14)
+	debug_preview_head_hint_label.add_theme_constant_override("outline_size", 4)
+	debug_preview_head_hint_label.visible = false
+	debug_canvas.add_child(debug_preview_head_hint_label)
+
+	debug_preview_camera_hint_label = Label.new()
+	debug_preview_camera_hint_label.custom_minimum_size = Vector2(180.0, 0.0)
+	debug_preview_camera_hint_label.add_theme_color_override("font_color", Color(0.2, 0.85, 1.0, 1.0))
+	debug_preview_camera_hint_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	debug_preview_camera_hint_label.add_theme_font_size_override("font_size", 14)
+	debug_preview_camera_hint_label.add_theme_constant_override("outline_size", 4)
+	debug_preview_camera_hint_label.visible = false
+	debug_canvas.add_child(debug_preview_camera_hint_label)
 
 func _tracking_reference_matches_origin() -> bool:
 	return (
@@ -891,22 +930,36 @@ func _tracking_offset_in_aligned_camera_frame(screen_space_offset: Vector3) -> V
 func _get_tracking_reference_global_transform() -> Transform3D:
 	var reference_origin := Vector3.ZERO
 	var reference_basis := Basis.IDENTITY
-	if _has_main_screen_reference:
-		reference_origin = _main_screen_position
-		reference_basis = _main_screen_basis.orthonormalized()
-	elif window_center:
+	if window_center:
 		reference_origin = window_center.global_position
 		reference_basis = window_center.global_transform.basis.orthonormalized()
 	elif player_node:
 		reference_origin = player_node.global_position
 		reference_basis = player_node.global_transform.basis.orthonormalized()
+	elif _has_main_screen_reference:
+		reference_origin = _main_screen_position
+		reference_basis = _main_screen_basis.orthonormalized()
 
 	return Transform3D(reference_basis, reference_origin)
+
+func _get_resolved_head_global_position() -> Vector3:
+	var reference_transform = _get_tracking_reference_global_transform()
+	return reference_transform.origin + (reference_transform.basis * _resolved_head_position)
+
+func _get_resolved_head_camera_global_transform() -> Transform3D:
+	var reference_transform = _get_tracking_reference_global_transform()
+	return Transform3D(
+		(reference_transform.basis * _resolved_head_camera_transform.basis).orthonormalized(),
+		reference_transform.origin + (reference_transform.basis * _resolved_head_camera_transform.origin)
+	)
 
 func _get_tracking_camera_global_transform() -> Transform3D:
 	var reference_transform = _get_tracking_reference_global_transform()
 	var reference_origin = reference_transform.origin
 	var reference_basis = reference_transform.basis
+
+	if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin():
+		return _get_resolved_head_camera_global_transform()
 
 	if _tracking_reference_active and _tracking_reference_matches_origin():
 		return Transform3D(
@@ -919,37 +972,50 @@ func _get_tracking_camera_global_transform() -> Transform3D:
 func _build_debug_preview_cone_mesh(horizontal_fov_rad: float) -> ImmediateMesh:
 	var cone_distance = maxf(0.2, debug_preview_cone_distance_meters)
 	var clamped_fov = clampf(horizontal_fov_rad, deg_to_rad(5.0), deg_to_rad(170.0))
-	var half_width = maxf(0.04, tan(clamped_fov * 0.5) * cone_distance)
+	var base_radius = maxf(0.08, tan(clamped_fov * 0.5) * cone_distance)
 	var mesh := ImmediateMesh.new()
+	var segments := 18
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	mesh.surface_add_vertex(Vector3(0.0, 0.0, 0.0))
-	mesh.surface_add_vertex(Vector3(-half_width, 0.0, cone_distance))
-	mesh.surface_add_vertex(Vector3(half_width, 0.0, cone_distance))
+	for i in range(segments):
+		var a0 = TAU * float(i) / float(segments)
+		var a1 = TAU * float(i + 1) / float(segments)
+		var b0 = Vector3(cos(a0) * base_radius, sin(a0) * base_radius, cone_distance)
+		var b1 = Vector3(cos(a1) * base_radius, sin(a1) * base_radius, cone_distance)
+		mesh.surface_add_vertex(Vector3.ZERO)
+		mesh.surface_add_vertex(b0)
+		mesh.surface_add_vertex(b1)
 	mesh.surface_end()
 	return mesh
 
 func _update_debug_preview_camera_gizmos() -> void:
 	if head_dot:
 		head_dot.visible = camera_node != null
-		if camera_node:
+		if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin():
+			head_dot.global_position = _get_resolved_head_global_position()
+		elif camera_node:
 			head_dot.global_position = camera_node.global_position
 	if not tracker_camera_dot or not tracker_camera_cone:
 		return
 
 	var tracker_transform = _get_tracking_camera_global_transform()
-	tracker_camera_dot.global_position = tracker_transform.origin + Vector3(0.0, 0.03, 0.0)
+	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin() else (camera_node.global_position if camera_node else tracker_transform.origin)
+	tracker_camera_dot.global_position = tracker_transform.origin + Vector3(0.0, 0.06, 0.0)
 	tracker_camera_cone.mesh = _build_debug_preview_cone_mesh(deg_to_rad(90.0))
+	var cone_basis = (tracker_transform.basis.orthonormalized() * Basis(Vector3.RIGHT, -PI * 0.5)).orthonormalized()
+	var cone_offset = tracker_transform.basis.orthonormalized() * Vector3(0.0, 0.0, debug_preview_cone_distance_meters * 0.5)
 	tracker_camera_cone.global_transform = Transform3D(
-		tracker_transform.basis.orthonormalized(),
-		tracker_transform.origin + Vector3(0.0, 0.03, 0.0)
+		cone_basis,
+		tracker_transform.origin + cone_offset
 	)
 	_update_debug_preview_scene_camera(tracker_transform)
 	_update_debug_preview_coords_label(tracker_transform)
+	_update_debug_preview_offscreen_hint(debug_preview_head_hint_label, "HEAD", head_pos, Color(1.0, 0.3, 0.3, 1.0))
+	_update_debug_preview_offscreen_hint(debug_preview_camera_hint_label, "CAM", tracker_transform.origin, Color(0.2, 0.85, 1.0, 1.0))
 
 func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 	if not debug_cam:
 		return
-	var head_pos = camera_node.global_position if camera_node else tracker_transform.origin
+	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin() else (camera_node.global_position if camera_node else tracker_transform.origin)
 	var focus = (tracker_transform.origin + head_pos) * 0.5
 	var separation = maxf(2.5, tracker_transform.origin.distance_to(head_pos))
 	var distance = clampf(debug_preview_camera_distance + (separation * 0.35), debug_preview_min_size, debug_preview_max_size)
@@ -960,12 +1026,55 @@ func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 func _update_debug_preview_coords_label(tracker_transform: Transform3D) -> void:
 	if not debug_preview_coords_label:
 		return
-	var head_pos = camera_node.global_position if camera_node else Vector3.ZERO
+	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin() else (camera_node.global_position if camera_node else Vector3.ZERO)
 	var cam_pos = tracker_transform.origin
-	debug_preview_coords_label.text = "Cam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f" % [
+	var cam_pos_py = _position_to_python_room_units(cam_pos)
+	var head_pos_py = _position_to_python_room_units(head_pos)
+	debug_preview_coords_label.text = "Cam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f\nPyCam: X %.2f  Y %.2f  Z %.2f\nPyHead: X %.2f  Y %.2f  Z %.2f" % [
 		cam_pos.x, cam_pos.y, cam_pos.z,
-		head_pos.x, head_pos.y, head_pos.z
+		head_pos.x, head_pos.y, head_pos.z,
+		cam_pos_py.x, cam_pos_py.y, cam_pos_py.z,
+		head_pos_py.x, head_pos_py.y, head_pos_py.z
 	]
+
+func _offscreen_direction_arrow(local_pos: Vector3) -> String:
+	var x = local_pos.x
+	var y = -local_pos.y
+	if abs(x) < 0.001 and abs(y) < 0.001:
+		return "•"
+	if abs(x) > abs(y) * 1.5:
+		return "→" if x > 0.0 else "←"
+	if abs(y) > abs(x) * 1.5:
+		return "↑" if y > 0.0 else "↓"
+	if x > 0.0 and y > 0.0:
+		return "↗"
+	if x > 0.0 and y <= 0.0:
+		return "↘"
+	if x <= 0.0 and y > 0.0:
+		return "↖"
+	return "↙"
+
+func _update_debug_preview_offscreen_hint(label: Label, prefix: String, world_pos: Vector3, color: Color) -> void:
+	if not label or not debug_cam or not debug_preview_container or not debug_preview_viewport:
+		return
+	var vp_size = Vector2(debug_preview_viewport.size)
+	var projected = debug_cam.unproject_position(world_pos)
+	var behind = debug_cam.is_position_behind(world_pos)
+	var inside = not behind and projected.x >= 0.0 and projected.y >= 0.0 and projected.x <= vp_size.x and projected.y <= vp_size.y
+	if inside:
+		label.visible = false
+		return
+
+	var local_pos = debug_cam.to_local(world_pos)
+	var arrow = "⤢" if behind else _offscreen_direction_arrow(local_pos)
+	var meters_away = debug_cam.global_position.distance_to(world_pos)
+	label.text = "%s %s %.2fm" % [prefix, arrow, meters_away]
+	label.position = Vector2(
+		debug_preview_container.position.x + 8.0,
+		debug_preview_container.position.y + 8.0 if prefix == "HEAD" else debug_preview_container.position.y + 28.0
+	)
+	label.modulate = color
+	label.visible = true
 
 func _rebuild_preset_dropdown():
 	if preset_dropdown:
@@ -1513,6 +1622,7 @@ func _clear_tracking_reference() -> void:
 	_tracking_reference_active = false
 	_tracking_reference_origin_screen = ""
 	_tracking_reference_transform = Transform3D.IDENTITY
+	_clear_resolved_head_pose()
 
 func _set_tracking_reference_from_payload(payload: Variant) -> void:
 	if payload is Dictionary and payload.has("R") and payload.has("T"):
@@ -1521,6 +1631,56 @@ func _set_tracking_reference_from_payload(payload: Variant) -> void:
 		_tracking_reference_transform = _transform_from_layout_payload(payload)
 	else:
 		_clear_tracking_reference()
+
+func _clear_resolved_head_pose() -> void:
+	_resolved_head_pose_active = false
+	_resolved_head_pose_origin_screen = ""
+	_resolved_head_position = Vector3.ZERO
+	_resolved_head_camera_transform = Transform3D.IDENTITY
+	_last_resolved_head_pose_msec = 0
+
+func _position_from_inch_world_payload(value: Variant) -> Vector3:
+	if value is Array and value.size() >= 3:
+		return Vector3(
+			float(value[0]) * 0.0254,
+			-float(value[1]) * 0.0254,
+			-float(value[2]) * 0.0254
+		)
+	return Vector3.ZERO
+
+func _position_to_python_room_units(value: Vector3) -> Vector3:
+	var meters_to_inches := 1.0 / 0.0254
+	return Vector3(
+		value.x * meters_to_inches,
+		-value.y * meters_to_inches,
+		-value.z * meters_to_inches
+	)
+
+func _resolved_head_pose_is_fresh() -> bool:
+	if not _resolved_head_pose_active or _last_resolved_head_pose_msec <= 0:
+		return false
+	return Time.get_ticks_msec() - _last_resolved_head_pose_msec <= int(RESOLVED_HEAD_POSE_TIMEOUT_SEC * 1000.0)
+
+func _resolved_head_pose_matches_origin() -> bool:
+	return (
+		_resolved_head_pose_origin_screen == ""
+		or _main_screen_id == ""
+		or _resolved_head_pose_origin_screen == _main_screen_id
+	)
+
+func _set_resolved_head_pose_from_payload(payload: Dictionary) -> void:
+	if not payload.has("head_T"):
+		_clear_resolved_head_pose()
+		return
+	_resolved_head_pose_active = true
+	_resolved_head_pose_origin_screen = _normalize_screen_id(payload.get("origin_screen", ""))
+	_resolved_head_position = _position_from_inch_world_payload(payload["head_T"])
+	if payload.has("camera_R") and payload.has("camera_T"):
+		_resolved_head_camera_transform = _transform_from_layout_payload({
+			"R": payload["camera_R"],
+			"T": payload["camera_T"],
+		})
+	_last_resolved_head_pose_msec = Time.get_ticks_msec()
 
 func _build_diagnostics_text() -> String:
 	var now_msec = Time.get_ticks_msec()
@@ -1699,6 +1859,10 @@ func _apply_global_ui_visibility() -> void:
 		tracker_camera_cone.visible = show_debug_overlay
 	if debug_preview_coords_label:
 		debug_preview_coords_label.visible = show_debug_overlay
+	if debug_preview_head_hint_label:
+		debug_preview_head_hint_label.visible = show_debug_overlay and debug_preview_head_hint_label.visible
+	if debug_preview_camera_hint_label:
+		debug_preview_camera_hint_label.visible = show_debug_overlay and debug_preview_camera_hint_label.visible
 
 func _advance_tab_ui_mode() -> void:
 	_tab_ui_mode = (_tab_ui_mode + 1) % 3
@@ -2507,14 +2671,24 @@ func _process(_delta):
 					elif msg_type == "scan_status":
 						_handle_scan_status(data)
 
+					elif msg_type == "resolved_head_pose":
+						_set_resolved_head_pose_from_payload(data)
+
 					elif msg_type == "viewer_pose":
 						_handle_viewer_pose(data)
 						
 					elif msg_type == "tracking":
-						_raw_x = data.get("x", 0.0)
-						_raw_y = data.get("y", 0.0)
-						_raw_z = data.get("z", 0.0)
-						_has_live_tracking_data = true
+						var tracking_active := bool(data.get("active", true))
+						if tracking_active:
+							_raw_x = data.get("x", 0.0)
+							_raw_y = data.get("y", 0.0)
+							_raw_z = data.get("z", 0.0)
+							_has_live_tracking_data = true
+						else:
+							_raw_x = 0.0
+							_raw_y = 0.0
+							_raw_z = 0.0
+							_has_live_tracking_data = false
 						_tracking_rx_counter += 1
 						has_new_data = true
 						
@@ -2704,8 +2878,12 @@ func _process(_delta):
 		_update_debug_preview_camera_gizmos()
 
 func _apply_tracking_data():
-	# The first time we successfully get a real tracking packet:
-	if _has_live_tracking_data and not _face_detected:
+	var resolved_head_live := _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin()
+	var tracking_reference_matches_origin = _tracking_reference_matches_origin()
+	var use_python_resolved_head := _tracking_reference_active and tracking_reference_matches_origin and resolved_head_live
+	# In calibrated/off-axis mode, Python's resolved room-space head pose is the
+	# authority. Outside that mode, keep using the old local live-tracking path.
+	if ((use_python_resolved_head or (_has_live_tracking_data and not _tracking_reference_active)) and not _face_detected):
 		_face_detected = true
 		if player_node:
 			# Hide the player's physical capsule body so it doesn't block the screen, 
@@ -2717,12 +2895,15 @@ func _apply_tracking_data():
 	if camera_node and window_center and screen_scaler:
 		var mult = screen_scaler.tracking_scale_multiplier
 		var screen_space_tracking_offset = _screen_space_tracking_offset(mult)
-		var tracking_reference_matches_origin = _tracking_reference_matches_origin()
-		if _has_live_tracking_data and _tracking_reference_active and tracking_reference_matches_origin:
-			var reference_transform = _get_tracking_reference_global_transform()
-			var aligned_camera_offset = _tracking_offset_in_aligned_camera_frame(screen_space_tracking_offset)
-			var tracker_local_offset = _tracking_reference_transform.origin + (_tracking_alignment_basis(_tracking_reference_transform.basis) * aligned_camera_offset)
-			camera_node.global_position = reference_transform.origin + (reference_transform.basis * tracker_local_offset)
+		if _tracking_reference_active and tracking_reference_matches_origin:
+			if use_python_resolved_head:
+				camera_node.global_position = _get_resolved_head_global_position()
+			else:
+				var final_local_offset = Vector3.ZERO
+				final_local_offset.z += default_viewer_distance_meters * mult
+				var reference_pos = player_node.global_position if player_node else window_center.global_position
+				var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
+				camera_node.global_position = reference_pos + (reference_basis * final_local_offset)
 		else:
 			var final_local_offset = screen_space_tracking_offset
 			# Keep a persistent baseline eye distance in front of the screen so neutral

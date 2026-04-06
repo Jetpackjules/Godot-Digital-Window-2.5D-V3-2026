@@ -46,8 +46,10 @@ METERS_TO_WORLD_UNITS = 39.37007874015748
 CM_TO_WORLD_UNITS = 0.3937007874015748
 TRACKING_POSE_TIMEOUT_SEC = 0.5
 TRACKING_DEFAULT_HEAD_DISTANCE = DEFAULT_VIEWER_DISTANCE_METERS * METERS_TO_WORLD_UNITS
+TRACKER_CAMERA_POSE_SEND_INTERVAL_SEC = 0.1
+RESOLVED_HEAD_POSE_SEND_INTERVAL_SEC = 1.0 / 60.0
 TRACKING_INVERT_X = True
-TRACKING_INVERT_Y = False
+TRACKING_INVERT_Y = True
 TRACKING_INVERT_Z = False
 TRACKING_INVERT_ROLL = True
 TRACKING_FORWARD_FLIP = True
@@ -487,6 +489,7 @@ def main():
     last_status_time = 0.0
     last_layout_send_time = 0.0
     last_tracker_pose_send_time = 0.0
+    last_resolved_head_pose_send_time = 0.0
     cap = None
     camera_paused = False
     active_capture_width = 0
@@ -553,6 +556,20 @@ def main():
         }
         send_udp_json(payload)
         last_tracker_pose_send_time = time.time()
+
+    def broadcast_resolved_head_pose(camera_transform, head_position):
+        nonlocal last_resolved_head_pose_send_time
+        if global_origin_id is None or camera_transform is None or head_position is None:
+            return
+        payload = {
+            "type": "resolved_head_pose",
+            "origin_screen": int(global_origin_id),
+            "camera_R": camera_transform[:3, :3].tolist(),
+            "camera_T": camera_transform[:3, 3].tolist(),
+            "head_T": [float(head_position[0]), float(head_position[1]), float(head_position[2])],
+        }
+        send_udp_json(payload)
+        last_resolved_head_pose_send_time = time.time()
 
     def reset_spatial_map():
         nonlocal global_origin_id, smoothed_T_cam
@@ -852,15 +869,19 @@ def main():
                         locked_tracking_reference = None
                         locked_tracking_reference_origin = ""
                 elif cmd_type == "live_tracking_pose":
-                    latest_live_tracking_pose = {
-                        "x": float(cmd_json.get("x", 0.0)),
-                        "y": float(cmd_json.get("y", 0.0)),
-                        "z": float(cmd_json.get("z", 0.0)),
-                        "yaw": float(cmd_json.get("yaw", 0.0)),
-                        "pitch": float(cmd_json.get("pitch", 0.0)),
-                        "roll": float(cmd_json.get("roll", 0.0)),
-                    }
-                    latest_live_tracking_time = time.time()
+                    if bool(cmd_json.get("active", True)):
+                        latest_live_tracking_pose = {
+                            "x": float(cmd_json.get("x", 0.0)),
+                            "y": float(cmd_json.get("y", 0.0)),
+                            "z": float(cmd_json.get("z", 0.0)),
+                            "yaw": float(cmd_json.get("yaw", 0.0)),
+                            "pitch": float(cmd_json.get("pitch", 0.0)),
+                            "roll": float(cmd_json.get("roll", 0.0)),
+                        }
+                        latest_live_tracking_time = time.time()
+                    else:
+                        latest_live_tracking_pose = None
+                        latest_live_tracking_time = 0.0
         except BlockingIOError:
             pass
         except Exception as exc:
@@ -1394,7 +1415,10 @@ def main():
         visible_ids = [s["screen_id"] for s in current_frame_screens]
         visible_anchor_ids = [a["anchor_id"] for a in current_frame_anchors]
 
-        if T_origin_to_cam is not None and time.time() - last_tracker_pose_send_time > 0.1:
+        if (
+            T_origin_to_cam is not None
+            and time.time() - last_tracker_pose_send_time > TRACKER_CAMERA_POSE_SEND_INTERVAL_SEC
+        ):
             broadcast_tracker_camera_pose(T_origin_to_cam)
 
         if camera_paused or cap is None:
@@ -1485,6 +1509,13 @@ def main():
             forward_norm = float(np.linalg.norm(debug_head_forward))
             if forward_norm > 1e-6:
                 debug_head_forward = (debug_head_forward / forward_norm).astype(np.float32)
+
+        if (
+            tracker_camera_debug_transform is not None
+            and debug_head_position is not None
+            and (time.time() - last_resolved_head_pose_send_time) > RESOLVED_HEAD_POSE_SEND_INTERVAL_SEC
+        ):
+            broadcast_resolved_head_pose(tracker_camera_debug_transform, debug_head_position)
 
         room_map = np.zeros((800, 800, 3), dtype=np.uint8)
         

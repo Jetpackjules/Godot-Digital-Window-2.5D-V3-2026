@@ -46,6 +46,8 @@ latest_tracker_camera_pose = None
 latest_tracker_camera_pose_time = 0.0
 locked_tracking_reference = None
 tracker_command_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+TRACKING_ACTIVE_POSITION_EPS_CM = 0.05
+TRACKING_ACTIVE_ROTATION_EPS_DEG = 0.05
 
 
 def broadcast_json(payload: dict) -> None:
@@ -351,9 +353,18 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
         # 2. OpenTrack sends 48 bytes (6 doubles: X, Y, Z, Yaw, Pitch, Roll)
         if len(data) >= 48:
             unpacked_data = struct.unpack('dddddd', data[:48])
+            tracking_active = (
+                abs(unpacked_data[0]) > TRACKING_ACTIVE_POSITION_EPS_CM
+                or abs(unpacked_data[1]) > TRACKING_ACTIVE_POSITION_EPS_CM
+                or abs(unpacked_data[2]) > TRACKING_ACTIVE_POSITION_EPS_CM
+                or abs(unpacked_data[3]) > TRACKING_ACTIVE_ROTATION_EPS_DEG
+                or abs(unpacked_data[4]) > TRACKING_ACTIVE_ROTATION_EPS_DEG
+                or abs(unpacked_data[5]) > TRACKING_ACTIVE_ROTATION_EPS_DEG
+            )
             send_tracker_command(
                 {
                     "type": "live_tracking_pose",
+                    "active": tracking_active,
                     "x": unpacked_data[0],
                     "y": unpacked_data[1],
                     "z": unpacked_data[2],
@@ -363,10 +374,11 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
                 }
             )
             # Broadcast the tracking data ONLY if clients are actually listening
-            print(f"OT Data received! Z={unpacked_data[2]} cm")
+            print(f"OT Data received! active={tracking_active} Z={unpacked_data[2]} cm")
             if connected_clients:
                 tracking_payload = json.dumps({
                     "type": "tracking",
+                    "active": tracking_active,
                     "x": unpacked_data[0],
                     "y": unpacked_data[1],
                     "z": unpacked_data[2],
