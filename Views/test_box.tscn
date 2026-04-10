@@ -29,7 +29,7 @@ text = "58.5x"
 font_size = 9
 
 [node name="Box" type="MeshInstance3D" unique_id=666923875]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.165)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.164)
 mesh = SubResource("BoxMesh_rjuhk")
 
 [node name="Cube" type="MeshInstance3D" parent="." unique_id=61684400]
@@ -70,3 +70,7 @@ mesh = SubResource("TextMesh_fos0i")
 
 [node name="Dancing3" parent="." unique_id=1605361915 instance=ExtResource("2_rdhwt")]
 transform = Transform3D(0.125, 0, 0, 0, 0.125, 0, 0, 0, 0.125, 0, -0.16363525, 0.07739258)
+
+[node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=349948758]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.17492676)
+light_energy = 0.065

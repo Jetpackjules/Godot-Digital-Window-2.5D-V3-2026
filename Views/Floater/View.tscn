@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://cljj08a2kg0dm"]
+
+[ext_resource type="PackedScene" uid="uid://csk2i7juk34go" path="res://Views/stab/bouche_a_levres.glb" id="1_ng4wa"]
+
+[node name="Floater" type="Node3D" unique_id=1645805246]
+
+[node name="Sketchfab_Scene" parent="." unique_id=1998860256 instance=ExtResource("1_ng4wa")]
+transform = Transform3D(0.0064840047, 0, -0.064675786, 0, 0.065, 0, 0.064675786, 0, 0.0064840047, 0.022980593, -0.006818056, 0)

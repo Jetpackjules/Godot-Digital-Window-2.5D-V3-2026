@@ -989,6 +989,7 @@ blend_shape_mode = 0
 shadow_mesh = SubResource("ArrayMesh_jwrpo")
 
 [node name="Isometric Room(s)" type="Node3D" unique_id=494020146]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.035, -0.206)
 
 [node name="Small Room" type="Node3D" parent="." unique_id=875736235]
 transform = Transform3D(0.001, 0, 0, 0, -4.371139e-11, 0.001, 0, -0.001, -4.371139e-11, 0.0068641603, -0.12885189, -0.091068834)

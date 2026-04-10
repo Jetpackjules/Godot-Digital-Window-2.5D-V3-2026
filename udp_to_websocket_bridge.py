@@ -148,6 +148,8 @@ def freeze_tracking_reference():
         "R": latest_tracker_camera_pose.get("R"),
         "T": latest_tracker_camera_pose.get("T"),
     }
+    if "canonical_y_up" in latest_tracker_camera_pose:
+        frozen["canonical_y_up"] = latest_tracker_camera_pose.get("canonical_y_up")
     logger.info("Frozen tracker camera reference at scan lock for origin screen %s.", frozen.get("origin_screen"))
     return frozen
 

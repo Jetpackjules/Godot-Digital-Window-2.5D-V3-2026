@@ -53,6 +53,10 @@ TRACKING_INVERT_Y = True
 TRACKING_INVERT_Z = False
 TRACKING_INVERT_ROLL = True
 TRACKING_FORWARD_FLIP = True
+ROOM_MAP_FLIP_LIVE_CALIBRATION_CAMERA_Y = True
+CANONICAL_Y_UP_PAYLOADS = True
+Y_UP_FRAME_FLIP_4 = np.diag([1.0, -1.0, 1.0, 1.0]).astype(np.float32)
+Y_UP_FRAME_FLIP_3 = np.diag([1.0, -1.0, 1.0]).astype(np.float32)
 SUBPIX_WIN_SIZE = (5, 5)
 SUBPIX_ZERO_ZONE = (-1, -1)
 SUBPIX_CRITERIA = (
@@ -144,6 +148,16 @@ def create_transform_matrix(rvec, tvec):
     T[:3, 3] = tvec.flatten()
     return T
 
+def canonicalize_y_up_transform(transform):
+    return (Y_UP_FRAME_FLIP_4 @ transform.astype(np.float32) @ Y_UP_FRAME_FLIP_4).astype(np.float32)
+
+def decanonicalize_y_up_transform(transform):
+    # The Y-up conversion is self-inverse.
+    return canonicalize_y_up_transform(transform)
+
+def canonicalize_y_up_position(position):
+    return (Y_UP_FRAME_FLIP_3 @ np.asarray(position, dtype=np.float32)).astype(np.float32)
+
 def transform_from_payload(payload):
     if not isinstance(payload, dict):
         return None
@@ -155,6 +169,8 @@ def transform_from_payload(payload):
         transform = np.eye(4, dtype=np.float32)
         transform[:3, :3] = np.array(r_rows, dtype=np.float32)
         transform[:3, 3] = np.array(t_vals, dtype=np.float32)
+        if bool(payload.get("canonical_y_up", False)):
+            transform = decanonicalize_y_up_transform(transform)
         return transform
     except Exception:
         return None
@@ -548,12 +564,15 @@ def main():
         nonlocal last_tracker_pose_send_time
         if global_origin_id is None or T_origin_to_cam is None:
             return
+        payload_transform = canonicalize_y_up_transform(T_origin_to_cam) if CANONICAL_Y_UP_PAYLOADS else T_origin_to_cam
         payload = {
             "type": "tracker_camera_pose",
             "origin_screen": int(global_origin_id),
-            "R": T_origin_to_cam[:3, :3].tolist(),
-            "T": T_origin_to_cam[:3, 3].tolist(),
+            "R": payload_transform[:3, :3].tolist(),
+            "T": payload_transform[:3, 3].tolist(),
         }
+        if CANONICAL_Y_UP_PAYLOADS:
+            payload["canonical_y_up"] = True
         send_udp_json(payload)
         last_tracker_pose_send_time = time.time()
 
@@ -561,13 +580,17 @@ def main():
         nonlocal last_resolved_head_pose_send_time
         if global_origin_id is None or camera_transform is None or head_position is None:
             return
+        payload_camera_transform = canonicalize_y_up_transform(camera_transform) if CANONICAL_Y_UP_PAYLOADS else camera_transform
+        payload_head_position = canonicalize_y_up_position(head_position) if CANONICAL_Y_UP_PAYLOADS else np.asarray(head_position, dtype=np.float32)
         payload = {
             "type": "resolved_head_pose",
             "origin_screen": int(global_origin_id),
-            "camera_R": camera_transform[:3, :3].tolist(),
-            "camera_T": camera_transform[:3, 3].tolist(),
-            "head_T": [float(head_position[0]), float(head_position[1]), float(head_position[2])],
+            "camera_R": payload_camera_transform[:3, :3].tolist(),
+            "camera_T": payload_camera_transform[:3, 3].tolist(),
+            "head_T": [float(payload_head_position[0]), float(payload_head_position[1]), float(payload_head_position[2])],
         }
+        if CANONICAL_Y_UP_PAYLOADS:
+            payload["canonical_y_up"] = True
         send_udp_json(payload)
         last_resolved_head_pose_send_time = time.time()
 
@@ -1535,9 +1558,75 @@ def main():
         ])
         R_view = Rx @ Ry
         T_view = np.array([view_pan_x, view_pan_y, view_dist])
+
+        def room_map_display_point(pt):
+            arr = np.array(pt, dtype=np.float32).copy()
+            if ROOM_MAP_FLIP_LIVE_CALIBRATION_CAMERA_Y:
+                arr[1] *= -1.0
+            return arr
+
+        def room_map_display_vector(vec):
+            arr = np.array(vec, dtype=np.float32).copy()
+            if ROOM_MAP_FLIP_LIVE_CALIBRATION_CAMERA_Y:
+                arr[1] *= -1.0
+            return arr
+
+        def room_map_display_transform(transform):
+            if transform is None:
+                return None
+            if not ROOM_MAP_FLIP_LIVE_CALIBRATION_CAMERA_Y:
+                return transform
+            room_map_y_flip = np.eye(4, dtype=np.float32)
+            room_map_y_flip[1, 1] = -1.0
+            return room_map_y_flip @ transform
+
+        room_map_head_position = None
+        room_map_head_forward = None
+        tracker_camera_room_map_transform = room_map_display_transform(tracker_camera_debug_transform)
+        if debug_head_position is not None and debug_head_forward is not None:
+            room_map_head_position = room_map_display_point(debug_head_position)
+            room_map_head_forward = room_map_display_vector(debug_head_forward)
+
+            if (
+                latest_live_tracking_pose is not None
+                and (time.time() - latest_live_tracking_time) <= TRACKING_POSE_TIMEOUT_SEC
+                and tracker_camera_room_map_transform is not None
+                and scan_locked_state
+            ):
+                origin_matches = (
+                    locked_tracking_reference is not None
+                    and (
+                        locked_tracking_reference_origin == ""
+                        or locked_tracking_reference_origin == normalize_screen_id(global_origin_id)
+                    )
+                )
+                if origin_matches:
+                    tracking_offset = np.array(
+                        [
+                            latest_live_tracking_pose["x"] * CM_TO_WORLD_UNITS * (-1.0 if TRACKING_INVERT_X else 1.0),
+                            latest_live_tracking_pose["y"] * CM_TO_WORLD_UNITS * (-1.0 if TRACKING_INVERT_Y else 1.0),
+                            latest_live_tracking_pose["z"] * CM_TO_WORLD_UNITS * (-1.0 if TRACKING_INVERT_Z else 1.0),
+                        ],
+                        dtype=np.float32,
+                    )
+                    room_map_aligned_position_rotation = tracking_position_alignment_rotation(
+                        tracker_camera_room_map_transform[:3, :3]
+                    )
+                    room_map_head_position = tracker_camera_room_map_transform[:3, 3] + (
+                        room_map_aligned_position_rotation @ tracking_offset
+                    )
+                    room_map_aligned_visual_rotation = tracking_alignment_rotation(
+                        tracker_camera_room_map_transform[:3, :3]
+                    )
+                    room_map_head_forward = room_map_aligned_visual_rotation @ debug_head_forward
+
+            forward_norm = float(np.linalg.norm(room_map_head_forward))
+            if forward_norm > 1e-6:
+                room_map_head_forward = (room_map_head_forward / forward_norm).astype(np.float32)
         
         def project_3d(pt3d_global):
-            pt_rotated = R_view @ pt3d_global[:3]
+            pt_display = room_map_display_point(pt3d_global)
+            pt_rotated = R_view @ pt_display[:3]
             pt_translated = pt_rotated + T_view
             z = pt_translated[2]
             if z <= 0.1: z = 0.1
@@ -1654,8 +1743,8 @@ def main():
         # Draw the tracker camera frustum. After scan lock, prefer the frozen
         # off-axis reference so the room view keeps showing the calibrated
         # tracker-camera pose even when no markers are visible anymore.
-        if tracker_camera_debug_transform is not None:
-            c_pos = tracker_camera_debug_transform[:3, 3]
+        if tracker_camera_room_map_transform is not None:
+            c_pos = tracker_camera_room_map_transform[:3, 3]
             c_global = np.array([c_pos[0], c_pos[1], c_pos[2], 1])
             
             pt_c, ok = project_3d(c_global)
@@ -1663,11 +1752,11 @@ def main():
                 cv2.circle(room_map, pt_c, 6, (255, 120, 0), -1)
                 cv2.putText(room_map, "Tracker Cam", (max(0, pt_c[0]+10), max(0, pt_c[1]+10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 120, 0), 1)
             
-            z_forward = tracker_camera_debug_transform @ np.array([0, 0, 20, 1])
-            z_left = tracker_camera_debug_transform @ np.array([-10, -10, 20, 1])
-            z_right = tracker_camera_debug_transform @ np.array([ 10, -10, 20, 1])
-            z_bleft = tracker_camera_debug_transform @ np.array([-10, 10, 20, 1])
-            z_bright = tracker_camera_debug_transform @ np.array([ 10, 10, 20, 1])
+            z_forward = tracker_camera_room_map_transform @ np.array([0, 0, 20, 1])
+            z_left = tracker_camera_room_map_transform @ np.array([-10, -10, 20, 1])
+            z_right = tracker_camera_room_map_transform @ np.array([ 10, -10, 20, 1])
+            z_bleft = tracker_camera_room_map_transform @ np.array([-10, 10, 20, 1])
+            z_bright = tracker_camera_room_map_transform @ np.array([ 10, 10, 20, 1])
             
             c_color = (255, 120, 0)
             draw_line_3d(room_map, c_global, z_left, c_color, 1)
@@ -1683,24 +1772,24 @@ def main():
         # Draw the virtual viewer head/camera that the Godot clients will use.
         # Before live tracking arrives, keep it at the default 50 cm reference
         # position in front of the primary screen so debugging stays meaningful.
-        if debug_head_position is not None and debug_head_forward is not None:
-            head_global = np.array([debug_head_position[0], debug_head_position[1], debug_head_position[2], 1.0], dtype=np.float32)
+        if room_map_head_position is not None and room_map_head_forward is not None:
+            head_global = np.array([room_map_head_position[0], room_map_head_position[1], room_map_head_position[2], 1.0], dtype=np.float32)
             pt_head, ok = project_3d(head_global)
             if ok:
                 cv2.circle(room_map, pt_head, 6, (255, 0, 255), -1)
                 cv2.putText(room_map, "Viewer", (max(0, pt_head[0] + 10), max(0, pt_head[1] + 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
 
             up_vector = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-            right_vector = np.cross(debug_head_forward, up_vector)
+            right_vector = np.cross(room_map_head_forward, up_vector)
             if float(np.linalg.norm(right_vector)) <= 1e-6:
                 right_vector = np.array([1.0, 0.0, 0.0], dtype=np.float32)
             right_vector = right_vector / max(float(np.linalg.norm(right_vector)), 1e-6)
-            head_up = np.cross(right_vector, debug_head_forward)
+            head_up = np.cross(right_vector, room_map_head_forward)
             head_up = head_up / max(float(np.linalg.norm(head_up)), 1e-6)
 
             cone_length = 14.0
             cone_radius = 6.0
-            cone_tip = debug_head_position + (debug_head_forward * cone_length)
+            cone_tip = room_map_head_position + (room_map_head_forward * cone_length)
             cone_left = cone_tip - (right_vector * cone_radius)
             cone_right = cone_tip + (right_vector * cone_radius)
             cone_top = cone_tip + (head_up * (cone_radius * 0.8))
@@ -1713,13 +1802,13 @@ def main():
             draw_line_3d(room_map, np.append(cone_right, 1.0), np.append(cone_top, 1.0), head_color, 1)
             draw_line_3d(room_map, np.append(cone_top, 1.0), np.append(cone_left, 1.0), head_color, 1)
 
-        if show_head_to_camera_debug and tracker_camera_debug_transform is not None and debug_head_position is not None:
-            c_pos = tracker_camera_debug_transform[:3, 3]
-            head_global = np.array([debug_head_position[0], debug_head_position[1], debug_head_position[2], 1.0], dtype=np.float32)
+        if show_head_to_camera_debug and tracker_camera_room_map_transform is not None and room_map_head_position is not None:
+            c_pos = tracker_camera_room_map_transform[:3, 3]
+            head_global = np.array([room_map_head_position[0], room_map_head_position[1], room_map_head_position[2], 1.0], dtype=np.float32)
             cam_global = np.array([c_pos[0], c_pos[1], c_pos[2], 1.0], dtype=np.float32)
             draw_line_3d(room_map, head_global, cam_global, (0, 255, 255), 2)
 
-            distance_world_units = float(np.linalg.norm(debug_head_position - c_pos))
+            distance_world_units = float(np.linalg.norm(room_map_head_position - c_pos))
             distance_meters = distance_world_units * 0.0254
             distance_text = f"Head->Cam: {distance_meters:.3f} m"
             text_size, baseline = cv2.getTextSize(distance_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
@@ -1736,7 +1825,9 @@ def main():
                 cv2.LINE_AA,
             )
 
-        cam_debug_pos = tracker_camera_debug_transform[:3, 3] if tracker_camera_debug_transform is not None else None
+        cam_debug_pos = None
+        if tracker_camera_debug_transform is not None:
+            cam_debug_pos = room_map_display_point(tracker_camera_debug_transform[:3, 3])
         coord_lines = []
         if cam_debug_pos is not None:
             coord_lines.append(
@@ -1748,12 +1839,12 @@ def main():
             )
         else:
             coord_lines.append("Cam: n/a")
-        if debug_head_position is not None:
+        if room_map_head_position is not None:
             coord_lines.append(
                 "Head: X %.2f  Y %.2f  Z %.2f" % (
-                    float(debug_head_position[0]),
-                    float(debug_head_position[1]),
-                    float(debug_head_position[2]),
+                    float(room_map_head_position[0]),
+                    float(room_map_head_position[1]),
+                    float(room_map_head_position[2]),
                 )
             )
         else:

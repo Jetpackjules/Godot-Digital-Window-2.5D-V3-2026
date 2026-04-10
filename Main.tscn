@@ -6,7 +6,7 @@
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
-[ext_resource type="PackedScene" uid="uid://d1pxuv0emlsw8" path="res://Views/Isometric Rooms/View.tscn" id="9_j4qnp"]
+[ext_resource type="PackedScene" uid="uid://cljj08a2kg0dm" path="res://Views/Floater/View.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
 [ext_resource type="Script" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
@@ -108,7 +108,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.17549743, 0)
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
-transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.6245799, 0.77793354, 0.66801006, -0.5503635, 0.500862, -5.7581205, 7.6799498, 2.5738828)
+transform = Transform3D(0.9264759, 0.329166, -0.18246135, -0.068698704, 0.6245799, 0.77793354, 0.3700309, -0.7082017, 0.60127145, -5.7581205, 7.6799498, 2.5738828)
 shadow_enabled = true
 directional_shadow_mode = 0
 
@@ -124,6 +124,7 @@ camera_node = NodePath("../Player/Head_Cam")
 player_node = NodePath("../Player")
 window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
+use_websocket = false
 websocket_url = "ws://10.20.211.39:8080"
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
@@ -133,12 +134,12 @@ physical_height_meters = 0.3299948403966754
 virtual_window_height = 0.3299948403966754
 
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2149706, -0.20577657)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
 fallback_directional_light_path = NodePath("../Light")
-current_view_name = "Isometric Rooms"
+current_view_name = "Floater"
 
-[node name="Isometric Room(s)" type="Node3D" parent="View" unique_id=494020146 instance=ExtResource("9_j4qnp")]
+[node name="Floater" type="Node3D" parent="View" unique_id=1645805246 instance=ExtResource("9_j4qnp")]
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]
 resources = [PackedStringArray("aruco_0", "aruco_1", "aruco_2", "aruco_3", "aruco_4", "aruco_5"), [ExtResource("10_aruco_0"), ExtResource("11_aruco_1"), ExtResource("12_aruco_2"), ExtResource("13_aruco_3"), ExtResource("14_aruco_4"), ExtResource("15_aruco_5")]]

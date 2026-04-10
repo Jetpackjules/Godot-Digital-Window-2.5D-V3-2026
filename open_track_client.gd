@@ -1205,24 +1205,30 @@ func _resolve_largest_screen_entry(screens: Dictionary) -> Dictionary:
 	return {}
 
 func _resolve_scale_authority_screen(screens: Dictionary, fallback_screen_id: String = "") -> Dictionary:
-	var registered_authority = _resolve_largest_screen_entry(_registered_screen_dimensions)
-	if not registered_authority.is_empty():
-		return registered_authority
-
 	var normalized_fallback_id = _normalize_screen_id(fallback_screen_id)
-	var mapped_authority = _resolve_largest_screen_entry(screens)
-	if not mapped_authority.is_empty():
-		return mapped_authority
-
-	if normalized_fallback_id == "":
+	# Keep single-screen setups local. Only let an explicit solved multi-screen
+	# layout override the local screen's virtual window scale.
+	if screens.size() <= 1:
 		return {}
-	for raw_screen_id in screens.keys():
-		var normalized_screen_id = _normalize_screen_id(raw_screen_id)
-		if normalized_screen_id == normalized_fallback_id and screens[raw_screen_id] is Dictionary:
-			return {
-				"id": normalized_screen_id,
-				"screen": screens[raw_screen_id],
-			}
+
+	if normalized_fallback_id != "":
+		for raw_screen_id in screens.keys():
+			var normalized_screen_id = _normalize_screen_id(raw_screen_id)
+			if normalized_screen_id == normalized_fallback_id and screens[raw_screen_id] is Dictionary:
+				return {
+					"id": normalized_screen_id,
+					"screen": screens[raw_screen_id],
+				}
+
+	if _main_screen_id != "":
+		for raw_screen_id in screens.keys():
+			var normalized_screen_id = _normalize_screen_id(raw_screen_id)
+			if normalized_screen_id == _main_screen_id and screens[raw_screen_id] is Dictionary:
+				return {
+					"id": normalized_screen_id,
+					"screen": screens[raw_screen_id],
+				}
+
 	return {}
 
 func _update_registered_screen_dimensions(payload: Variant) -> void:
@@ -1562,6 +1568,17 @@ func _layout_transform_from_payload(t_data: Dictionary) -> Dictionary:
 	var r_arr = t_data["R"]
 	var t_arr = t_data["T"]
 	var in_to_m = 0.0254
+	var canonical_y_up := bool(t_data.get("canonical_y_up", false))
+
+	if canonical_y_up:
+		return {
+			"position": Vector3(t_arr[0] * in_to_m, t_arr[1] * in_to_m, -t_arr[2] * in_to_m),
+			"basis": Basis(
+				Vector3(r_arr[0][0], r_arr[1][0], -r_arr[2][0]),
+				Vector3(r_arr[0][1], r_arr[1][1], -r_arr[2][1]),
+				Vector3(-r_arr[0][2], -r_arr[1][2], r_arr[2][2])
+			).orthonormalized()
+		}
 
 	return {
 		"position": Vector3(t_arr[0] * in_to_m, -t_arr[1] * in_to_m, -t_arr[2] * in_to_m),
@@ -1639,8 +1656,14 @@ func _clear_resolved_head_pose() -> void:
 	_resolved_head_camera_transform = Transform3D.IDENTITY
 	_last_resolved_head_pose_msec = 0
 
-func _position_from_inch_world_payload(value: Variant) -> Vector3:
+func _position_from_inch_world_payload(value: Variant, canonical_y_up: bool = false) -> Vector3:
 	if value is Array and value.size() >= 3:
+		if canonical_y_up:
+			return Vector3(
+				float(value[0]) * 0.0254,
+				float(value[1]) * 0.0254,
+				-float(value[2]) * 0.0254
+			)
 		return Vector3(
 			float(value[0]) * 0.0254,
 			-float(value[1]) * 0.0254,
@@ -1672,13 +1695,15 @@ func _set_resolved_head_pose_from_payload(payload: Dictionary) -> void:
 	if not payload.has("head_T"):
 		_clear_resolved_head_pose()
 		return
+	var canonical_y_up := bool(payload.get("canonical_y_up", false))
 	_resolved_head_pose_active = true
 	_resolved_head_pose_origin_screen = _normalize_screen_id(payload.get("origin_screen", ""))
-	_resolved_head_position = _position_from_inch_world_payload(payload["head_T"])
+	_resolved_head_position = _position_from_inch_world_payload(payload["head_T"], canonical_y_up)
 	if payload.has("camera_R") and payload.has("camera_T"):
 		_resolved_head_camera_transform = _transform_from_layout_payload({
 			"R": payload["camera_R"],
 			"T": payload["camera_T"],
+			"canonical_y_up": canonical_y_up,
 		})
 	_last_resolved_head_pose_msec = Time.get_ticks_msec()
 
