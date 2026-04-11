@@ -53,7 +53,10 @@ TRACKING_INVERT_Y = True
 TRACKING_INVERT_Z = False
 TRACKING_INVERT_ROLL = True
 TRACKING_FORWARD_FLIP = True
-ROOM_MAP_FLIP_LIVE_CALIBRATION_CAMERA_Y = True
+# The solved room graph is already correct. Keep the Python room-map in the
+# raw solved frame instead of applying an extra display-only Y flip that
+# distorts screen/camera/head placement during calibration.
+ROOM_MAP_FLIP_LIVE_CALIBRATION_CAMERA_Y = False
 CANONICAL_Y_UP_PAYLOADS = True
 Y_UP_FRAME_FLIP_4 = np.diag([1.0, -1.0, 1.0, 1.0]).astype(np.float32)
 Y_UP_FRAME_FLIP_3 = np.diag([1.0, -1.0, 1.0]).astype(np.float32)

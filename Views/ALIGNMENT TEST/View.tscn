@@ -1,0 +1,202 @@
+[gd_scene format=3 uid="uid://dr054ksfj7tfn"]
+
+[ext_resource type="Shader" uid="uid://w4fscwmt8fny" path="res://Views/ALIGNMENT TEST/grid_surface.gdshader" id="1"]
+
+[sub_resource type="Environment" id="1"]
+background_mode = 2
+ambient_light_source = 2
+ambient_light_color = Color(0.08, 0.08, 0.08, 1)
+ambient_light_energy = 0.15
+glow_enabled = true
+glow_strength = 0.6
+glow_bloom = 0.08
+
+[sub_resource type="PlaneMesh" id="13"]
+
+[sub_resource type="ShaderMaterial" id="2"]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/bg_color = Color(0, 0, 0, 1)
+shader_parameter/minor_color = Color(0.8, 0.8, 0.8, 1)
+shader_parameter/major_color = Color(1, 1, 1, 1)
+shader_parameter/minor_repeat = 32.0
+shader_parameter/major_repeat = 8.0
+shader_parameter/minor_thickness = 0.012
+shader_parameter/major_thickness = 0.024
+shader_parameter/emission_strength = 0.0
+
+[sub_resource type="BoxMesh" id="14"]
+
+[sub_resource type="StandardMaterial3D" id="3"]
+albedo_color = Color(1, 0.227451, 0.227451, 1)
+roughness = 0.25
+emission_enabled = true
+emission = Color(1, 0.227451, 0.227451, 1)
+emission_energy_multiplier = 2.2
+
+[sub_resource type="StandardMaterial3D" id="4"]
+albedo_color = Color(0.2, 1, 0.564706, 1)
+roughness = 0.25
+emission_enabled = true
+emission = Color(0.2, 1, 0.564706, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="BoxMesh" id="5"]
+size = Vector3(0.08, 4, 0.08)
+
+[sub_resource type="BoxMesh" id="6"]
+size = Vector3(8, 0.08, 0.08)
+
+[sub_resource type="BoxMesh" id="7"]
+size = Vector3(0.08, 5, 0.08)
+
+[sub_resource type="BoxMesh" id="8"]
+size = Vector3(10, 0.08, 0.08)
+
+[sub_resource type="BoxMesh" id="9"]
+size = Vector3(0.08, 6.5, 0.08)
+
+[sub_resource type="BoxMesh" id="10"]
+size = Vector3(13, 0.08, 0.08)
+
+[sub_resource type="BoxMesh" id="11"]
+size = Vector3(0.08, 8, 0.08)
+
+[sub_resource type="BoxMesh" id="12"]
+size = Vector3(16, 0.08, 0.08)
+
+[node name="ALIGNMENT TEST" type="Node3D" unique_id=2101078748]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.38108, 0)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=908335254]
+environment = SubResource("1")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1996289921]
+transform = Transform3D(0.883022, -0.321394, 0.34202, 0, 0.728969, 0.684547, -0.469846, -0.604023, 0.643582, 0, 12, 0)
+light_energy = 0.35
+
+[node name="Floor" type="MeshInstance3D" parent="." unique_id=2009945005]
+transform = Transform3D(30, 0, 0, 0, 1, 0, 0, 0, 30, 0, 0, 0)
+mesh = SubResource("13")
+surface_material_override/0 = SubResource("2")
+
+[node name="BackWall" type="MeshInstance3D" parent="." unique_id=71151041]
+transform = Transform3D(30, 0, 0, 0, -1.31134e-06, 12, 0, -1, -4.37114e-08, 0, 6, -30)
+mesh = SubResource("13")
+surface_material_override/0 = SubResource("2")
+
+[node name="LeftWall" type="MeshInstance3D" parent="." unique_id=444315318]
+transform = Transform3D(1.31134e-06, 0, 12, 0, 30, 0, -1, 0, -4.37114e-08, -20, 6, 0)
+mesh = SubResource("13")
+surface_material_override/0 = SubResource("2")
+
+[node name="RightWall" type="MeshInstance3D" parent="." unique_id=38253971]
+transform = Transform3D(1.31134e-06, 0, -12, 0, 30, 0, 1, 0, -4.37114e-08, 20, 6, 0)
+mesh = SubResource("13")
+surface_material_override/0 = SubResource("2")
+
+[node name="Ceiling" type="MeshInstance3D" parent="." unique_id=734570245]
+transform = Transform3D(30, 0, 0, 0, -1, 0, 0, 0, -30, 0, 12, -8)
+mesh = SubResource("13")
+surface_material_override/0 = SubResource("2")
+
+[node name="CenterAxes" type="Node3D" parent="." unique_id=1351544066]
+visible = false
+
+[node name="AxisX" type="MeshInstance3D" parent="CenterAxes" unique_id=1880465455]
+transform = Transform3D(16, 0, 0, 0, 0.06, 0, 0, 0, 0.06, 0, 2, -6)
+mesh = SubResource("14")
+surface_material_override/0 = SubResource("3")
+
+[node name="AxisY" type="MeshInstance3D" parent="CenterAxes" unique_id=250108149]
+transform = Transform3D(0.06, 0, 0, 0, 8, 0, 0, 0, 0.06, 0, 4, -6)
+mesh = SubResource("14")
+surface_material_override/0 = SubResource("4")
+
+[node name="AxisZ" type="MeshInstance3D" parent="CenterAxes" unique_id=299230852]
+transform = Transform3D(0.06, 0, 0, 0, 0.06, 0, 0, 0, 16, 0, 2, -14)
+mesh = SubResource("14")
+surface_material_override/0 = SubResource("3")
+
+[node name="DepthFrames" type="Node3D" parent="." unique_id=251661355]
+visible = false
+
+[node name="FrameA_Left" type="MeshInstance3D" parent="DepthFrames" unique_id=314283993]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 2, -4)
+mesh = SubResource("5")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameA_Right" type="MeshInstance3D" parent="DepthFrames" unique_id=1954650070]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 2, -4)
+mesh = SubResource("5")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameA_Top" type="MeshInstance3D" parent="DepthFrames" unique_id=1136650888]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, -4)
+mesh = SubResource("6")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameA_Bottom" type="MeshInstance3D" parent="DepthFrames" unique_id=907176589]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4)
+mesh = SubResource("6")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameB_Left" type="MeshInstance3D" parent="DepthFrames" unique_id=1578117592]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 2.5, -8)
+mesh = SubResource("7")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameB_Right" type="MeshInstance3D" parent="DepthFrames" unique_id=811765386]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 2.5, -8)
+mesh = SubResource("7")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameB_Top" type="MeshInstance3D" parent="DepthFrames" unique_id=1104882009]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5, -8)
+mesh = SubResource("8")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameB_Bottom" type="MeshInstance3D" parent="DepthFrames" unique_id=1766958523]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -8)
+mesh = SubResource("8")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameC_Left" type="MeshInstance3D" parent="DepthFrames" unique_id=1566901177]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.5, 3.25, -14)
+mesh = SubResource("9")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameC_Right" type="MeshInstance3D" parent="DepthFrames" unique_id=19209336]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.5, 3.25, -14)
+mesh = SubResource("9")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameC_Top" type="MeshInstance3D" parent="DepthFrames" unique_id=817429726]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.5, -14)
+mesh = SubResource("10")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameC_Bottom" type="MeshInstance3D" parent="DepthFrames" unique_id=1221592419]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14)
+mesh = SubResource("10")
+surface_material_override/0 = SubResource("3")
+
+[node name="FrameD_Left" type="MeshInstance3D" parent="DepthFrames" unique_id=1811801419]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 4, -22)
+mesh = SubResource("11")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameD_Right" type="MeshInstance3D" parent="DepthFrames" unique_id=569047569]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, -22)
+mesh = SubResource("11")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameD_Top" type="MeshInstance3D" parent="DepthFrames" unique_id=783366447]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8, -22)
+mesh = SubResource("12")
+surface_material_override/0 = SubResource("4")
+
+[node name="FrameD_Bottom" type="MeshInstance3D" parent="DepthFrames" unique_id=1542225641]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -22)
+mesh = SubResource("12")
+surface_material_override/0 = SubResource("4")
