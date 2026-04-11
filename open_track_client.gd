@@ -165,11 +165,24 @@ var _resolved_head_pose_origin_screen: String = ""
 var _resolved_head_position: Vector3 = Vector3.ZERO
 var _resolved_head_camera_transform: Transform3D = Transform3D.IDENTITY
 var _last_resolved_head_pose_msec: int = 0
+var _debug_resolved_payload_valid: bool = false
+var _debug_resolved_payload_origin: String = ""
+var _debug_resolved_payload_canonical_y_up: bool = false
+var _debug_resolved_payload_head_t: Vector3 = Vector3.ZERO
+var _debug_resolved_payload_camera_t: Vector3 = Vector3.ZERO
 var _layout_anchor_initialized: bool = false
 var _layout_anchor_window_local_transform: Transform3D = Transform3D.IDENTITY
 var _default_window_local_transform: Transform3D = Transform3D.IDENTITY
 var _last_layout_screen_ids: PackedStringArray = PackedStringArray()
 var _last_layout_origin_raw: String = "none"
+var _debug_layout_snapshot_valid: bool = false
+var _debug_layout_snapshot_screen_id: String = ""
+var _debug_layout_snapshot_origin_id: String = ""
+var _debug_layout_snapshot_raw_t: Vector3 = Vector3.ZERO
+var _debug_layout_snapshot_raw_canonical_y_up: bool = false
+var _debug_layout_snapshot_decoded_transform: Transform3D = Transform3D.IDENTITY
+var _debug_layout_snapshot_relative_transform: Transform3D = Transform3D.IDENTITY
+var _debug_layout_snapshot_final_transform: Transform3D = Transform3D.IDENTITY
 var _registered_screen_dimensions: Dictionary = {}
 var _active_screen_width_inches: float = 0.0
 var _active_screen_height_inches: float = 0.0
@@ -946,6 +959,9 @@ func _get_resolved_head_global_position() -> Vector3:
 	var reference_transform = _get_tracking_reference_global_transform()
 	return reference_transform.origin + (reference_transform.basis * _resolved_head_position)
 
+func _resolved_head_pose_available() -> bool:
+	return _resolved_head_pose_active and _resolved_head_pose_matches_origin()
+
 func _get_resolved_head_camera_global_transform() -> Transform3D:
 	var reference_transform = _get_tracking_reference_global_transform()
 	return Transform3D(
@@ -958,7 +974,7 @@ func _get_tracking_camera_global_transform() -> Transform3D:
 	var reference_origin = reference_transform.origin
 	var reference_basis = reference_transform.basis
 
-	if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin():
+	if _resolved_head_pose_available():
 		return _get_resolved_head_camera_global_transform()
 
 	if _tracking_reference_active and _tracking_reference_matches_origin():
@@ -990,7 +1006,7 @@ func _build_debug_preview_cone_mesh(horizontal_fov_rad: float) -> ImmediateMesh:
 func _update_debug_preview_camera_gizmos() -> void:
 	if head_dot:
 		head_dot.visible = camera_node != null
-		if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin():
+		if _resolved_head_pose_available():
 			head_dot.global_position = _get_resolved_head_global_position()
 		elif camera_node:
 			head_dot.global_position = camera_node.global_position
@@ -998,7 +1014,7 @@ func _update_debug_preview_camera_gizmos() -> void:
 		return
 
 	var tracker_transform = _get_tracking_camera_global_transform()
-	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin() else (camera_node.global_position if camera_node else tracker_transform.origin)
+	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_available() else (camera_node.global_position if camera_node else tracker_transform.origin)
 	tracker_camera_dot.global_position = tracker_transform.origin + Vector3(0.0, 0.06, 0.0)
 	tracker_camera_cone.mesh = _build_debug_preview_cone_mesh(deg_to_rad(90.0))
 	var cone_basis = (tracker_transform.basis.orthonormalized() * Basis(Vector3.RIGHT, -PI * 0.5)).orthonormalized()
@@ -1015,7 +1031,7 @@ func _update_debug_preview_camera_gizmos() -> void:
 func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 	if not debug_cam:
 		return
-	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin() else (camera_node.global_position if camera_node else tracker_transform.origin)
+	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_available() else (camera_node.global_position if camera_node else tracker_transform.origin)
 	var focus = (tracker_transform.origin + head_pos) * 0.5
 	var separation = maxf(2.5, tracker_transform.origin.distance_to(head_pos))
 	var distance = clampf(debug_preview_camera_distance + (separation * 0.35), debug_preview_min_size, debug_preview_max_size)
@@ -1026,16 +1042,39 @@ func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 func _update_debug_preview_coords_label(tracker_transform: Transform3D) -> void:
 	if not debug_preview_coords_label:
 		return
-	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin() else (camera_node.global_position if camera_node else Vector3.ZERO)
+	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_available() else (camera_node.global_position if camera_node else Vector3.ZERO)
 	var cam_pos = tracker_transform.origin
 	var cam_pos_py = _position_to_python_room_units(cam_pos)
 	var head_pos_py = _position_to_python_room_units(head_pos)
-	debug_preview_coords_label.text = "Cam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f\nPyCam: X %.2f  Y %.2f  Z %.2f\nPyHead: X %.2f  Y %.2f  Z %.2f" % [
+	var text := "Cam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f\nPyCam: X %.2f  Y %.2f  Z %.2f\nPyHead: X %.2f  Y %.2f  Z %.2f" % [
 		cam_pos.x, cam_pos.y, cam_pos.z,
 		head_pos.x, head_pos.y, head_pos.z,
 		cam_pos_py.x, cam_pos_py.y, cam_pos_py.z,
 		head_pos_py.x, head_pos_py.y, head_pos_py.z
 	]
+	if _debug_resolved_payload_valid:
+		text += "\nRawPayload Origin %s%s" % [
+			_debug_resolved_payload_origin,
+			" | canonical_y_up" if _debug_resolved_payload_canonical_y_up else ""
+		]
+		text += "\nRawPayload CamT(in): %s" % _format_vec3_short(_debug_resolved_payload_camera_t)
+		text += "\nRawPayload HeadT(in): %s" % _format_vec3_short(_debug_resolved_payload_head_t)
+	if _debug_layout_snapshot_valid:
+		var decoded_euler := _basis_euler_degrees(_debug_layout_snapshot_decoded_transform.basis)
+		var relative_euler := _basis_euler_degrees(_debug_layout_snapshot_relative_transform.basis)
+		var final_euler := _basis_euler_degrees(_debug_layout_snapshot_final_transform.basis)
+		text += "\n\nScreen %s | Origin %s" % [_debug_layout_snapshot_screen_id, _debug_layout_snapshot_origin_id]
+		text += "\nRaw T(in): %s%s" % [
+			_format_vec3_short(_debug_layout_snapshot_raw_t),
+			" | canonical_y_up" if _debug_layout_snapshot_raw_canonical_y_up else ""
+		]
+		text += "\nDecoded Pos: %s" % _format_vec3_short(_debug_layout_snapshot_decoded_transform.origin)
+		text += "\nDecoded Rot: X %.1f  Y %.1f  Z %.1f" % [decoded_euler.x, decoded_euler.y, decoded_euler.z]
+		text += "\nRel Pos: %s" % _format_vec3_short(_debug_layout_snapshot_relative_transform.origin)
+		text += "\nRel Rot: X %.1f  Y %.1f  Z %.1f" % [relative_euler.x, relative_euler.y, relative_euler.z]
+		text += "\nFinal Pos: %s" % _format_vec3_short(_debug_layout_snapshot_final_transform.origin)
+		text += "\nFinal Rot: X %.1f  Y %.1f  Z %.1f" % [final_euler.x, final_euler.y, final_euler.z]
+	debug_preview_coords_label.text = text
 
 func _offscreen_direction_arrow(local_pos: Vector3) -> String:
 	var x = local_pos.x
@@ -1655,6 +1694,11 @@ func _clear_resolved_head_pose() -> void:
 	_resolved_head_position = Vector3.ZERO
 	_resolved_head_camera_transform = Transform3D.IDENTITY
 	_last_resolved_head_pose_msec = 0
+	_debug_resolved_payload_valid = false
+	_debug_resolved_payload_origin = ""
+	_debug_resolved_payload_canonical_y_up = false
+	_debug_resolved_payload_head_t = Vector3.ZERO
+	_debug_resolved_payload_camera_t = Vector3.ZERO
 
 func _position_from_inch_world_payload(value: Variant, canonical_y_up: bool = false) -> Vector3:
 	if value is Array and value.size() >= 3:
@@ -1679,6 +1723,30 @@ func _position_to_python_room_units(value: Vector3) -> Vector3:
 		-value.z * meters_to_inches
 	)
 
+func _format_vec3_short(value: Vector3) -> String:
+	return "X %.2f  Y %.2f  Z %.2f" % [value.x, value.y, value.z]
+
+func _capture_layout_debug_snapshot(
+	screen_id: String,
+	origin_id: String,
+	raw_payload: Dictionary,
+	decoded_transform: Transform3D,
+	relative_transform: Transform3D,
+	final_transform: Transform3D
+) -> void:
+	_debug_layout_snapshot_valid = true
+	_debug_layout_snapshot_screen_id = screen_id
+	_debug_layout_snapshot_origin_id = origin_id if origin_id != "" else "none"
+	_debug_layout_snapshot_raw_canonical_y_up = bool(raw_payload.get("canonical_y_up", false))
+	var t_arr: Variant = raw_payload.get("T", [0.0, 0.0, 0.0])
+	if t_arr is Array and t_arr.size() >= 3:
+		_debug_layout_snapshot_raw_t = Vector3(float(t_arr[0]), float(t_arr[1]), float(t_arr[2]))
+	else:
+		_debug_layout_snapshot_raw_t = Vector3.ZERO
+	_debug_layout_snapshot_decoded_transform = decoded_transform
+	_debug_layout_snapshot_relative_transform = relative_transform
+	_debug_layout_snapshot_final_transform = final_transform
+
 func _resolved_head_pose_is_fresh() -> bool:
 	if not _resolved_head_pose_active or _last_resolved_head_pose_msec <= 0:
 		return false
@@ -1698,8 +1766,21 @@ func _set_resolved_head_pose_from_payload(payload: Dictionary) -> void:
 	var canonical_y_up := bool(payload.get("canonical_y_up", false))
 	_resolved_head_pose_active = true
 	_resolved_head_pose_origin_screen = _normalize_screen_id(payload.get("origin_screen", ""))
+	_debug_resolved_payload_valid = true
+	_debug_resolved_payload_origin = _resolved_head_pose_origin_screen if _resolved_head_pose_origin_screen != "" else "none"
+	_debug_resolved_payload_canonical_y_up = canonical_y_up
+	var head_t_payload: Variant = payload["head_T"]
+	if head_t_payload is Array and head_t_payload.size() >= 3:
+		_debug_resolved_payload_head_t = Vector3(float(head_t_payload[0]), float(head_t_payload[1]), float(head_t_payload[2]))
+	else:
+		_debug_resolved_payload_head_t = Vector3.ZERO
 	_resolved_head_position = _position_from_inch_world_payload(payload["head_T"], canonical_y_up)
 	if payload.has("camera_R") and payload.has("camera_T"):
+		var camera_t_payload: Variant = payload["camera_T"]
+		if camera_t_payload is Array and camera_t_payload.size() >= 3:
+			_debug_resolved_payload_camera_t = Vector3(float(camera_t_payload[0]), float(camera_t_payload[1]), float(camera_t_payload[2]))
+		else:
+			_debug_resolved_payload_camera_t = Vector3.ZERO
 		_resolved_head_camera_transform = _transform_from_layout_payload({
 			"R": payload["camera_R"],
 			"T": payload["camera_T"],
@@ -2424,25 +2505,27 @@ func _handle_scan_status(data: Dictionary) -> void:
 
 func _input(event):
 	if event is InputEventKey and event.pressed:
-		if event.keycode == debug_toggle_key:
+		var key_matches := func(target_key: Key) -> bool:
+			return event.keycode == target_key or event.physical_keycode == target_key
+		if key_matches.call(debug_toggle_key):
 			_advance_tab_ui_mode()
-		elif event.keycode == diagnostics_toggle_key:
+		elif key_matches.call(diagnostics_toggle_key):
 			if diagnostics_label:
 				diagnostics_label.visible = !diagnostics_label.visible
 				if diagnostics_label.visible and not show_debug_view:
 					show_debug_view = true
 				_apply_global_ui_visibility()
-		elif event.keycode == finish_scan_key:
+		elif key_matches.call(finish_scan_key):
 			_request_finish_scan()
-		elif event.keycode == rescan_key:
+		elif key_matches.call(rescan_key):
 			_restart_scan_flow()
-		elif event.keycode == edit_screen_size_key:
+		elif key_matches.call(edit_screen_size_key):
 			_show_screen_setup()
-		elif event.keycode == sync_mode_toggle_key:
+		elif key_matches.call(sync_mode_toggle_key):
 			_toggle_viewer_sync_mode()
-		elif event.keycode == render_mode_toggle_key:
+		elif key_matches.call(render_mode_toggle_key):
 			_toggle_render_performance_mode()
-		elif event.keycode == far_plane_toggle_key:
+		elif key_matches.call(far_plane_toggle_key):
 			_toggle_camera_range_mode()
 	elif event is InputEventMouseButton and event.pressed and _tab_ui_mode == TAB_UI_MODE_PREVIEW:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -2797,18 +2880,32 @@ func _process(_delta):
 							_restore_local_window_scale_authority()
 
 						if screens.has(my_id_str):
-							var screen_transform = _layout_transform_from_payload(screens[my_id_str])
+							var raw_screen_payload: Dictionary = screens[my_id_str]
+							var screen_transform = _layout_transform_from_payload(raw_screen_payload)
 							var target_pos: Vector3 = screen_transform["position"]
 							var target_basis: Basis = screen_transform["basis"]
-							var screen_tracker_transform = _transform_from_layout_payload(screens[my_id_str])
+							var screen_tracker_transform = _transform_from_layout_payload(raw_screen_payload)
+							var relative_transform := Transform3D.IDENTITY
+							var final_transform := Transform3D(target_basis, target_pos)
 
 							if _has_main_screen_reference and _layout_anchor_initialized:
-								var relative_transform := Transform3D.IDENTITY
 								if not (single_screen_payload or my_id_str == origin_screen_id):
 									relative_transform = origin_tracker_transform.affine_inverse() * screen_tracker_transform
 								var anchored_local_transform = _layout_anchor_window_local_transform * relative_transform
 								target_pos = anchored_local_transform.origin
 								target_basis = anchored_local_transform.basis.orthonormalized()
+								final_transform = Transform3D(target_basis, target_pos)
+							else:
+								final_transform = Transform3D(target_basis, target_pos)
+
+							_capture_layout_debug_snapshot(
+								my_id_str,
+								origin_screen_id,
+								raw_screen_payload,
+								screen_tracker_transform,
+								relative_transform,
+								final_transform
+							)
 							
 							if window_center:
 								if _has_main_screen_reference and _layout_anchor_initialized:
@@ -2904,8 +3001,10 @@ func _process(_delta):
 
 func _apply_tracking_data():
 	var resolved_head_live := _resolved_head_pose_is_fresh() and _resolved_head_pose_matches_origin()
+	var resolved_head_available := _resolved_head_pose_available()
 	var tracking_reference_matches_origin = _tracking_reference_matches_origin()
 	var use_python_resolved_head := _tracking_reference_active and tracking_reference_matches_origin and resolved_head_live
+	var hold_last_tracked_pose := _face_detected and (not _has_live_tracking_data) and (not resolved_head_live)
 	# In calibrated/off-axis mode, Python's resolved room-space head pose is the
 	# authority. Outside that mode, keep using the old local live-tracking path.
 	if ((use_python_resolved_head or (_has_live_tracking_data and not _tracking_reference_active)) and not _face_detected):
@@ -2921,8 +3020,10 @@ func _apply_tracking_data():
 		var mult = screen_scaler.tracking_scale_multiplier
 		var screen_space_tracking_offset = _screen_space_tracking_offset(mult)
 		if _tracking_reference_active and tracking_reference_matches_origin:
-			if use_python_resolved_head:
+			if resolved_head_available:
 				camera_node.global_position = _get_resolved_head_global_position()
+			elif hold_last_tracked_pose:
+				return
 			else:
 				var final_local_offset = Vector3.ZERO
 				final_local_offset.z += default_viewer_distance_meters * mult
@@ -2930,6 +3031,8 @@ func _apply_tracking_data():
 				var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
 				camera_node.global_position = reference_pos + (reference_basis * final_local_offset)
 		else:
+			if hold_last_tracked_pose:
+				return
 			var final_local_offset = screen_space_tracking_offset
 			# Keep a persistent baseline eye distance in front of the screen so neutral
 			# tracking data represents a sensible viewing position instead of the glass plane.

@@ -125,7 +125,7 @@ camera_node = NodePath("../Player/Head_Cam")
 player_node = NodePath("../Player")
 window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
-use_websocket = false
+use_websocket = true
 websocket_url = "ws://10.20.211.39:8080"
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
