@@ -32,7 +32,10 @@ func _process(_delta: float) -> void:
 		return
 		
 	if _screen_scaler:
-		virtual_window_height = _screen_scaler.virtual_window_height
+		# The frustum plane is the physical glass on this client. Keep tracking
+		# scale separate; otherwise smaller secondary screens inherit the primary
+		# screen height and render zoomed out past their real window frame.
+		virtual_window_height = _screen_scaler.physical_height_meters
 
 	# The projection plane must inherit the solved physical screen orientation.
 	# Without this, rotated secondary screens keep their border transform but the

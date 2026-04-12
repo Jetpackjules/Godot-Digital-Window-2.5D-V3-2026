@@ -34,11 +34,8 @@ func _update_outline(force: bool) -> void:
 	if _screen_scaler == null:
 		return
 
-	var height := _screen_scaler.virtual_window_height
-	var aspect := 1.0
-	if _screen_scaler.physical_height_meters > 0.0:
-		aspect = _screen_scaler.physical_width_meters / _screen_scaler.physical_height_meters
-	var width := height * aspect
+	var width := _screen_scaler.physical_width_meters
+	var height := _screen_scaler.physical_height_meters
 	var thickness := border_thickness_meters
 	var depth_offset := border_depth_offset_meters
 

@@ -214,6 +214,8 @@ const TAB_UI_MODE_NORMAL := 0
 const TAB_UI_MODE_CLEAN := 1
 const TAB_UI_MODE_PREVIEW := 2
 const TAB_UI_MODE_FIRST_PERSON_PREVIEW := 3
+const VISUAL_LAYER_MASK_ALL := (1 << 20) - 1
+const DEBUG_PREVIEW_LAYER_MASK := 1 << 19
 var _tab_ui_mode: int = TAB_UI_MODE_NORMAL
 var _viewer_sync_mode: int = ViewerSyncMode.FULL
 var _render_performance_mode: int = RenderPerformanceMode.FULL
@@ -1060,6 +1062,9 @@ func _update_debug_preview_camera_gizmos() -> void:
 func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 	if not debug_cam:
 		return
+	var base_cull_mask := camera_node.cull_mask if camera_node else VISUAL_LAYER_MASK_ALL
+	if camera_node:
+		camera_node.cull_mask = base_cull_mask & (VISUAL_LAYER_MASK_ALL ^ DEBUG_PREVIEW_LAYER_MASK)
 	if _tab_ui_mode == TAB_UI_MODE_FIRST_PERSON_PREVIEW and camera_node:
 		var first_person_transform := camera_node.global_transform
 		var first_person_look_basis := (
@@ -1077,15 +1082,14 @@ func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 		debug_cam.h_offset = 0.0
 		debug_cam.v_offset = 0.0
 		debug_cam.keep_aspect = camera_node.keep_aspect
-		debug_cam.cull_mask = camera_node.cull_mask
+		debug_cam.cull_mask = (base_cull_mask | DEBUG_PREVIEW_LAYER_MASK) & VISUAL_LAYER_MASK_ALL
 		return
 	debug_cam.projection = Camera3D.PROJECTION_PERSPECTIVE
 	debug_cam.fov = debug_preview_camera_fov
 	debug_cam.h_offset = 0.0
 	debug_cam.v_offset = 0.0
 	debug_cam.frustum_offset = Vector2.ZERO
-	if camera_node:
-		debug_cam.cull_mask = camera_node.cull_mask
+	debug_cam.cull_mask = (base_cull_mask | DEBUG_PREVIEW_LAYER_MASK) & VISUAL_LAYER_MASK_ALL
 	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_available() else (camera_node.global_position if camera_node else tracker_transform.origin)
 	var focus = (tracker_transform.origin + head_pos) * 0.5
 	var separation = maxf(2.5, tracker_transform.origin.distance_to(head_pos))
@@ -1797,6 +1801,7 @@ func _get_alignment_debug_frame(screen_id: String) -> MeshInstance3D:
 		return alignment_debug_frames[screen_id] as MeshInstance3D
 	var frame := MeshInstance3D.new()
 	frame.name = "ScreenFrame_" + screen_id
+	frame.layers = DEBUG_PREVIEW_LAYER_MASK
 	alignment_debug_root.add_child(frame)
 	alignment_debug_frames[screen_id] = frame
 	return frame
