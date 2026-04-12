@@ -80,6 +80,7 @@ var alignment_debug_material_current: StandardMaterial3D
 var alignment_debug_material_other: StandardMaterial3D
 var diagnostics_label: Label
 var debug_preview_coords_label: Label
+var debug_preview_world_coords_label: Label
 var debug_preview_head_hint_label: Label
 var debug_preview_camera_hint_label: Label
 var calibration_ui_panel: PanelContainer
@@ -899,6 +900,16 @@ func _setup_debug_view():
 	debug_preview_coords_label.visible = false
 	debug_canvas.add_child(debug_preview_coords_label)
 
+	debug_preview_world_coords_label = Label.new()
+	debug_preview_world_coords_label.position = Vector2(container.position.x + 12.0, container.position.y + 12.0)
+	debug_preview_world_coords_label.custom_minimum_size = Vector2(336.0, 0.0)
+	debug_preview_world_coords_label.add_theme_color_override("font_color", Color(1.0, 0.08, 0.04, 1.0))
+	debug_preview_world_coords_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	debug_preview_world_coords_label.add_theme_font_size_override("font_size", 15)
+	debug_preview_world_coords_label.add_theme_constant_override("outline_size", 4)
+	debug_preview_world_coords_label.visible = false
+	debug_canvas.add_child(debug_preview_world_coords_label)
+
 	debug_preview_head_hint_label = Label.new()
 	debug_preview_head_hint_label.custom_minimum_size = Vector2(180.0, 0.0)
 	debug_preview_head_hint_label.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
@@ -952,19 +963,16 @@ func _tracking_offset_in_aligned_camera_frame(screen_space_offset: Vector3) -> V
 	return screen_space_offset
 
 func _get_tracking_reference_global_transform() -> Transform3D:
-	var reference_origin := Vector3.ZERO
-	var reference_basis := Basis.IDENTITY
+	if _has_main_screen_reference and _layout_anchor_initialized and window_center and window_center.get_parent() is Node3D:
+		var anchor_parent := window_center.get_parent() as Node3D
+		return anchor_parent.global_transform * _layout_anchor_window_local_transform
+	if _has_main_screen_reference:
+		return Transform3D(_main_screen_basis.orthonormalized(), _main_screen_position)
 	if window_center:
-		reference_origin = window_center.global_position
-		reference_basis = window_center.global_transform.basis.orthonormalized()
-	elif player_node:
-		reference_origin = player_node.global_position
-		reference_basis = player_node.global_transform.basis.orthonormalized()
-	elif _has_main_screen_reference:
-		reference_origin = _main_screen_position
-		reference_basis = _main_screen_basis.orthonormalized()
-
-	return Transform3D(reference_basis, reference_origin)
+		return window_center.global_transform
+	if player_node:
+		return player_node.global_transform
+	return Transform3D.IDENTITY
 
 func _get_resolved_head_global_position() -> Vector3:
 	var reference_transform = _get_tracking_reference_global_transform()
@@ -1124,6 +1132,12 @@ func _update_debug_preview_coords_label(tracker_transform: Transform3D) -> void:
 		text += "\nFinal Pos: %s" % _format_vec3_short(_debug_layout_snapshot_final_transform.origin)
 		text += "\nFinal Rot: X %.1f  Y %.1f  Z %.1f" % [final_euler.x, final_euler.y, final_euler.z]
 	debug_preview_coords_label.text = text
+	if debug_preview_world_coords_label:
+		debug_preview_world_coords_label.text = "WORLD HEAD\nX %.3f\nY %.3f\nZ %.3f" % [
+			head_pos.x,
+			head_pos.y,
+			head_pos.z,
+		]
 
 func _offscreen_direction_arrow(local_pos: Vector3) -> String:
 	var x = local_pos.x
@@ -1707,6 +1721,7 @@ func _make_debug_line_material(color: Color, energy: float = 1.8) -> StandardMat
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.no_depth_test = true
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.emission_enabled = true
 	material.emission = color
 	material.emission_energy_multiplier = energy
@@ -1744,18 +1759,33 @@ func _screen_frame_mesh(width_meters: float, height_meters: float) -> ImmediateM
 	var half_width := width * 0.5
 	var half_height := height * 0.5
 	var z_offset := -0.002
-	var normal_len := minf(width, height) * 0.25
+	var border_thickness := clampf(minf(width, height) * 0.04, 0.012, 0.08)
+	var half_border := border_thickness * 0.5
+	var normal_len := minf(width, height) * 0.35
 	var mesh := ImmediateMesh.new()
-	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
-	var tl := Vector3(-half_width, half_height, z_offset)
-	var tr := Vector3(half_width, half_height, z_offset)
-	var br := Vector3(half_width, -half_height, z_offset)
-	var bl := Vector3(-half_width, -half_height, z_offset)
-	var center := Vector3(0.0, 0.0, z_offset)
-	var normal_tip := Vector3(0.0, 0.0, z_offset - normal_len)
-	for segment in [[tl, tr], [tr, br], [br, bl], [bl, tl], [tl, br], [center, normal_tip]]:
-		mesh.surface_add_vertex(segment[0])
-		mesh.surface_add_vertex(segment[1])
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	var strips := [
+		[Vector3(0.0, half_height + half_border, z_offset), Vector2(width + border_thickness * 2.0, border_thickness)],
+		[Vector3(0.0, -half_height - half_border, z_offset), Vector2(width + border_thickness * 2.0, border_thickness)],
+		[Vector3(-half_width - half_border, 0.0, z_offset), Vector2(border_thickness, height + border_thickness * 2.0)],
+		[Vector3(half_width + half_border, 0.0, z_offset), Vector2(border_thickness, height + border_thickness * 2.0)],
+		[Vector3(0.0, 0.0, z_offset - half_border), Vector2(border_thickness, normal_len)],
+	]
+	for strip in strips:
+		var center: Vector3 = strip[0]
+		var size: Vector2 = strip[1]
+		var hw := size.x * 0.5
+		var hh := size.y * 0.5
+		var p0 := Vector3(center.x - hw, center.y - hh, center.z)
+		var p1 := Vector3(center.x + hw, center.y - hh, center.z)
+		var p2 := Vector3(center.x + hw, center.y + hh, center.z)
+		var p3 := Vector3(center.x - hw, center.y + hh, center.z)
+		mesh.surface_add_vertex(p0)
+		mesh.surface_add_vertex(p1)
+		mesh.surface_add_vertex(p2)
+		mesh.surface_add_vertex(p0)
+		mesh.surface_add_vertex(p2)
+		mesh.surface_add_vertex(p3)
 	mesh.surface_end()
 	return mesh
 
@@ -2121,6 +2151,8 @@ func _apply_global_ui_visibility() -> void:
 				frame.visible = show_preview
 	if debug_preview_coords_label:
 		debug_preview_coords_label.visible = show_debug_overlay
+	if debug_preview_world_coords_label:
+		debug_preview_world_coords_label.visible = show_debug_overlay
 	if debug_preview_head_hint_label:
 		debug_preview_head_hint_label.visible = show_debug_overlay and debug_preview_head_hint_label.visible
 	if debug_preview_camera_hint_label:
