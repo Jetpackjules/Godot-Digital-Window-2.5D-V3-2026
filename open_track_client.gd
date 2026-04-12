@@ -52,6 +52,9 @@ var aruco_markers: Array[Texture2D] = []
 @export var debug_preview_camera_distance: float = 10.0
 @export var debug_preview_camera_height: float = 6.0
 @export var debug_preview_camera_fov: float = 55.0
+@export var debug_first_person_camera_fov: float = 90.0
+@export var debug_preview_arrow_yaw_step_degrees: float = 8.0
+@export var debug_preview_arrow_pitch_step_degrees: float = 6.0
 @export_group("Camera Range")
 @export var camera_range_steps_meters: PackedFloat32Array = PackedFloat32Array([0.5, 1.0, 2.0, 3.0, 5.0, 10.0])
 
@@ -71,6 +74,10 @@ var debug_cam: Camera3D
 var head_dot: MeshInstance3D
 var tracker_camera_dot: MeshInstance3D
 var tracker_camera_cone: MeshInstance3D
+var alignment_debug_root: Node3D
+var alignment_debug_frames: Dictionary = {}
+var alignment_debug_material_current: StandardMaterial3D
+var alignment_debug_material_other: StandardMaterial3D
 var diagnostics_label: Label
 var debug_preview_coords_label: Label
 var debug_preview_head_hint_label: Label
@@ -205,6 +212,7 @@ var _pending_anaglyph_state: Variant = null
 const TAB_UI_MODE_NORMAL := 0
 const TAB_UI_MODE_CLEAN := 1
 const TAB_UI_MODE_PREVIEW := 2
+const TAB_UI_MODE_FIRST_PERSON_PREVIEW := 3
 var _tab_ui_mode: int = TAB_UI_MODE_NORMAL
 var _viewer_sync_mode: int = ViewerSyncMode.FULL
 var _render_performance_mode: int = RenderPerformanceMode.FULL
@@ -226,6 +234,8 @@ var _debug_viewer_pose_rx_hz: float = 0.0
 var _debug_viewer_pose_tx_hz: float = 0.0
 var _debug_viewer_pose_apply_hz: float = 0.0
 var _debug_tracking_rx_hz: float = 0.0
+var _debug_preview_look_yaw_degrees: float = 0.0
+var _debug_preview_look_pitch_degrees: float = 0.0
 var _last_viewer_pose_rx_msec: int = 0
 var _last_remote_viewer_packet_msec: int = 0
 var _viewer_pose_rx_interval_average_msec: float = 0.0
@@ -238,6 +248,7 @@ var _last_status_panel_viewport_size: Vector2 = Vector2.ZERO
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
+	_setup_alignment_debug_overlay()
 	if window_center:
 		_default_window_local_transform = window_center.transform
 		_layout_anchor_window_local_transform = _default_window_local_transform
@@ -1004,8 +1015,9 @@ func _build_debug_preview_cone_mesh(horizontal_fov_rad: float) -> ImmediateMesh:
 	return mesh
 
 func _update_debug_preview_camera_gizmos() -> void:
+	var show_orbit_gizmos := _tab_ui_mode != TAB_UI_MODE_FIRST_PERSON_PREVIEW
 	if head_dot:
-		head_dot.visible = camera_node != null
+		head_dot.visible = show_orbit_gizmos and camera_node != null
 		if _resolved_head_pose_available():
 			head_dot.global_position = _get_resolved_head_global_position()
 		elif camera_node:
@@ -1015,22 +1027,57 @@ func _update_debug_preview_camera_gizmos() -> void:
 
 	var tracker_transform = _get_tracking_camera_global_transform()
 	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_available() else (camera_node.global_position if camera_node else tracker_transform.origin)
-	tracker_camera_dot.global_position = tracker_transform.origin + Vector3(0.0, 0.06, 0.0)
-	tracker_camera_cone.mesh = _build_debug_preview_cone_mesh(deg_to_rad(90.0))
-	var cone_basis = (tracker_transform.basis.orthonormalized() * Basis(Vector3.RIGHT, -PI * 0.5)).orthonormalized()
-	var cone_offset = tracker_transform.basis.orthonormalized() * Vector3(0.0, 0.0, debug_preview_cone_distance_meters * 0.5)
-	tracker_camera_cone.global_transform = Transform3D(
-		cone_basis,
-		tracker_transform.origin + cone_offset
-	)
+	tracker_camera_dot.visible = show_orbit_gizmos
+	tracker_camera_cone.visible = show_orbit_gizmos
+	if show_orbit_gizmos:
+		tracker_camera_dot.global_position = tracker_transform.origin + Vector3(0.0, 0.06, 0.0)
+		tracker_camera_cone.mesh = _build_debug_preview_cone_mesh(deg_to_rad(90.0))
+		var cone_basis = (tracker_transform.basis.orthonormalized() * Basis(Vector3.RIGHT, -PI * 0.5)).orthonormalized()
+		var cone_offset = tracker_transform.basis.orthonormalized() * Vector3(0.0, 0.0, debug_preview_cone_distance_meters * 0.5)
+		tracker_camera_cone.global_transform = Transform3D(
+			cone_basis,
+			tracker_transform.origin + cone_offset
+		)
 	_update_debug_preview_scene_camera(tracker_transform)
 	_update_debug_preview_coords_label(tracker_transform)
-	_update_debug_preview_offscreen_hint(debug_preview_head_hint_label, "HEAD", head_pos, Color(1.0, 0.3, 0.3, 1.0))
-	_update_debug_preview_offscreen_hint(debug_preview_camera_hint_label, "CAM", tracker_transform.origin, Color(0.2, 0.85, 1.0, 1.0))
+	if show_orbit_gizmos:
+		_update_debug_preview_offscreen_hint(debug_preview_head_hint_label, "HEAD", head_pos, Color(1.0, 0.3, 0.3, 1.0))
+		_update_debug_preview_offscreen_hint(debug_preview_camera_hint_label, "CAM", tracker_transform.origin, Color(0.2, 0.85, 1.0, 1.0))
+	else:
+		if debug_preview_head_hint_label:
+			debug_preview_head_hint_label.visible = false
+		if debug_preview_camera_hint_label:
+			debug_preview_camera_hint_label.visible = false
 
 func _update_debug_preview_scene_camera(tracker_transform: Transform3D) -> void:
 	if not debug_cam:
 		return
+	if _tab_ui_mode == TAB_UI_MODE_FIRST_PERSON_PREVIEW and camera_node:
+		var first_person_transform := camera_node.global_transform
+		var first_person_look_basis := (
+			first_person_transform.basis.orthonormalized()
+			* Basis(Vector3.UP, deg_to_rad(_debug_preview_look_yaw_degrees))
+			* Basis(Vector3.RIGHT, deg_to_rad(_debug_preview_look_pitch_degrees))
+		).orthonormalized()
+		first_person_transform.basis = first_person_look_basis
+		debug_cam.global_transform = first_person_transform
+		debug_cam.projection = Camera3D.PROJECTION_PERSPECTIVE
+		debug_cam.fov = debug_first_person_camera_fov
+		debug_cam.near = camera_node.near
+		debug_cam.far = camera_node.far
+		debug_cam.frustum_offset = Vector2.ZERO
+		debug_cam.h_offset = 0.0
+		debug_cam.v_offset = 0.0
+		debug_cam.keep_aspect = camera_node.keep_aspect
+		debug_cam.cull_mask = camera_node.cull_mask
+		return
+	debug_cam.projection = Camera3D.PROJECTION_PERSPECTIVE
+	debug_cam.fov = debug_preview_camera_fov
+	debug_cam.h_offset = 0.0
+	debug_cam.v_offset = 0.0
+	debug_cam.frustum_offset = Vector2.ZERO
+	if camera_node:
+		debug_cam.cull_mask = camera_node.cull_mask
 	var head_pos = _get_resolved_head_global_position() if _resolved_head_pose_available() else (camera_node.global_position if camera_node else tracker_transform.origin)
 	var focus = (tracker_transform.origin + head_pos) * 0.5
 	var separation = maxf(2.5, tracker_transform.origin.distance_to(head_pos))
@@ -1046,7 +1093,9 @@ func _update_debug_preview_coords_label(tracker_transform: Transform3D) -> void:
 	var cam_pos = tracker_transform.origin
 	var cam_pos_py = _position_to_python_room_units(cam_pos)
 	var head_pos_py = _position_to_python_room_units(head_pos)
-	var text := "Cam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f\nPyCam: X %.2f  Y %.2f  Z %.2f\nPyHead: X %.2f  Y %.2f  Z %.2f" % [
+	var mode_label := "First-person frame check" if _tab_ui_mode == TAB_UI_MODE_FIRST_PERSON_PREVIEW else "Orbit frame check"
+	var text := "%s\nCam: X %.2f  Y %.2f  Z %.2f\nHead: X %.2f  Y %.2f  Z %.2f\nPyCam: X %.2f  Y %.2f  Z %.2f\nPyHead: X %.2f  Y %.2f  Z %.2f" % [
+		mode_label,
 		cam_pos.x, cam_pos.y, cam_pos.z,
 		head_pos.x, head_pos.y, head_pos.z,
 		cam_pos_py.x, cam_pos_py.y, cam_pos_py.z,
@@ -1652,6 +1701,107 @@ func _basis_euler_degrees(basis: Basis) -> Vector3:
 	var euler = basis.orthonormalized().get_euler()
 	return Vector3(rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z))
 
+func _make_debug_line_material(color: Color, energy: float = 1.8) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.no_depth_test = true
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.emission_enabled = true
+	material.emission = color
+	material.emission_energy_multiplier = energy
+	return material
+
+func _alignment_debug_parent() -> Node3D:
+	if window_center and window_center.get_parent() is Node3D:
+		return window_center.get_parent() as Node3D
+	if player_node:
+		return player_node
+	return get_parent() as Node3D
+
+func _setup_alignment_debug_overlay() -> void:
+	var root_parent := _alignment_debug_parent()
+	if root_parent == null:
+		return
+	if alignment_debug_root:
+		if alignment_debug_root.get_parent() != root_parent:
+			if alignment_debug_root.get_parent():
+				alignment_debug_root.get_parent().remove_child(alignment_debug_root)
+			root_parent.add_child(alignment_debug_root)
+			alignment_debug_root.transform = Transform3D.IDENTITY
+		return
+	alignment_debug_root = Node3D.new()
+	alignment_debug_root.name = "AlignmentDebugScreenFrames"
+	alignment_debug_root.visible = false
+	root_parent.add_child(alignment_debug_root)
+	alignment_debug_root.transform = Transform3D.IDENTITY
+	alignment_debug_material_current = _make_debug_line_material(Color(1.0, 0.12, 0.05, 0.95), 2.5)
+	alignment_debug_material_other = _make_debug_line_material(Color(1.0, 0.85, 0.05, 0.85), 2.0)
+
+func _screen_frame_mesh(width_meters: float, height_meters: float) -> ImmediateMesh:
+	var width := maxf(width_meters, 0.01)
+	var height := maxf(height_meters, 0.01)
+	var half_width := width * 0.5
+	var half_height := height * 0.5
+	var z_offset := -0.002
+	var normal_len := minf(width, height) * 0.25
+	var mesh := ImmediateMesh.new()
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	var tl := Vector3(-half_width, half_height, z_offset)
+	var tr := Vector3(half_width, half_height, z_offset)
+	var br := Vector3(half_width, -half_height, z_offset)
+	var bl := Vector3(-half_width, -half_height, z_offset)
+	var center := Vector3(0.0, 0.0, z_offset)
+	var normal_tip := Vector3(0.0, 0.0, z_offset - normal_len)
+	for segment in [[tl, tr], [tr, br], [br, bl], [bl, tl], [tl, br], [center, normal_tip]]:
+		mesh.surface_add_vertex(segment[0])
+		mesh.surface_add_vertex(segment[1])
+	mesh.surface_end()
+	return mesh
+
+func _get_alignment_debug_frame(screen_id: String) -> MeshInstance3D:
+	_setup_alignment_debug_overlay()
+	if alignment_debug_root == null:
+		return null
+	if alignment_debug_frames.has(screen_id):
+		return alignment_debug_frames[screen_id] as MeshInstance3D
+	var frame := MeshInstance3D.new()
+	frame.name = "ScreenFrame_" + screen_id
+	alignment_debug_root.add_child(frame)
+	alignment_debug_frames[screen_id] = frame
+	return frame
+
+func _update_alignment_debug_frames(screens: Dictionary, origin_screen_id: String, origin_tracker_transform: Transform3D, single_screen_payload: bool) -> void:
+	_setup_alignment_debug_overlay()
+	if alignment_debug_root == null:
+		return
+	var my_id_str := _normalize_screen_id(_current_marker_slot())
+	var active_ids := {}
+	for raw_screen_id in screens.keys():
+		var screen_id := _normalize_screen_id(raw_screen_id)
+		active_ids[screen_id] = true
+		var raw_payload: Dictionary = screens[raw_screen_id]
+		var screen_tracker_transform := _transform_from_layout_payload(raw_payload)
+		var relative_transform := Transform3D.IDENTITY
+		var final_transform := screen_tracker_transform
+		if _has_main_screen_reference and _layout_anchor_initialized:
+			if not (single_screen_payload or screen_id == origin_screen_id):
+				relative_transform = origin_tracker_transform.affine_inverse() * screen_tracker_transform
+			final_transform = _layout_anchor_window_local_transform * relative_transform
+		var width_m := float(raw_payload.get("width", 1.0)) * 0.0254
+		var height_m := float(raw_payload.get("height", 1.0)) * 0.0254
+		var frame := _get_alignment_debug_frame(screen_id)
+		if frame:
+			frame.mesh = _screen_frame_mesh(width_m, height_m)
+			frame.material_override = alignment_debug_material_current if screen_id == my_id_str else alignment_debug_material_other
+			frame.transform = final_transform
+			frame.visible = alignment_debug_root.visible
+	for screen_id in alignment_debug_frames.keys():
+		if not active_ids.has(screen_id):
+			var stale_frame := alignment_debug_frames[screen_id] as MeshInstance3D
+			if stale_frame:
+				stale_frame.visible = false
+
 func _normalize_screen_id(value: Variant) -> String:
 	if value == null:
 		return ""
@@ -1947,7 +2097,8 @@ func _refresh_connecting_debug(state: int = -1) -> void:
 
 func _apply_global_ui_visibility() -> void:
 	var show_full_ui := _tab_ui_mode == TAB_UI_MODE_NORMAL
-	var show_preview := _tab_ui_mode == TAB_UI_MODE_PREVIEW
+	var show_preview := _tab_ui_mode == TAB_UI_MODE_PREVIEW or _tab_ui_mode == TAB_UI_MODE_FIRST_PERSON_PREVIEW
+	var show_orbit_gizmos := show_preview and _tab_ui_mode != TAB_UI_MODE_FIRST_PERSON_PREVIEW
 	var show_debug_overlay := show_preview or show_debug_view
 	if setup_overlay:
 		setup_overlay.visible = show_full_ui
@@ -1958,11 +2109,16 @@ func _apply_global_ui_visibility() -> void:
 	if debug_preview_viewport:
 		debug_preview_viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE if show_debug_overlay else SubViewport.UPDATE_DISABLED
 	if head_dot:
-		head_dot.visible = show_debug_overlay
+		head_dot.visible = show_orbit_gizmos
 	if tracker_camera_dot:
-		tracker_camera_dot.visible = show_debug_overlay
+		tracker_camera_dot.visible = show_orbit_gizmos
 	if tracker_camera_cone:
-		tracker_camera_cone.visible = show_debug_overlay
+		tracker_camera_cone.visible = show_orbit_gizmos
+	if alignment_debug_root:
+		alignment_debug_root.visible = show_preview
+		for frame in alignment_debug_frames.values():
+			if frame is MeshInstance3D:
+				frame.visible = show_preview
 	if debug_preview_coords_label:
 		debug_preview_coords_label.visible = show_debug_overlay
 	if debug_preview_head_hint_label:
@@ -1971,8 +2127,16 @@ func _apply_global_ui_visibility() -> void:
 		debug_preview_camera_hint_label.visible = show_debug_overlay and debug_preview_camera_hint_label.visible
 
 func _advance_tab_ui_mode() -> void:
-	_tab_ui_mode = (_tab_ui_mode + 1) % 3
+	_tab_ui_mode = (_tab_ui_mode + 1) % 4
 	_sync_setup_visibility()
+
+func _debug_preview_accepts_camera_input() -> bool:
+	return _tab_ui_mode == TAB_UI_MODE_FIRST_PERSON_PREVIEW
+
+func _nudge_debug_preview_look(yaw_delta: float, pitch_delta: float) -> void:
+	_debug_preview_look_yaw_degrees = wrapf(_debug_preview_look_yaw_degrees + yaw_delta, -180.0, 180.0)
+	_debug_preview_look_pitch_degrees = clampf(_debug_preview_look_pitch_degrees + pitch_delta, -80.0, 80.0)
+	_update_debug_preview_camera_gizmos()
 
 func _sync_setup_visibility() -> void:
 	var marker_mode_active = _is_marker_mode_active()
@@ -2509,6 +2673,18 @@ func _input(event):
 			return event.keycode == target_key or event.physical_keycode == target_key
 		if key_matches.call(debug_toggle_key):
 			_advance_tab_ui_mode()
+		elif _debug_preview_accepts_camera_input() and key_matches.call(KEY_LEFT):
+			_nudge_debug_preview_look(-debug_preview_arrow_yaw_step_degrees, 0.0)
+			get_viewport().set_input_as_handled()
+		elif _debug_preview_accepts_camera_input() and key_matches.call(KEY_RIGHT):
+			_nudge_debug_preview_look(debug_preview_arrow_yaw_step_degrees, 0.0)
+			get_viewport().set_input_as_handled()
+		elif _debug_preview_accepts_camera_input() and key_matches.call(KEY_UP):
+			_nudge_debug_preview_look(0.0, -debug_preview_arrow_pitch_step_degrees)
+			get_viewport().set_input_as_handled()
+		elif _debug_preview_accepts_camera_input() and key_matches.call(KEY_DOWN):
+			_nudge_debug_preview_look(0.0, debug_preview_arrow_pitch_step_degrees)
+			get_viewport().set_input_as_handled()
 		elif key_matches.call(diagnostics_toggle_key):
 			if diagnostics_label:
 				diagnostics_label.visible = !diagnostics_label.visible
@@ -2878,6 +3054,8 @@ func _process(_delta):
 							_apply_scale_authority_window_scale(screens, origin_screen_id)
 						else:
 							_restore_local_window_scale_authority()
+
+						_update_alignment_debug_frames(screens, origin_screen_id, origin_tracker_transform, single_screen_payload)
 
 						if screens.has(my_id_str):
 							var raw_screen_payload: Dictionary = screens[my_id_str]

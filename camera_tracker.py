@@ -25,6 +25,7 @@ CAMERA_KEY_LEFT_EX = 2424832
 CAMERA_KEY_UP_EX = 2490368
 CAMERA_KEY_RIGHT_EX = 2555904
 CAMERA_KEY_DOWN_EX = 2621440
+CAMERA_PICKER_KEY = ord('y')
 CAMERA_INDEX_DEFAULT = 0
 CAMERA_INDEX_ENV = "CAMERA_INDEX"
 CAMERA_INDEX_AUTO_MAX = 6
@@ -438,6 +439,8 @@ def infer_calibration_size(camera_matrix):
 def main():
     print("Starting ArUco Constellation Tracker...")
     print("Press 'v' in the camera window to release/reacquire the webcam without stopping the tracker.")
+    print("Press 'y' in the camera window to choose a webcam from the terminal picker.")
+    print("Press 'r' in the camera window to reset the solved room/screen map.")
     print("Press 'q' in the camera window to quit.\n")
     os.environ.pop(CAMERA_INDEX_ENV, None)
 
@@ -1891,23 +1894,8 @@ def main():
             print("Successfully sent to WebSocket Router!")
         elif key == CAMERA_TOGGLE_KEY:
             set_camera_paused(not camera_paused)
-        elif key in (
-            CAMERA_KEY_LEFT,
-            CAMERA_KEY_DOWN,
-            CAMERA_KEY_LEFT_EX,
-            CAMERA_KEY_DOWN_EX,
-            CAMERA_KEY_RIGHT,
-            CAMERA_KEY_UP,
-            CAMERA_KEY_RIGHT_EX,
-            CAMERA_KEY_UP_EX,
-        ):
+        elif key == CAMERA_PICKER_KEY:
             open_camera_picker()
-        elif key in (ord('a'), ord('s')):
-            print(">>> Switching camera index down. <<<")
-            cap = switch_camera_index(-1)
-        elif key in (ord('d'), ord('w')):
-            print(">>> Switching camera index up. <<<")
-            cap = switch_camera_index(1)
 
         # Press 'q' to quit
         if key == ord('q'):
