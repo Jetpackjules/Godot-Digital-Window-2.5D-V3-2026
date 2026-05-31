@@ -856,7 +856,7 @@ def detect_single_aruco_pose_for_scale(image_bgr, intrinsics, label, marker_size
         return None, f"{label}: single ArUco dict={dict_label} id={detected_id} pose failed", detect_debug, detected_count
     cv2.drawFrameAxes(detect_debug, camera_matrix, None, rvec, tvec, float(marker_size_m) * 0.5)
     transform = create_transform_matrix(rvec, tvec).astype(np.float64)
-    status = f"{label}: single ArUco dict={dict_label} id={detected_id} size={marker_size_m:.3f}m markers={detected_count}"
+    status = f"{label}: single ArUco dict={dict_label} id={detected_id} size={marker_size_m:.4f}m markers={detected_count}"
     return transform, status, detect_debug, detected_count
 
 def detect_single_aruco_pose(image_bgr, intrinsics, label, marker_size_m, dictionary_name="auto", marker_id=-1):
@@ -974,7 +974,7 @@ def detect_aruco_poses_for_scale(image_bgr, intrinsics, label, marker_size_m, di
         return {}, f"{label}: big ArUco dict={dict_status} id={id_status} markers=0", detect_debug, 0
 
     ids_text = ",".join(f"{key[0]}:{key[1]}" for key in sorted(detections.keys()))
-    status = f"{label}: big ArUco size={marker_size_m:.3f}m markers={len(detections)} ids={ids_text}"
+    status = f"{label}: big ArUco size={marker_size_m:.4f}m markers={len(detections)} ids={ids_text}"
     return detections, status, detect_debug, len(detections)
 
 def detect_big_aruco_poses(image_bgr, intrinsics, label, marker_size_m, dictionary_name="auto", marker_id=-1, marker_ids=None):
@@ -4623,7 +4623,7 @@ def main():
             return
         if marker_size_m <= 0.0:
             marker_size_m = BIG_ARUCO_MARKER_SIZE_M
-            print(f">>> OAK-D/RealSense big ArUco marker_size_m was 0; using default {marker_size_m:.3f}m <<<")
+            print(f">>> OAK-D/RealSense big ArUco marker_size_m was 0; using default {marker_size_m:.4f}m <<<")
         if oakd_capture is None:
             oakd_realsense_align_lock.release()
             status = "single ArUco failed: OAK-D stream is not active"

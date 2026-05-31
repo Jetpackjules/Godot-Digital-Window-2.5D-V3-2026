@@ -189,7 +189,7 @@ extends Node3D
 		if value:
 			_send_oakd_alignment_command("big_aruco")
 @export_subgroup("Big ArUco")
-@export_range(0.0, 1.0, 0.001) var single_aruco_marker_size_m: float = 0.15
+@export_range(0.05, 0.30, 0.0005, "suffix:m") var single_aruco_marker_size_m: float = 0.15
 @export_enum("auto", "4x4_50", "4x4_100", "4x4_250", "5x5_100", "5x5_250", "6x6_250", "6x6_1000", "7x7_250") var single_aruco_dictionary: String = "auto"
 @export_range(-1, 1000, 1) var single_aruco_marker_id: int = -1
 @export var big_aruco_marker_ids: String = "45,46,47,48,49"
@@ -720,7 +720,7 @@ func _send_oakd_alignment_command(method: String) -> void:
 		"min_depth": min_depth_m,
 		"max_depth": max_depth_m,
 		"stride": maxi(1, stream_stride),
-		"marker_size_m": 0.15 if single_aruco_marker_size_m <= 0.0 else single_aruco_marker_size_m,
+		"marker_size_m": single_aruco_marker_size_m,
 		"aruco_dictionary": single_aruco_dictionary,
 		"aruco_marker_id": single_aruco_marker_id,
 		"aruco_marker_ids": big_aruco_marker_ids,
@@ -942,7 +942,7 @@ func _update_editor_debug_panel(force: bool = false) -> void:
 		live_mesh_mode,
 		combined_mesh_mode,
 	])
-	lines.append("Align buttons: Open3D, ChArUco, big ArUco size=%.3fm dict=%s id=%d ids=%s" % [
+	lines.append("Align buttons: Open3D, ChArUco, big ArUco size=%.4fm dict=%s id=%d ids=%s" % [
 		single_aruco_marker_size_m,
 		single_aruco_dictionary,
 		single_aruco_marker_id,
