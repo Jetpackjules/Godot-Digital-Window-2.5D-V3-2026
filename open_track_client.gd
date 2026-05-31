@@ -7,6 +7,7 @@ extends Node
 
 @export var sensitivity: Vector3 = Vector3(0.01, 0.01, 0.01) # Maps OpenTrack cm to godot base meters
 @export var default_viewer_distance_meters: float = 0.5
+@export var default_viewer_distance_enabled: bool = false
 
 # Global Output (accessible from other scripts)
 @export var output_x: float = 0.0
@@ -33,7 +34,7 @@ var aruco_markers: Array[Texture2D] = []
 ## Enable this if playing via an HTML5 Web Browser!
 @export var use_websocket: bool = true
 ## The IP Address of your main PC running OpenTrack and the Python Bridge Script
-@export var websocket_url: String = "ws://127.0.0.1:8080"
+@export var websocket_url: String = "ws://10.20.211.39:8080"
 
 @export_group("Debug Head Tracking")
 @export var show_debug_view: bool = false
@@ -45,6 +46,7 @@ var aruco_markers: Array[Texture2D] = []
 @export var sync_mode_toggle_key: Key = KEY_F8
 @export var render_mode_toggle_key: Key = KEY_F9
 @export var far_plane_toggle_key: Key = KEY_F10
+@export var viewer_distance_toggle_key: Key = KEY_B
 @export var debug_preview_zoom_step: float = 1.0
 @export var debug_preview_min_size: float = 2.0
 @export var debug_preview_max_size: float = 60.0
@@ -104,6 +106,7 @@ var sync_mode_button: Button
 var render_mode_button: Button
 var far_plane_button: Button
 var fullscreen_button: Button
+var projector_mode_button: Button
 var setup_action_row: FlowContainer
 var status_toggle_button: Button
 var connect_details_button: Button
@@ -113,10 +116,34 @@ var calibration_title_label: Label
 var calibration_info_label: Label
 var start_scan_button: Button
 var save_preset_button: Button
+var projector_setup_panel: PanelContainer
+var projector_setup_scroll: ScrollContainer
+var projector_setup_box: VBoxContainer
+var projector_setup_info_label: Label
+var projector_face_count_dropdown: OptionButton
+var projector_mapping_button: Button
+var projector_mapping_finish_button: Button
+var projector_mapping_cancel_button: Button
 var _selected_preset_name: String = ""
+var projector_canvas: CanvasLayer
+var projector_blackout: ColorRect
+var _projector_setup_rows: Array = []
+var _projector_faces: Array = []
+var _projector_mode_enabled: bool = false
+var _projector_mapping_active: bool = false
+var _projector_drag_face_index: int = -1
+var _projector_drag_corner_index: int = -1
+var _projector_face_count: int = 3
+var _projector_slots_warning: String = ""
 
 const LOCAL_SETUP_PATH := "user://screen_setup.json"
 const MARKER_SLOT_COUNT := 6
+const PROJECTOR_MAX_FACES := 3
+const PROJECTOR_FACE_NAMES := ["Front", "Top", "Right"]
+const PROJECTOR_HANDLE_SIZE := 18.0
+const PROJECTOR_VIEWPORT_WIDTH := 1024
+const PROJECTOR_CAMERA_SCRIPT = preload("res://Perspective_Cam.gd")
+const PROJECTOR_WARP_SHADER_CODE := "shader_type canvas_item;\nuniform mat3 homography_inv = mat3(1.0);\nuniform vec2 rect_size = vec2(1.0, 1.0);\nvoid fragment() {\n\tvec2 local_pos = UV * rect_size;\n\tvec3 uvh = homography_inv * vec3(local_pos, 1.0);\n\tif (abs(uvh.z) < 0.00001) {\n\t\tdiscard;\n\t}\n\tvec2 mapped_uv = uvh.xy / uvh.z;\n\tif (mapped_uv.x < 0.0 || mapped_uv.x > 1.0 || mapped_uv.y < 0.0 || mapped_uv.y > 1.0) {\n\t\tdiscard;\n\t}\n\tCOLOR = texture(TEXTURE, mapped_uv);\n}\n"
 const WS_RETRY_INTERVAL_SEC := 2.0
 const WS_CONNECT_TIMEOUT_SEC := 4.0
 const VIEWER_POSE_SEND_INTERVAL_SEC := 1.0 / 90.0
@@ -157,6 +184,8 @@ var _has_layout_solution: bool = false
 var _next_ws_retry_msec: int = 0
 var _ws_connect_attempt_count: int = 0
 var _last_ws_connect_error: int = OK
+var _direct_udp_bound: bool = false
+var _direct_udp_bind_error: int = OK
 var _runtime_page_host: String = ""
 var _runtime_display_mode: String = "browser"
 var _ws_connect_started_msec: int = 0
@@ -248,6 +277,7 @@ var _cached_environment_states: Dictionary = {}
 var _cached_camera_far_states: Dictionary = {}
 var _status_panel_layout_dirty: bool = true
 var _last_status_panel_viewport_size: Vector2 = Vector2.ZERO
+var _projector_warp_shader_resource: Shader = null
 
 func _ready():
 	process_priority = -100 # Force this script to run BEFORE the Perspective_Cam runs
@@ -547,26 +577,36 @@ func _ready():
 		_try_connect_websocket(true)
 	else:
 		var error = udp.bind(port, "127.0.0.1")
+		_direct_udp_bind_error = error
 		if error == OK:
+			_direct_udp_bound = true
 			print("Godot Desktop App is listening for OpenTrack UDP on port ", port)
 		else:
-			push_error("Could not bind to port 4242. Error code: ", error)
+			_direct_udp_bound = false
+			push_error("Could not bind to OpenTrack UDP port ", port, ". Error code: ", error)
 		
 	_setup_debug_view()
 	_load_local_client_preferences()
+	if not use_websocket:
+		_has_received_config = true
+		device_id = 0
+		_load_presets_from_local_file()
+		if not _try_auto_register_saved_screen():
+			_set_direct_udp_setup_state()
 	if get_tree():
 		if not get_tree().node_added.is_connected(_handle_scene_node_added):
 			get_tree().node_added.connect(_handle_scene_node_added)
 	call_deferred("_apply_render_performance_mode")
 	call_deferred("_apply_camera_range_mode")
 	_resolve_anaglyph_controller()
-	_set_setup_state(
-		SetupState.BOOTING,
-		"Connecting",
-		"Connecting to the sync bridge and waiting for device setup...",
-		""
-	)
-	_refresh_connecting_debug()
+	if use_websocket:
+		_set_setup_state(
+			SetupState.BOOTING,
+			"Connecting",
+			"Connecting to the sync bridge and waiting for device setup...",
+			""
+		)
+		_refresh_connecting_debug()
 
 func _setup_debug_view():
 	# ---------------------------------------------------------
@@ -652,6 +692,11 @@ func _setup_debug_view():
 	fullscreen_button.visible = false
 	fullscreen_button.pressed.connect(_toggle_fullscreen)
 	setup_action_row.add_child(fullscreen_button)
+
+	projector_mode_button = Button.new()
+	projector_mode_button.visible = false
+	projector_mode_button.pressed.connect(_toggle_projector_mode)
+	setup_action_row.add_child(projector_mode_button)
 
 	connect_details_button = Button.new()
 	connect_details_button.text = "Show Details"
@@ -800,7 +845,123 @@ func _setup_debug_view():
 	)
 	
 	setup_overlay.add_child(calibration_ui_panel)
+
+	projector_setup_panel = PanelContainer.new()
+	projector_setup_panel.visible = false
+	projector_setup_panel.set_anchors_preset(Control.PRESET_CENTER)
+	projector_setup_panel.add_theme_stylebox_override("panel", calibration_panel_stylebox)
+
+	projector_setup_scroll = ScrollContainer.new()
+	projector_setup_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	projector_setup_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	projector_setup_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	projector_setup_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	projector_setup_panel.add_child(projector_setup_scroll)
+
+	projector_setup_box = VBoxContainer.new()
+	projector_setup_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	projector_setup_box.add_theme_constant_override("separation", 10)
+	projector_setup_scroll.add_child(projector_setup_box)
+
+	var projector_title = Label.new()
+	projector_title.text = "PROJECTOR SETUP"
+	projector_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	projector_setup_box.add_child(projector_title)
+
+	projector_setup_info_label = Label.new()
+	projector_setup_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	projector_setup_info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	projector_setup_info_label.text = "Map 1-3 virtual faces onto the projector output. During scan, each face shows its own ArUco constellation so the tracker can solve them like real screens."
+	projector_setup_box.add_child(projector_setup_info_label)
+
+	projector_face_count_dropdown = OptionButton.new()
+	projector_face_count_dropdown.add_item("1 Face")
+	projector_face_count_dropdown.add_item("2 Faces")
+	projector_face_count_dropdown.add_item("3 Faces")
+	projector_face_count_dropdown.item_selected.connect(func(index: int):
+		_projector_face_count = index + 1
+		_refresh_projector_setup_rows()
+	)
+	projector_setup_box.add_child(projector_face_count_dropdown)
+
+	for face_index in range(PROJECTOR_MAX_FACES):
+		var row_panel = PanelContainer.new()
+		var row_style = StyleBoxFlat.new()
+		row_style.bg_color = Color(0.12, 0.12, 0.12, 0.9)
+		row_panel.add_theme_stylebox_override("panel", row_style)
+		var row_box = VBoxContainer.new()
+		row_box.add_theme_constant_override("separation", 6)
+		row_panel.add_child(row_box)
+
+		var row_title = Label.new()
+		row_title.text = PROJECTOR_FACE_NAMES[face_index] + " Face"
+		row_title.add_theme_color_override("font_color", _projector_face_color(face_index))
+		row_box.add_child(row_title)
+
+		var dim_row = HBoxContainer.new()
+		dim_row.add_theme_constant_override("separation", 8)
+		row_box.add_child(dim_row)
+
+		var width_input = LineEdit.new()
+		width_input.placeholder_text = "Width (in)"
+		width_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		width_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dim_row.add_child(width_input)
+
+		var height_input = LineEdit.new()
+		height_input.placeholder_text = "Height (in)"
+		height_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		height_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dim_row.add_child(height_input)
+
+		var slot_label = Label.new()
+		slot_label.text = "Slot: --"
+		row_box.add_child(slot_label)
+
+		projector_setup_box.add_child(row_panel)
+		_projector_setup_rows.append({
+			"panel": row_panel,
+			"title": row_title,
+			"width_input": width_input,
+			"height_input": height_input,
+			"slot_label": slot_label,
+		})
+
+	var projector_button_row = HBoxContainer.new()
+	projector_button_row.add_theme_constant_override("separation", 8)
+	projector_setup_box.add_child(projector_button_row)
+
+	projector_mapping_button = Button.new()
+	projector_mapping_button.text = "Center Mapping"
+	projector_mapping_button.pressed.connect(_begin_projector_mapping)
+	projector_button_row.add_child(projector_mapping_button)
+
+	projector_mapping_finish_button = Button.new()
+	projector_mapping_finish_button.text = "Start Projector Scan"
+	projector_mapping_finish_button.pressed.connect(_register_projector_faces_from_setup)
+	projector_button_row.add_child(projector_mapping_finish_button)
+
+	projector_mapping_cancel_button = Button.new()
+	projector_mapping_cancel_button.text = "Back"
+	projector_mapping_cancel_button.pressed.connect(_exit_projector_mode)
+	projector_button_row.add_child(projector_mapping_cancel_button)
+
+	setup_overlay.add_child(projector_setup_panel)
 	_apply_setup_ui_metrics()
+	_load_projector_local_config()
+	_refresh_projector_setup_rows()
+	_refresh_setup_controls()
+
+	projector_canvas = CanvasLayer.new()
+	projector_canvas.layer = 127
+	projector_canvas.visible = false
+	add_child(projector_canvas)
+
+	projector_blackout = ColorRect.new()
+	projector_blackout.color = Color.BLACK
+	projector_blackout.anchor_right = 1.0
+	projector_blackout.anchor_bottom = 1.0
+	projector_canvas.add_child(projector_blackout)
 	
 	# ---------------------------------------------------------
 	# OVERHEAD TRACKING DEBUG VIEWPORT (OPTIONAL HUD)
@@ -1191,6 +1352,19 @@ func _rebuild_preset_dropdown():
 			var h = global_presets[key].get("height", 0)
 			preset_dropdown.add_item(key + " (" + str(w) + "\" x " + str(h) + "\")")
 
+func _load_presets_from_local_file() -> void:
+	var file := FileAccess.open("res://presets.json", FileAccess.READ)
+	if file == null:
+		global_presets = {}
+		_rebuild_preset_dropdown()
+		return
+	var json := JSON.new()
+	if json.parse(file.get_as_text()) == OK and json.data is Dictionary:
+		global_presets = json.data
+	else:
+		global_presets = {}
+	_rebuild_preset_dropdown()
+
 func _load_local_screen_config() -> Dictionary:
 	if not FileAccess.file_exists(LOCAL_SETUP_PATH):
 		return {}
@@ -1246,6 +1420,660 @@ func _load_local_client_preferences() -> void:
 	else:
 		_camera_range_index = 0
 	_refresh_setup_controls()
+
+func _projector_face_color(face_index: int) -> Color:
+	match face_index:
+		0:
+			return Color(0.98, 0.35, 0.2, 0.95)
+		1:
+			return Color(0.2, 0.8, 1.0, 0.95)
+		2:
+			return Color(0.95, 0.85, 0.22, 0.95)
+		_:
+			return Color(0.85, 0.85, 0.85, 0.95)
+
+func _projector_face_slot(face_index: int) -> int:
+	return posmod(_current_marker_slot() + face_index, MARKER_SLOT_COUNT)
+
+func _projector_face_screen_id(face_index: int) -> String:
+	return str(_projector_face_slot(face_index))
+
+func _projector_warp_shader() -> Shader:
+	if _projector_warp_shader_resource == null:
+		_projector_warp_shader_resource = Shader.new()
+		_projector_warp_shader_resource.code = PROJECTOR_WARP_SHADER_CODE
+	return _projector_warp_shader_resource
+
+func _projector_quad_bounds(quad: PackedVector2Array) -> Rect2:
+	if quad.is_empty():
+		return Rect2(Vector2.ZERO, Vector2.ONE)
+	var min_x := quad[0].x
+	var max_x := quad[0].x
+	var min_y := quad[0].y
+	var max_y := quad[0].y
+	for point in quad:
+		min_x = minf(min_x, point.x)
+		max_x = maxf(max_x, point.x)
+		min_y = minf(min_y, point.y)
+		max_y = maxf(max_y, point.y)
+	return Rect2(Vector2(min_x, min_y), Vector2(maxf(1.0, max_x - min_x), maxf(1.0, max_y - min_y)))
+
+func _projector_homography_from_unit_square(quad: PackedVector2Array) -> Basis:
+	if quad.size() != 4:
+		return Basis.IDENTITY
+	var p0: Vector2 = quad[0]
+	var p1: Vector2 = quad[1]
+	var p2: Vector2 = quad[2]
+	var p3: Vector2 = quad[3]
+	var dx1 := p1.x - p2.x
+	var dx2 := p3.x - p2.x
+	var dx3 := p0.x - p1.x + p2.x - p3.x
+	var dy1 := p1.y - p2.y
+	var dy2 := p3.y - p2.y
+	var dy3 := p0.y - p1.y + p2.y - p3.y
+	var a: float
+	var b: float
+	var c := p0.x
+	var d: float
+	var e: float
+	var f := p0.y
+	var g := 0.0
+	var h := 0.0
+	var det := dx1 * dy2 - dx2 * dy1
+	if absf(dx3) > 0.00001 or absf(dy3) > 0.00001:
+		if absf(det) < 0.00001:
+			return Basis.IDENTITY
+		g = (dx3 * dy2 - dx2 * dy3) / det
+		h = (dx1 * dy3 - dx3 * dy1) / det
+	a = p1.x - p0.x + g * p1.x
+	b = p3.x - p0.x + h * p3.x
+	d = p1.y - p0.y + g * p1.y
+	e = p3.y - p0.y + h * p3.y
+	return Basis(
+		Vector3(a, d, g),
+		Vector3(b, e, h),
+		Vector3(c, f, 1.0)
+	)
+
+func _projector_inverse_homography(local_quad: PackedVector2Array) -> Basis:
+	var homography := _projector_homography_from_unit_square(local_quad)
+	if absf(homography.determinant()) < 0.00001:
+		return Basis.IDENTITY
+	return homography.inverse()
+
+func _default_projector_quad(face_index: int) -> PackedVector2Array:
+	var size := _effective_ui_viewport_size()
+	var w := size.x
+	var h := size.y
+	match face_index:
+		0:
+			return PackedVector2Array([
+				Vector2(w * 0.24, h * 0.45),
+				Vector2(w * 0.74, h * 0.42),
+				Vector2(w * 0.76, h * 0.92),
+				Vector2(w * 0.22, h * 0.94),
+			])
+		1:
+			return PackedVector2Array([
+				Vector2(w * 0.28, h * 0.08),
+				Vector2(w * 0.78, h * 0.06),
+				Vector2(w * 0.74, h * 0.42),
+				Vector2(w * 0.24, h * 0.45),
+			])
+		_:
+			return PackedVector2Array([
+				Vector2(w * 0.74, h * 0.42),
+				Vector2(w * 0.92, h * 0.34),
+				Vector2(w * 0.93, h * 0.84),
+				Vector2(w * 0.76, h * 0.92),
+			])
+
+func _serialize_quad(points: PackedVector2Array) -> Array:
+	var payload: Array = []
+	for point in points:
+		payload.append([point.x, point.y])
+	return payload
+
+func _deserialize_quad(payload: Variant, fallback: PackedVector2Array) -> PackedVector2Array:
+	if payload is Array and payload.size() == 4:
+		var points := PackedVector2Array()
+		for point in payload:
+			if point is Array and point.size() >= 2:
+				points.append(Vector2(float(point[0]), float(point[1])))
+		if points.size() == 4:
+			return points
+	return fallback
+
+func _ensure_projector_face_defs() -> void:
+	while _projector_faces.size() < PROJECTOR_MAX_FACES:
+		var index := _projector_faces.size()
+		_projector_faces.append({
+			"index": index,
+			"name": PROJECTOR_FACE_NAMES[index],
+			"width_inches": 10.0,
+			"height_inches": 6.0,
+			"quad": _default_projector_quad(index),
+			"layout_valid": false,
+			"polygon": null,
+			"warp_rect": null,
+			"border": null,
+			"label": null,
+			"handles": [],
+			"scan_viewport": null,
+			"scan_root": null,
+			"scan_markers": [],
+			"runtime_viewport": null,
+			"runtime_camera": null,
+			"window_center": null,
+			"scaler": null,
+		})
+
+func _load_projector_local_config() -> void:
+	_ensure_projector_face_defs()
+	var payload := _load_local_screen_config()
+	_projector_face_count = clampi(int(payload.get("projector_face_count", 3)), 1, PROJECTOR_MAX_FACES)
+	var stored_faces = payload.get("projector_faces", [])
+	for face_index in range(PROJECTOR_MAX_FACES):
+		var face = _projector_faces[face_index]
+		if stored_faces is Array and face_index < stored_faces.size() and stored_faces[face_index] is Dictionary:
+			var saved_face: Dictionary = stored_faces[face_index]
+			face["width_inches"] = maxf(0.1, float(saved_face.get("width", face["width_inches"])))
+			face["height_inches"] = maxf(0.1, float(saved_face.get("height", face["height_inches"])))
+			face["quad"] = _deserialize_quad(saved_face.get("quad", []), _default_projector_quad(face_index))
+		elif face["quad"].size() != 4:
+			face["quad"] = _default_projector_quad(face_index)
+		_projector_faces[face_index] = face
+
+func _save_projector_local_config() -> void:
+	_ensure_projector_face_defs()
+	var payload := _load_local_screen_config()
+	payload["projector_mode_enabled"] = false
+	payload["projector_face_count"] = _projector_face_count
+	var faces_payload: Array = []
+	for face_index in range(PROJECTOR_MAX_FACES):
+		var face = _projector_faces[face_index]
+		faces_payload.append({
+			"width": float(face.get("width_inches", 0.0)),
+			"height": float(face.get("height_inches", 0.0)),
+			"quad": _serialize_quad(face.get("quad", PackedVector2Array())),
+		})
+	payload["projector_faces"] = faces_payload
+	_write_local_screen_config(payload)
+
+func _refresh_projector_setup_rows() -> void:
+	_ensure_projector_face_defs()
+	if projector_face_count_dropdown:
+		projector_face_count_dropdown.select(_projector_face_count - 1)
+	_projector_slots_warning = "Slots: "
+	var slot_labels: PackedStringArray = PackedStringArray()
+	for face_index in range(PROJECTOR_MAX_FACES):
+		var row: Dictionary = _projector_setup_rows[face_index]
+		var face = _projector_faces[face_index]
+		var visible = face_index < _projector_face_count
+		(row.get("panel") as Control).visible = visible
+		(row.get("width_input") as LineEdit).text = str(face.get("width_inches", 0.0))
+		(row.get("height_input") as LineEdit).text = str(face.get("height_inches", 0.0))
+		var slot_text = _projector_face_screen_id(face_index)
+		(row.get("slot_label") as Label).text = "Tracker Slot: " + slot_text
+		slot_labels.append(slot_text)
+	projector_setup_info_label.text = "Map 1-3 virtual faces onto the projector output. During scan, each face shows its own ArUco constellation so the tracker can solve them like real screens.\n\nUsing tracker slots: %s" % [", ".join(slot_labels)]
+	_refresh_setup_controls()
+
+func _projector_face_viewport_size(width_inches: float, height_inches: float) -> Vector2i:
+	var safe_width = maxf(width_inches, 0.1)
+	var safe_height = maxf(height_inches, 0.1)
+	var width_px := PROJECTOR_VIEWPORT_WIDTH
+	var height_px := int(round(float(width_px) * (safe_height / safe_width)))
+	height_px = clampi(height_px, 256, 1536)
+	return Vector2i(width_px, height_px)
+
+func _apply_projector_face_dimensions(face_index: int, width_inches: float, height_inches: float) -> void:
+	_ensure_projector_face_defs()
+	if face_index < 0 or face_index >= _projector_faces.size():
+		return
+	var face = _projector_faces[face_index]
+	face["width_inches"] = width_inches
+	face["height_inches"] = height_inches
+	var scaler: ScreenScaling = face.get("scaler")
+	if scaler:
+		scaler.physical_width_meters = width_inches * 0.0254
+		scaler.physical_height_meters = height_inches * 0.0254
+	var viewport_size := _projector_face_viewport_size(width_inches, height_inches)
+	var scan_viewport: SubViewport = face.get("scan_viewport")
+	if scan_viewport:
+		scan_viewport.size = viewport_size
+	var runtime_viewport: SubViewport = face.get("runtime_viewport")
+	if runtime_viewport:
+		runtime_viewport.size = viewport_size
+		var runtime_camera: Camera3D = face.get("runtime_camera")
+		if runtime_camera:
+			runtime_camera.near = camera_node.near if camera_node else runtime_camera.near
+			runtime_camera.far = camera_node.far if camera_node else runtime_camera.far
+	_projector_faces[face_index] = face
+
+func _ensure_projector_faces() -> void:
+	_ensure_projector_face_defs()
+	if projector_canvas == null:
+		return
+	for face_index in range(PROJECTOR_MAX_FACES):
+		var face = _projector_faces[face_index]
+		if face.get("polygon") == null:
+			var polygon := Polygon2D.new()
+			polygon.antialiased = true
+			polygon.z_index = 10 + face_index
+			projector_canvas.add_child(polygon)
+			face["polygon"] = polygon
+
+			var warp_rect := TextureRect.new()
+			warp_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			warp_rect.stretch_mode = TextureRect.STRETCH_SCALE
+			warp_rect.z_index = 8 + face_index
+			var warp_material := ShaderMaterial.new()
+			warp_material.shader = _projector_warp_shader()
+			warp_rect.material = warp_material
+			projector_canvas.add_child(warp_rect)
+			face["warp_rect"] = warp_rect
+
+			var border := Line2D.new()
+			border.width = 4.0
+			border.default_color = _projector_face_color(face_index)
+			border.closed = true
+			border.z_index = 40 + face_index
+			projector_canvas.add_child(border)
+			face["border"] = border
+
+			var label := Label.new()
+			label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			label.add_theme_font_size_override("font_size", 22)
+			label.add_theme_color_override("font_color", Color.WHITE)
+			label.add_theme_color_override("font_outline_color", Color.BLACK)
+			label.add_theme_constant_override("outline_size", 4)
+			label.z_index = 55 + face_index
+			projector_canvas.add_child(label)
+			face["label"] = label
+
+			var handles: Array = []
+			for corner_index in range(4):
+				var handle := ColorRect.new()
+				handle.color = _projector_face_color(face_index)
+				handle.custom_minimum_size = Vector2(PROJECTOR_HANDLE_SIZE, PROJECTOR_HANDLE_SIZE)
+				handle.size = handle.custom_minimum_size
+				handle.z_index = 60 + face_index
+				projector_canvas.add_child(handle)
+				handles.append(handle)
+			face["handles"] = handles
+
+			var scan_viewport := SubViewport.new()
+			scan_viewport.disable_3d = true
+			scan_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			projector_canvas.add_child(scan_viewport)
+			face["scan_viewport"] = scan_viewport
+
+			var scan_root := Control.new()
+			scan_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+			scan_viewport.add_child(scan_root)
+			face["scan_root"] = scan_root
+
+			var scan_bg := ColorRect.new()
+			scan_bg.color = Color.WHITE
+			scan_bg.anchor_right = 1.0
+			scan_bg.anchor_bottom = 1.0
+			scan_root.add_child(scan_bg)
+
+			var marker_nodes: Array = []
+			for marker_name in ["CenterArUco", "TopLeftArUco", "TopRightArUco", "BottomLeftArUco", "BottomRightArUco"]:
+				var marker := TextureRect.new()
+				marker.name = marker_name
+				marker.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+				marker.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				marker.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				scan_root.add_child(marker)
+				marker_nodes.append(marker)
+			face["scan_markers"] = marker_nodes
+
+			var runtime_viewport := SubViewport.new()
+			runtime_viewport.world_3d = get_viewport().world_3d
+			runtime_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			projector_canvas.add_child(runtime_viewport)
+			face["runtime_viewport"] = runtime_viewport
+
+			var root_parent := _alignment_debug_parent()
+			var face_window_center := Node3D.new()
+			face_window_center.name = "ProjectorFaceWindow_%d" % face_index
+			root_parent.add_child(face_window_center)
+			face_window_center.transform = _default_window_local_transform
+			face["window_center"] = face_window_center
+
+			var face_scaler := ScreenScaling.new()
+			face_scaler.name = "ProjectorFaceScaler_%d" % face_index
+			add_child(face_scaler)
+			face["scaler"] = face_scaler
+
+			var runtime_camera := Camera3D.new()
+			runtime_camera.current = true
+			runtime_camera.set_script(PROJECTOR_CAMERA_SCRIPT)
+			runtime_viewport.add_child(runtime_camera)
+			runtime_camera.target_path = camera_node.get_path() if camera_node else NodePath("")
+			runtime_camera.window_center_path = face_window_center.get_path()
+			runtime_camera.screen_scaling_path = face_scaler.get_path()
+			face["runtime_camera"] = runtime_camera
+
+		_apply_projector_face_dimensions(face_index, float(face.get("width_inches", 10.0)), float(face.get("height_inches", 6.0)))
+		_update_projector_face_scan_view(face_index)
+		_projector_faces[face_index] = face
+
+func _update_projector_face_scan_view(face_index: int) -> void:
+	if face_index < 0 or face_index >= _projector_faces.size():
+		return
+	var face = _projector_faces[face_index]
+	var scan_viewport: SubViewport = face.get("scan_viewport")
+	var marker_nodes: Array = face.get("scan_markers", [])
+	if scan_viewport == null or marker_nodes.size() < 5:
+		return
+	var viewport_size = Vector2(scan_viewport.size.x, scan_viewport.size.y)
+	var shortest_edge = minf(viewport_size.x, viewport_size.y)
+	var min_edge = maxf(1.0, shortest_edge)
+	var gap = min_edge * 0.045
+	var box_size = minf(
+		min_edge * 0.26,
+		minf(
+			maxf(16.0, (viewport_size.y * 0.5 - gap) / 1.65),
+			maxf(16.0, (viewport_size.x * 0.5 - gap) / 1.65)
+		)
+	)
+	var sq_size = Vector2(box_size, box_size)
+	var pad = maxf(box_size * 0.15, gap)
+	var slot = _projector_face_slot(face_index)
+	var base_id = slot * 4 + 10
+	var textures = [
+		aruco_markers[slot] if slot < aruco_markers.size() else null,
+		aruco_markers[base_id] if base_id < aruco_markers.size() else null,
+		aruco_markers[base_id + 1] if (base_id + 1) < aruco_markers.size() else null,
+		aruco_markers[base_id + 2] if (base_id + 2) < aruco_markers.size() else null,
+		aruco_markers[base_id + 3] if (base_id + 3) < aruco_markers.size() else null,
+	]
+	var positions = [
+		Vector2((viewport_size.x - box_size) * 0.5, (viewport_size.y - box_size) * 0.5),
+		Vector2(pad, pad),
+		Vector2(viewport_size.x - box_size - pad, pad),
+		Vector2(pad, viewport_size.y - box_size - pad),
+		Vector2(viewport_size.x - box_size - pad, viewport_size.y - box_size - pad),
+	]
+	for marker_index in range(5):
+		var marker: TextureRect = marker_nodes[marker_index]
+		marker.texture = textures[marker_index]
+		marker.custom_minimum_size = sq_size
+		marker.size = sq_size
+		marker.position = positions[marker_index]
+
+func _refresh_projector_canvas() -> void:
+	if projector_canvas == null:
+		return
+	var should_show := _projector_mode_enabled or _projector_mapping_active
+	projector_canvas.visible = should_show
+	if not should_show:
+		return
+	_ensure_projector_faces()
+	projector_blackout.visible = true
+	for face_index in range(PROJECTOR_MAX_FACES):
+		var face = _projector_faces[face_index]
+		var visible := face_index < _projector_face_count
+		var polygon: Polygon2D = face.get("polygon")
+		var warp_rect: TextureRect = face.get("warp_rect")
+		var border: Line2D = face.get("border")
+		var label: Label = face.get("label")
+		var handles: Array = face.get("handles", [])
+		var quad: PackedVector2Array = face.get("quad", PackedVector2Array())
+		var texture: Texture2D = null
+		if calibration_mode:
+			var scan_viewport: SubViewport = face.get("scan_viewport")
+			texture = scan_viewport.get_texture() if scan_viewport else null
+		else:
+			var runtime_viewport: SubViewport = face.get("runtime_viewport")
+			texture = runtime_viewport.get_texture() if runtime_viewport else null
+		if warp_rect:
+			warp_rect.visible = visible and not _projector_mapping_active and texture != null
+			if warp_rect.visible:
+				var bounds := _projector_quad_bounds(quad).grow(2.0)
+				var local_quad := PackedVector2Array()
+				for point in quad:
+					local_quad.append(point - bounds.position)
+				warp_rect.position = bounds.position
+				warp_rect.size = bounds.size
+				warp_rect.texture = texture
+				warp_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST if calibration_mode else CanvasItem.TEXTURE_FILTER_LINEAR
+				var warp_material := warp_rect.material as ShaderMaterial
+				if warp_material:
+					warp_material.set_shader_parameter("rect_size", bounds.size)
+					warp_material.set_shader_parameter("homography_inv", _projector_inverse_homography(local_quad))
+		if polygon:
+			polygon.visible = visible and _projector_mapping_active
+			if polygon.visible:
+				polygon.polygon = quad
+				polygon.texture = null
+				polygon.color = _projector_face_color(face_index).lerp(Color.WHITE, 0.12)
+				polygon.color.a = 0.62
+				polygon.uv = PackedVector2Array()
+		if border:
+			border.visible = visible and (_projector_mapping_active or calibration_mode)
+			if visible:
+				border.points = quad
+		if label:
+			label.visible = visible and _projector_mapping_active
+			if label.visible:
+				var center := Vector2.ZERO
+				for point in quad:
+					center += point
+				center /= max(1.0, float(quad.size()))
+				var width_inches = float(face.get("width_inches", 0.0))
+				var height_inches = float(face.get("height_inches", 0.0))
+				label.text = "%s\n%.1f x %.1f in\nSlot %s" % [
+					face.get("name", "Face"),
+					width_inches,
+					height_inches,
+					_projector_face_screen_id(face_index),
+				]
+				var min_size = label.get_combined_minimum_size()
+				label.size = min_size
+				label.position = center - (min_size * 0.5)
+		for corner_index in range(handles.size()):
+			var handle: Control = handles[corner_index]
+			handle.visible = visible and _projector_mapping_active
+			if handle.visible:
+				var point: Vector2 = quad[corner_index]
+				handle.position = point - Vector2(PROJECTOR_HANDLE_SIZE * 0.5, PROJECTOR_HANDLE_SIZE * 0.5)
+
+func _show_projector_setup() -> void:
+	if not projector_setup_panel:
+		return
+	_load_projector_local_config()
+	_refresh_projector_setup_rows()
+	calibration_ui_panel.visible = false
+	projector_setup_panel.visible = true
+	_projector_mapping_active = false
+	_layout_projector_setup_panel()
+	_refresh_projector_canvas()
+	_set_setup_state(
+		SetupState.NEED_SCREEN_SIZE,
+		"Projector Setup",
+		"Configure the virtual faces and map them onto the projector output.",
+		"Press Edit Projection Map to drag the corners on the projected image."
+	)
+
+func _toggle_projector_mode() -> void:
+	var projector_ui_open := _projector_mode_enabled or _projector_mapping_active
+	if projector_setup_panel and projector_setup_panel.visible:
+		projector_ui_open = true
+	if projector_ui_open:
+		_exit_projector_mode()
+	else:
+		_show_projector_setup()
+
+func _exit_projector_mode() -> void:
+	_projector_mode_enabled = false
+	_projector_mapping_active = false
+	_projector_drag_face_index = -1
+	_projector_drag_corner_index = -1
+	if projector_setup_panel:
+		projector_setup_panel.visible = false
+	_save_projector_local_config()
+	_refresh_projector_canvas()
+	_refresh_setup_controls()
+	_show_screen_setup()
+
+func _apply_projector_setup_inputs_to_faces() -> bool:
+	_ensure_projector_face_defs()
+	for face_index in range(_projector_face_count):
+		var row: Dictionary = _projector_setup_rows[face_index]
+		var width_inches = float((row.get("width_input") as LineEdit).text)
+		var height_inches = float((row.get("height_input") as LineEdit).text)
+		if width_inches <= 0.0 or height_inches <= 0.0:
+			return false
+		_apply_projector_face_dimensions(face_index, width_inches, height_inches)
+	return true
+
+func _projector_faces_registration_payload() -> Array:
+	var faces: Array = []
+	for face_index in range(_projector_face_count):
+		var face = _projector_faces[face_index]
+		faces.append({
+			"device_id": _projector_face_slot(face_index),
+			"width": float(face.get("width_inches", 0.0)),
+			"height": float(face.get("height_inches", 0.0)),
+		})
+	return faces
+
+func _begin_projector_mapping() -> void:
+	if not _apply_projector_setup_inputs_to_faces():
+		_set_setup_state(
+			SetupState.ERROR,
+			"Invalid Projector Face Size",
+			"Enter valid positive width and height values for each enabled face before mapping.",
+			"Each projected face must have a real physical size in inches."
+		)
+		return
+	_projector_mapping_active = true
+	_projector_mode_enabled = true
+	_refresh_projector_canvas()
+	_save_projector_local_config()
+	_set_setup_state(
+		SetupState.NEED_SCREEN_SIZE,
+		"Projection Mapping",
+		"Drag the colored face corners until the projected quads line up with the real box faces.",
+		"Press Start Projector Scan when the quads are aligned."
+	)
+
+func _register_projector_faces_from_setup() -> void:
+	if use_websocket and ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		_set_setup_state(
+			SetupState.ERROR,
+			"Bridge Offline",
+			"Couldn't register the projector faces because the WebSocket bridge is not connected.",
+			"Make sure the bridge is running, then try again."
+		)
+		return
+	if not _apply_projector_setup_inputs_to_faces():
+		_set_setup_state(
+			SetupState.ERROR,
+			"Invalid Projector Face Size",
+			"Enter valid positive width and height values for each enabled face before starting the scan.",
+			"Each projected face needs a physical size so the tracker can solve it."
+		)
+		return
+	_projector_mode_enabled = true
+	_projector_mapping_active = false
+	projector_setup_panel.visible = false
+	_apply_screen_dimensions_to_scaler(float(_projector_faces[0].get("width_inches", 0.0)), float(_projector_faces[0].get("height_inches", 0.0)))
+	if use_websocket and ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		var msg = {
+			"action": "register_screen",
+			"device_id": _current_marker_slot(),
+			"faces": _projector_faces_registration_payload(),
+		}
+		ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+	_save_projector_local_config()
+	_begin_scan_flow()
+
+func _find_layout_payload_for_screen(screens: Dictionary, target_screen_id: String) -> Dictionary:
+	for raw_screen_id in screens.keys():
+		if _normalize_screen_id(raw_screen_id) == target_screen_id and screens[raw_screen_id] is Dictionary:
+			return screens[raw_screen_id]
+	return {}
+
+func _apply_projector_layout_faces(screens: Dictionary, origin_screen_id: String, origin_tracker_transform: Transform3D, single_screen_payload: bool) -> void:
+	if not _projector_mode_enabled:
+		return
+	_ensure_projector_faces()
+	for face_index in range(_projector_face_count):
+		var screen_id = _projector_face_screen_id(face_index)
+		var face = _projector_faces[face_index]
+		var raw_payload := _find_layout_payload_for_screen(screens, screen_id)
+		if raw_payload.is_empty():
+			face["layout_valid"] = false
+			_projector_faces[face_index] = face
+			continue
+		var screen_tracker_transform := _transform_from_layout_payload(raw_payload)
+		var relative_transform := Transform3D.IDENTITY
+		var final_transform := screen_tracker_transform
+		if _has_main_screen_reference and _layout_anchor_initialized:
+			if not (single_screen_payload or screen_id == origin_screen_id):
+				relative_transform = origin_tracker_transform.affine_inverse() * screen_tracker_transform
+			final_transform = _layout_anchor_window_local_transform * relative_transform
+		var face_window_center: Node3D = face.get("window_center")
+		if face_window_center:
+			face_window_center.transform = final_transform
+		face["layout_valid"] = true
+		_projector_faces[face_index] = face
+		_apply_projector_face_dimensions(
+			face_index,
+			float(raw_payload.get("width", face.get("width_inches", 0.0))),
+			float(raw_payload.get("height", face.get("height_inches", 0.0)))
+		)
+
+func _sync_projector_runtime_cameras() -> void:
+	if not _projector_mode_enabled or camera_node == null:
+		return
+	_ensure_projector_faces()
+	for face_index in range(_projector_face_count):
+		var face = _projector_faces[face_index]
+		var runtime_camera: Camera3D = face.get("runtime_camera")
+		if runtime_camera == null:
+			continue
+		runtime_camera.global_position = camera_node.global_position
+		runtime_camera.near = camera_node.near
+		runtime_camera.far = camera_node.far
+		runtime_camera.keep_aspect = camera_node.keep_aspect
+		runtime_camera.cull_mask = camera_node.cull_mask
+
+func _projector_handle_hit_test(mouse_pos: Vector2) -> Dictionary:
+	for face_index in range(_projector_face_count):
+		var face = _projector_faces[face_index]
+		var quad: PackedVector2Array = face.get("quad", PackedVector2Array())
+		for corner_index in range(min(4, quad.size())):
+			if quad[corner_index].distance_to(mouse_pos) <= PROJECTOR_HANDLE_SIZE:
+				return {
+					"face_index": face_index,
+					"corner_index": corner_index,
+				}
+	return {}
+
+func _move_projector_corner(face_index: int, corner_index: int, mouse_pos: Vector2) -> void:
+	if face_index < 0 or face_index >= _projector_faces.size():
+		return
+	var viewport_size := _effective_ui_viewport_size()
+	var clamped_pos := Vector2(
+		clampf(mouse_pos.x, 0.0, viewport_size.x),
+		clampf(mouse_pos.y, 0.0, viewport_size.y)
+	)
+	var face = _projector_faces[face_index]
+	var quad: PackedVector2Array = face.get("quad", PackedVector2Array())
+	if corner_index < 0 or corner_index >= quad.size():
+		return
+	quad[corner_index] = clamped_pos
+	face["quad"] = quad
+	_projector_faces[face_index] = face
+	_refresh_projector_canvas()
 
 func _find_matching_preset_name(width_inches: float, height_inches: float) -> String:
 	const EPSILON := 0.02
@@ -1351,7 +2179,24 @@ func _update_registered_screen_dimensions(payload: Variant) -> void:
 		_registered_screen_dimensions[normalized_screen_id] = {
 			"width": float(screen_data.get("width", 0.0)),
 			"height": float(screen_data.get("height", 0.0)),
+			"source": str(screen_data.get("source", "")),
 		}
+
+func _apply_registered_dimensions_for_current_screen() -> void:
+	var my_id := _normalize_screen_id(_current_marker_slot())
+	if my_id == "" or not _registered_screen_dimensions.has(my_id):
+		return
+	var dims = _registered_screen_dimensions[my_id]
+	if not (dims is Dictionary):
+		return
+	var width_inches := float(dims.get("width", 0.0))
+	var height_inches := float(dims.get("height", 0.0))
+	if width_inches <= 0.0 or height_inches <= 0.0:
+		return
+	var preset_name := "Stereo measured" if str(dims.get("source", "")) == "realsense_stereo" else _resolve_preset_name_for_dimensions(width_inches, height_inches)
+	_apply_screen_dimensions_to_ui(width_inches, height_inches)
+	_apply_screen_dimensions_to_scaler(width_inches, height_inches)
+	_set_active_screen_profile(width_inches, height_inches, preset_name)
 
 func _apply_scale_authority_window_scale(screens: Dictionary, fallback_screen_id: String = "") -> void:
 	if not screen_scaler:
@@ -1973,6 +2818,43 @@ func _set_resolved_head_pose_from_payload(payload: Dictionary) -> void:
 		})
 	_last_resolved_head_pose_msec = Time.get_ticks_msec()
 
+func _build_projector_diagnostics_text() -> String:
+	if not _projector_mode_enabled:
+		return "off"
+	var rows: PackedStringArray = PackedStringArray()
+	for face_index in range(_projector_face_count):
+		if face_index >= _projector_faces.size():
+			continue
+		var face = _projector_faces[face_index]
+		var runtime_camera: Camera3D = face.get("runtime_camera")
+		var face_window_center: Node3D = face.get("window_center")
+		var layout_label := "yes" if bool(face.get("layout_valid", false)) else "no"
+		var slot_label := _projector_face_screen_id(face_index)
+		var cam_pos := runtime_camera.global_position if runtime_camera else Vector3.ZERO
+		var cam_rot := _basis_euler_degrees(runtime_camera.global_transform.basis) if runtime_camera else Vector3.ZERO
+		var win_pos := face_window_center.global_position if face_window_center else Vector3.ZERO
+		var win_rot := _basis_euler_degrees(face_window_center.global_transform.basis) if face_window_center else Vector3.ZERO
+		var eye_local := Vector3.ZERO
+		var frustum := Vector2.ZERO
+		var proj_size := 0.0
+		if runtime_camera and face_window_center:
+			eye_local = runtime_camera.to_local(face_window_center.global_position)
+			frustum = runtime_camera.frustum_offset
+			proj_size = runtime_camera.size
+		rows.append("%s slot %s layout %s | Cam %.2f %.2f %.2f rot %.1f %.1f %.1f | Win %.2f %.2f %.2f rot %.1f %.1f %.1f | Local %.3f %.3f %.3f | Size %.4f | Fr %.4f %.4f" % [
+			face.get("name", "Face"),
+			slot_label,
+			layout_label,
+			cam_pos.x, cam_pos.y, cam_pos.z,
+			cam_rot.x, cam_rot.y, cam_rot.z,
+			win_pos.x, win_pos.y, win_pos.z,
+			win_rot.x, win_rot.y, win_rot.z,
+			eye_local.x, eye_local.y, eye_local.z,
+			proj_size,
+			frustum.x, frustum.y,
+		])
+	return "\n".join(rows) if not rows.is_empty() else "on, no faces"
+
 func _build_diagnostics_text() -> String:
 	var now_msec = Time.get_ticks_msec()
 	var scale_mult = screen_scaler.tracking_scale_multiplier if screen_scaler else 1.0
@@ -1988,7 +2870,7 @@ func _build_diagnostics_text() -> String:
 	var distance_to_window = 0.0
 	var estimated_vertical_fov_deg = 0.0
 	var tracking_source = "live" if _has_live_tracking_data else "fallback"
-	var base_distance_text = "%.2f m" % default_viewer_distance_meters
+	var base_distance_text = "%.2f m (%s)" % [_default_viewer_distance_offset_meters(), "on" if default_viewer_distance_enabled else "off"]
 	var my_slot = str(_current_marker_slot())
 	var origin_label = _main_screen_id if _main_screen_id != "" else "none"
 	var layout_ids = ", ".join(_last_layout_screen_ids) if not _last_layout_screen_ids.is_empty() else "none"
@@ -2006,6 +2888,7 @@ func _build_diagnostics_text() -> String:
 	var preset_dims = "%.2f x %.2f in" % [_active_screen_width_inches, _active_screen_height_inches]
 	var remote_source_label = str(_remote_viewer_source_slot) if _remote_viewer_source_slot >= 0 else "none"
 	var remote_active_label = "yes" if _remote_viewer_pose_active else "no"
+	var projector_diag = _build_projector_diagnostics_text()
 	var viewer_packet_age_msec = float(now_msec - _last_remote_viewer_packet_msec) if _last_remote_viewer_packet_msec > 0 else -1.0
 	var viewer_packet_age_text = "n/a"
 	if _remote_viewer_pose_active and viewer_packet_age_msec >= 0.0:
@@ -2051,6 +2934,8 @@ Window Rot(deg): X %.1f | Y %.1f | Z %.1f
 Window Local: X %.3f | Y %.3f | Z %.3f
 Raw Shift: X %.3f | Y %.3f
 Frustum Offset: X %.4f | Y %.4f
+Projector Faces:
+%s
 """ % [
 		tracking_source,
 		_raw_x, _raw_y, _raw_z,
@@ -2080,7 +2965,8 @@ Frustum Offset: X %.4f | Y %.4f
 		window_rot.x, window_rot.y, window_rot.z,
 		window_local.x, window_local.y, window_local.z,
 		raw_shift.x, raw_shift.y,
-		debug_frustum_offset.x, debug_frustum_offset.y
+		debug_frustum_offset.x, debug_frustum_offset.y,
+		projector_diag
 	]
 
 func _reset_websocket_peer() -> void:
@@ -2162,6 +3048,7 @@ func _apply_global_ui_visibility() -> void:
 		debug_preview_head_hint_label.visible = show_debug_overlay and debug_preview_head_hint_label.visible
 	if debug_preview_camera_hint_label:
 		debug_preview_camera_hint_label.visible = show_debug_overlay and debug_preview_camera_hint_label.visible
+	_refresh_projector_canvas()
 
 func _advance_tab_ui_mode() -> void:
 	_tab_ui_mode = (_tab_ui_mode + 1) % 4
@@ -2193,9 +3080,9 @@ func _set_setup_state(state: int, title: String, body: String, hint: String) -> 
 	if setup_hint_label:
 		setup_hint_label.text = hint
 	if rescan_button:
-		rescan_button.visible = _screen_registered
+		rescan_button.visible = use_websocket and _screen_registered
 	if edit_size_button:
-		edit_size_button.visible = _has_received_config
+		edit_size_button.visible = _has_received_config or not use_websocket
 	_refresh_setup_controls()
 	_sync_setup_visibility()
 	_layout_setup_status_panel()
@@ -2215,10 +3102,11 @@ func _refresh_setup_controls() -> void:
 		rescan_button.text = "Rescan All Screens"
 
 	if edit_size_button:
-		edit_size_button.text = "Edit Screen Size"
+		edit_size_button.visible = _has_received_config or not use_websocket
+		edit_size_button.text = "Edit Screen Size" if use_websocket else "Select Screen Size"
 
 	if sync_mode_button:
-		sync_mode_button.visible = _has_received_config
+		sync_mode_button.visible = use_websocket and _has_received_config
 		sync_mode_button.text = "Sync: %s" % _viewer_sync_mode_label()
 
 	if render_mode_button:
@@ -2232,6 +3120,10 @@ func _refresh_setup_controls() -> void:
 	if fullscreen_button:
 		fullscreen_button.visible = setup_state != SetupState.BOOTING
 		fullscreen_button.text = _fullscreen_button_label()
+
+	if projector_mode_button:
+		projector_mode_button.visible = use_websocket and _has_received_config
+		projector_mode_button.text = "Projector Setup (%s)" % ("On" if _projector_mode_enabled else "Off")
 
 	if status_toggle_button:
 		status_toggle_button.text = "Show Status" if _status_panel_hidden_by_user else "Hide Status"
@@ -2279,7 +3171,9 @@ func _apply_setup_ui_metrics() -> void:
 	var available_width = maxf(180.0, effective_size.x - gutter * 2.0)
 	var status_width = minf(clampf(effective_size.x * 0.28, 320.0, 520.0), available_width)
 	var setup_width = minf(clampf(effective_size.x * 0.34, 260.0, 460.0), available_width)
+	var projector_width = minf(clampf(effective_size.x * 0.42, 320.0, 620.0), available_width)
 	var status_content_width = max(140.0, status_width - padding_x * 2.0)
+	var projector_content_width = max(180.0, projector_width - padding_x * 2.0)
 
 	if setup_status_stylebox:
 		setup_status_stylebox.set_corner_radius_all(corner_radius)
@@ -2313,8 +3207,11 @@ func _apply_setup_ui_metrics() -> void:
 		calibration_title_label.add_theme_font_size_override("font_size", title_font)
 	if calibration_info_label:
 		calibration_info_label.add_theme_font_size_override("font_size", body_font)
+	if projector_setup_info_label:
+		projector_setup_info_label.add_theme_font_size_override("font_size", body_font)
+		projector_setup_info_label.custom_minimum_size = Vector2(projector_content_width, 0.0)
 
-	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, far_plane_button, fullscreen_button, status_toggle_button, start_scan_button, save_preset_button, preset_dropdown, w_input, h_input]:
+	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, far_plane_button, fullscreen_button, projector_mode_button, status_toggle_button, start_scan_button, save_preset_button, projector_mapping_button, projector_mapping_finish_button, projector_mapping_cancel_button, projector_face_count_dropdown, preset_dropdown, w_input, h_input]:
 		if control == null:
 			continue
 		control.custom_minimum_size = Vector2(0.0, control_height)
@@ -2331,11 +3228,43 @@ func _apply_setup_ui_metrics() -> void:
 
 	if calibration_ui_panel:
 		calibration_ui_panel.custom_minimum_size = Vector2(setup_width, 0.0)
+	if projector_setup_panel:
+		projector_setup_panel.custom_minimum_size = Vector2(projector_width, 0.0)
+	if projector_setup_box:
+		projector_setup_box.custom_minimum_size = Vector2(projector_content_width, 0.0)
+		projector_setup_box.add_theme_constant_override("separation", int(round(clampf(10.0 * ui_scale, 8.0, 10.0))))
+	if projector_setup_scroll:
+		projector_setup_scroll.custom_minimum_size = Vector2(projector_content_width, 0.0)
 
 	if setup_action_row:
 		setup_action_row.add_theme_constant_override("h_separation", int(round(clampf(10.0 * ui_scale, 8.0, 10.0))))
 		setup_action_row.add_theme_constant_override("v_separation", int(round(clampf(8.0 * ui_scale, 6.0, 8.0))))
 	_status_panel_layout_dirty = true
+	_layout_projector_setup_panel()
+
+func _layout_projector_setup_panel() -> void:
+	if not projector_setup_panel:
+		return
+	var viewport_size = _effective_ui_viewport_size()
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+	var gutter = clampf(minf(viewport_size.x, viewport_size.y) * 0.03, 18.0, 30.0)
+	var max_panel_width = maxf(220.0, viewport_size.x - gutter * 2.0)
+	var max_panel_height = maxf(140.0, viewport_size.y - gutter * 2.0)
+	var panel_width = minf(projector_setup_panel.custom_minimum_size.x, max_panel_width)
+	var vertical_margins = 0.0
+	if calibration_panel_stylebox:
+		vertical_margins = calibration_panel_stylebox.content_margin_top + calibration_panel_stylebox.content_margin_bottom
+	var content_height = projector_setup_box.get_combined_minimum_size().y if projector_setup_box else 120.0
+	var panel_height = clampf(content_height + vertical_margins, 140.0, max_panel_height)
+	projector_setup_panel.size = Vector2(panel_width, panel_height)
+	projector_setup_panel.position = Vector2(
+		round((viewport_size.x - panel_width) * 0.5),
+		round((viewport_size.y - panel_height) * 0.5)
+	)
+	if projector_setup_scroll:
+		projector_setup_scroll.position = Vector2.ZERO
+		projector_setup_scroll.size = Vector2(panel_width, maxf(0.0, panel_height - vertical_margins))
 
 func _layout_setup_status_panel() -> void:
 	if not setup_status_panel:
@@ -2385,6 +3314,9 @@ func _toggle_status_panel() -> void:
 func _show_screen_setup() -> void:
 	if not calibration_ui_panel:
 		return
+	projector_setup_panel.visible = false
+	_projector_mapping_active = false
+	_refresh_projector_canvas()
 
 	var local_config = _load_local_screen_config()
 	var width_inches = float(local_config.get("width", 0.0))
@@ -2394,15 +3326,63 @@ func _show_screen_setup() -> void:
 
 	calibration_ui_panel.visible = true
 	_set_calibration_mode(false)
+	var title := "Screen Setup"
+	var body := "Choose a saved preset or enter the physical size of this display."
+	var hint := "Measure only the lit pixels, excluding the bezels."
+	if not use_websocket:
+		title = "Direct UDP Screen Size"
+		body = "Choose a saved preset or enter this display's physical size for direct OpenTrack UDP mode."
+		hint = "No WebSocket server is running in this mode; this only updates the local off-axis projection scale."
+	if start_scan_button:
+		start_scan_button.text = "Start Marker Scan" if use_websocket else "Apply Screen Size"
+	if save_preset_button:
+		save_preset_button.visible = use_websocket
 	_set_setup_state(
 		SetupState.NEED_SCREEN_SIZE,
-		"Screen Setup",
-		"Choose a saved preset or enter the physical size of this display.",
-		"Measure only the lit pixels, excluding the bezels."
+		title,
+		body,
+		hint
 	)
+
+func _set_direct_udp_setup_state() -> void:
+	_set_calibration_mode(false)
+	var title := "Direct OpenTrack UDP"
+	var body := "Listening for OpenTrack UDP on 127.0.0.1:%d. Use Select Screen Size to set the physical display size for off-axis projection." % port
+	var hint := "OpenTrack can send UDP directly here. Multi-screen sync and ArUco layout solving require WebSocket mode."
+	if not _direct_udp_bound:
+		title = "Direct OpenTrack UDP Port Busy"
+		body = "Could not bind to OpenTrack UDP on 127.0.0.1:%d. Error code: %d." % [port, _direct_udp_bind_error]
+		hint = "Close the other process using this port, change the exported port, or re-enable WebSocket mode."
+	_set_setup_state(
+		SetupState.READY,
+		title,
+		body,
+		hint
+	)
+
+func _apply_direct_screen_dimensions(width_inches: float, height_inches: float, save_local: bool, preset_name_override: String = "") -> void:
+	_apply_screen_dimensions_to_ui(width_inches, height_inches)
+	_apply_screen_dimensions_to_scaler(width_inches, height_inches)
+	var resolved_preset_name = _resolve_preset_name_for_dimensions(width_inches, height_inches, preset_name_override)
+	_set_active_screen_profile(width_inches, height_inches, resolved_preset_name)
+	if save_local:
+		_save_local_screen_config(width_inches, height_inches, resolved_preset_name)
+	_screen_registered = true
+	_scan_locked = true
+	_has_layout_solution = false
+	if calibration_ui_panel:
+		calibration_ui_panel.visible = false
+	_set_direct_udp_setup_state()
 
 func _begin_scan_flow() -> void:
 	calibration_ui_panel.visible = false
+	if projector_setup_panel:
+		projector_setup_panel.visible = false
+	if _projector_mode_enabled:
+		for face_index in range(_projector_faces.size()):
+			var face = _projector_faces[face_index]
+			face["layout_valid"] = false
+			_projector_faces[face_index] = face
 	_screen_registered = true
 	_last_scan_state = ""
 	_scan_locked = false
@@ -2424,8 +3404,13 @@ func _begin_scan_flow() -> void:
 		"This screen is showing ArUco markers for the shared room scan.",
 		"Press P on any screen to finish once the full layout is visible, or press F7 to edit this screen size."
 	)
+	_refresh_projector_canvas()
 
 func _register_screen_dimensions(width_inches: float, height_inches: float, save_local: bool, preset_name_override: String = "") -> void:
+	if not use_websocket:
+		_apply_direct_screen_dimensions(width_inches, height_inches, save_local, preset_name_override)
+		return
+
 	if use_websocket and ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		_set_setup_state(
 			SetupState.ERROR,
@@ -2471,7 +3456,10 @@ func _restart_scan_flow() -> void:
 	elif width_inches > 0.0 and height_inches > 0.0:
 		_register_screen_dimensions(width_inches, height_inches, false, preset_name)
 	else:
-		_show_screen_setup()
+		if _projector_mode_enabled:
+			_show_projector_setup()
+		else:
+			_show_screen_setup()
 
 func _handle_scan_start(data: Dictionary) -> void:
 	if not _screen_registered:
@@ -2479,6 +3467,7 @@ func _handle_scan_start(data: Dictionary) -> void:
 	_update_registered_screen_dimensions(data.get("registered_screens", {}))
 
 	_begin_scan_flow()
+	_set_calibration_mode(data.get("calibration_mode", true))
 
 	var expected = _format_screen_ids(data.get("expected_screens", []))
 	_set_setup_state(
@@ -2640,6 +3629,7 @@ func _handle_scan_lock(data: Dictionary) -> void:
 		)
 
 func _try_auto_register_saved_screen() -> bool:
+	_load_projector_local_config()
 	var local_config = _load_local_screen_config()
 	var width_inches = float(local_config.get("width", 0.0))
 	var height_inches = float(local_config.get("height", 0.0))
@@ -2705,6 +3695,24 @@ func _handle_scan_status(data: Dictionary) -> void:
 			_set_setup_state(SetupState.SCANNING, "Scanning", message, "")
 
 func _input(event):
+	if _projector_mapping_active:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				var hit := _projector_handle_hit_test(event.position)
+				if not hit.is_empty():
+					_projector_drag_face_index = int(hit.get("face_index", -1))
+					_projector_drag_corner_index = int(hit.get("corner_index", -1))
+					_move_projector_corner(_projector_drag_face_index, _projector_drag_corner_index, event.position)
+					get_viewport().set_input_as_handled()
+					return
+			else:
+				_projector_drag_face_index = -1
+				_projector_drag_corner_index = -1
+				_save_projector_local_config()
+		elif event is InputEventMouseMotion and _projector_drag_face_index >= 0 and _projector_drag_corner_index >= 0:
+			_move_projector_corner(_projector_drag_face_index, _projector_drag_corner_index, event.position)
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventKey and event.pressed:
 		var key_matches := func(target_key: Key) -> bool:
 			return event.keycode == target_key or event.physical_keycode == target_key
@@ -2728,6 +3736,8 @@ func _input(event):
 				if diagnostics_label.visible and not show_debug_view:
 					show_debug_view = true
 				_apply_global_ui_visibility()
+		elif key_matches.call(viewer_distance_toggle_key):
+			_toggle_default_viewer_distance()
 		elif key_matches.call(finish_scan_key):
 			_request_finish_scan()
 		elif key_matches.call(rescan_key):
@@ -2751,12 +3761,28 @@ func _adjust_debug_preview_zoom(delta_size: float) -> void:
 		return
 	debug_preview_camera_distance = clampf(debug_preview_camera_distance + delta_size, debug_preview_min_size, debug_preview_max_size)
 
+func _default_viewer_distance_offset_meters() -> float:
+	return default_viewer_distance_meters if default_viewer_distance_enabled else 0.0
+
+func _toggle_default_viewer_distance() -> void:
+	default_viewer_distance_enabled = not default_viewer_distance_enabled
+	print("Default viewer distance: ", "on" if default_viewer_distance_enabled else "off")
+	_apply_tracking_data()
+
 func _set_calibration_mode(is_on: bool):
 	calibration_mode = is_on
 	print("Calibration mode set to ", is_on)
 	_refresh_setup_controls()
 	_sync_setup_visibility()
 	_layout_setup_status_panel()
+
+	if _projector_mode_enabled:
+		_refresh_projector_canvas()
+		if aruco_canvas:
+			var projector_mode_bg = aruco_canvas.get_node_or_null("ArUcoBG")
+			if projector_mode_bg:
+				projector_mode_bg.visible = false
+		return
 
 	if calibration_mode:
 		print("Displaying Calibration Marker Slot #", _current_marker_slot())
@@ -2856,6 +3882,13 @@ var _was_ws_connected: bool = false
 var _initial_apply_done: bool = false
 
 func _process(_delta):
+	if projector_setup_panel and projector_setup_panel.visible:
+		_layout_projector_setup_panel()
+	if _projector_mode_enabled:
+		_sync_projector_runtime_cameras()
+	if _projector_mode_enabled or _projector_mapping_active:
+		_refresh_projector_canvas()
+
 	if (
 		setup_overlay
 		and setup_overlay.visible
@@ -2975,6 +4008,10 @@ func _process(_delta):
 					elif msg_type == "presets_update":
 						global_presets = data.get("presets", {})
 						_rebuild_preset_dropdown()
+
+					elif msg_type == "registered_screens_update":
+						_update_registered_screen_dimensions(data.get("registered_screens", {}))
+						_apply_registered_dimensions_for_current_screen()
 						
 					elif msg_type == "state_update":
 						_set_calibration_mode(data.get("calibration_mode", false))
@@ -3140,6 +4177,9 @@ func _process(_delta):
 
 							if _scan_locked:
 								_complete_scan_lock("scan_lock")
+
+						if _projector_mode_enabled:
+							_apply_projector_layout_faces(screens, origin_screen_id, origin_tracker_transform, single_screen_payload)
 						
 					# Legacy UDP format fallback just in case
 					elif data.has("x"):
@@ -3241,7 +4281,7 @@ func _apply_tracking_data():
 				return
 			else:
 				var final_local_offset = Vector3.ZERO
-				final_local_offset.z += default_viewer_distance_meters * mult
+				final_local_offset.z += _default_viewer_distance_offset_meters() * mult
 				var reference_pos = player_node.global_position if player_node else window_center.global_position
 				var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
 				camera_node.global_position = reference_pos + (reference_basis * final_local_offset)
@@ -3251,8 +4291,9 @@ func _apply_tracking_data():
 			var final_local_offset = screen_space_tracking_offset
 			# Keep a persistent baseline eye distance in front of the screen so neutral
 			# tracking data represents a sensible viewing position instead of the glass plane.
-			final_local_offset.z += default_viewer_distance_meters * mult
+			final_local_offset.z += _default_viewer_distance_offset_meters() * mult
 			var reference_pos = player_node.global_position if player_node else window_center.global_position
 			var reference_basis = player_node.global_transform.basis if player_node else window_center.global_transform.basis
 			var final_pos = reference_pos + reference_basis * final_local_offset
 			camera_node.global_position = final_pos
+		_sync_projector_runtime_cameras()

@@ -1,0 +1,15 @@
+#!/usr/bin/env python
+import os
+
+env = SConscript("godot-cpp/SConstruct")
+
+env.Append(CPPPATH=["src"])
+
+sources = Glob("src/*.cpp")
+
+library = env.SharedLibrary(
+    target=os.path.join("bin", "realsense_shared_memory"),
+    source=sources,
+)
+
+Default(library)

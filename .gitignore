@@ -4,3 +4,19 @@
 /WEB_EXPORT/*.pck
 WEB_EXPORT/2.5D window V3.pck
 *.pck
+stereo 4/
+__MACOSX/
+__pycache__/
+*.pyc
+*.pyo
+camera_tracker.py.nul-corrupt-backup
+camera_tracker.py.recovered-good
+camera_tracker_recovered.cpython-312.pyc
+recovered_decompile/
+recovered_uncompyle/
+native/realsense_shared_memory/.sconsign.dblite
+native/realsense_shared_memory/src/*.obj
+native/realsense_shared_memory/src/*.obj.import
+native/realsense_shared_memory/bin/*.exp
+native/realsense_shared_memory/bin/*.lib
+native/realsense_shared_memory/godot-cpp/

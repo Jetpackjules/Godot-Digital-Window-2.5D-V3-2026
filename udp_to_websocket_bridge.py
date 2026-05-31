@@ -34,13 +34,14 @@ logger = logging.getLogger("OpenTrackBridge")
 
 # Global State
 connected_clients: Set[websockets.WebSocketServerProtocol] = set()
-registered_screens_by_client: Dict[websockets.WebSocketServerProtocol, str] = {}
-registered_screen_dimensions_by_client: Dict[websockets.WebSocketServerProtocol, dict] = {}
+registered_screens_by_client: Dict[websockets.WebSocketServerProtocol, Set[str]] = {}
+registered_screen_dimensions_by_client: Dict[websockets.WebSocketServerProtocol, Dict[str, dict]] = {}
 client_id_counter = 0
 calibration_mode = False
 scan_locked = False
 latest_visible_screen_ids: Set[str] = set()
 latest_mapped_screen_ids: Set[str] = set()
+measured_screen_dimensions: Dict[str, dict] = {}
 anaglyph_enabled = False
 latest_tracker_camera_pose = None
 latest_tracker_camera_pose_time = 0.0
@@ -48,6 +49,8 @@ locked_tracking_reference = None
 tracker_command_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 TRACKING_ACTIVE_POSITION_EPS_CM = 0.05
 TRACKING_ACTIVE_ROTATION_EPS_DEG = 0.05
+latest_logged_scan_status = ""
+latest_logged_scan_status_time = 0.0
 
 
 def broadcast_json(payload: dict) -> None:
@@ -56,20 +59,71 @@ def broadcast_json(payload: dict) -> None:
 
 
 def get_registered_screen_ids() -> Set[str]:
-    return {screen_id for screen_id in registered_screens_by_client.values()}
+    screen_ids: Set[str] = set()
+    for screen_ids_for_client in registered_screens_by_client.values():
+        screen_ids.update(screen_ids_for_client)
+    return screen_ids
 
 
 def get_registered_screen_dimensions() -> Dict[str, dict]:
     payload: Dict[str, dict] = {}
-    for websocket, screen_id in registered_screens_by_client.items():
-        dims = registered_screen_dimensions_by_client.get(websocket)
-        if dims is None:
-            continue
+    for websocket in registered_screens_by_client.keys():
+        dims_by_screen = registered_screen_dimensions_by_client.get(websocket, {})
+        for screen_id, dims in dims_by_screen.items():
+            payload[str(screen_id)] = {
+                "width": float(dims.get("width", 0.0)),
+                "height": float(dims.get("height", 0.0)),
+            }
+    for screen_id, dims in measured_screen_dimensions.items():
         payload[str(screen_id)] = {
             "width": float(dims.get("width", 0.0)),
             "height": float(dims.get("height", 0.0)),
+            "source": str(dims.get("source", "realsense_stereo")),
         }
     return payload
+
+
+def _normalize_screen_registration_payload(data: dict) -> Dict[str, dict]:
+    normalized: Dict[str, dict] = {}
+    faces = data.get("faces")
+    if isinstance(faces, list):
+        for face in faces:
+            if not isinstance(face, dict):
+                continue
+            screen_id = str(face.get("device_id", "")).strip()
+            if screen_id == "":
+                continue
+            normalized[screen_id] = {
+                "width": float(face.get("width", 0.0)),
+                "height": float(face.get("height", 0.0)),
+            }
+    else:
+        screen_id = str(data.get("device_id", "")).strip()
+        if screen_id != "":
+            normalized[screen_id] = {
+                "width": float(data.get("width", 0.0)),
+                "height": float(data.get("height", 0.0)),
+            }
+    return normalized
+
+
+def _write_monitor_configs(configs_by_screen: Dict[str, dict]) -> None:
+    config_file = "monitor_configs.json"
+    configs = {}
+    try:
+        with open(config_file, "r") as f:
+            configs = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    for screen_id, dims in configs_by_screen.items():
+        configs[str(screen_id)] = {
+            "width": float(dims.get("width", 0.0)),
+            "height": float(dims.get("height", 0.0)),
+        }
+
+    with open(config_file, "w") as f:
+        json.dump(configs, f, indent=4)
 
 
 def set_scan_lock(locked: bool, reason: str) -> None:
@@ -113,9 +167,17 @@ def set_scan_lock(locked: bool, reason: str) -> None:
 
 
 def broadcast_scan_start(reason: str) -> None:
+    send_tracker_command(
+        {
+            "type": "calibration_mode_state",
+            "active": True,
+            "reason": reason,
+        }
+    )
     payload = {
         "type": "scan_start",
         "reason": reason,
+        "calibration_mode": True,
         "expected_screens": sorted(get_registered_screen_ids()),
         "registered_screens": get_registered_screen_dimensions(),
         "visible_screens": sorted(latest_visible_screen_ids),
@@ -131,6 +193,24 @@ def broadcast_scan_start(reason: str) -> None:
 
 def send_tracker_command(payload: dict) -> None:
     tracker_command_sock.sendto(json.dumps(payload).encode("utf-8"), (UDP_IP, TRACKER_CONTROL_PORT))
+
+
+def set_calibration_mode(enabled: bool, reason: str) -> None:
+    global calibration_mode
+    calibration_mode = bool(enabled)
+    send_tracker_command(
+        {
+            "type": "calibration_mode_state",
+            "active": calibration_mode,
+            "reason": reason,
+        }
+    )
+    broadcast_json(
+        {
+            "type": "state_update",
+            "calibration_mode": calibration_mode,
+        }
+    )
 
 
 def freeze_tracking_reference():
@@ -198,17 +278,9 @@ async def handle_client(websocket, path=None):
                 
                 if action == "toggle_calibration":
                     # Flip state and broadcast to all devices immediately!
-                    calibration_mode = not calibration_mode
+                    set_calibration_mode(not calibration_mode, "toggle_calibration")
                     state_str = "ON" if calibration_mode else "OFF"
                     logger.info(f"Device {client_id} toggled Calibration Mode {state_str}!")
-                    
-                    update_payload = json.dumps({
-                        "type": "state_update",
-                        "calibration_mode": calibration_mode
-                    })
-                    
-                    # Broadcast to everyone
-                    websockets.broadcast(connected_clients, update_payload)
 
                 elif action == "anaglyph_toggle":
                     anaglyph_enabled = bool(data.get("enabled", not anaglyph_enabled))
@@ -220,41 +292,27 @@ async def handle_client(websocket, path=None):
                     broadcast_json(update_payload)
                     
                 elif action == "register_screen":
-                    # Godot device is reporting its physical dimensions!
-                    d_id = str(data.get("device_id", 0))
-                    w = data.get("width", 20.9)
-                    h = data.get("height", 11.7)
+                    # Godot device is reporting one or more virtual screen dimensions.
+                    screen_payload = _normalize_screen_registration_payload(data)
+                    if not screen_payload:
+                        continue
 
-                    registered_screens_by_client[websocket] = d_id
-                    registered_screen_dimensions_by_client[websocket] = {
-                        "width": float(w),
-                        "height": float(h),
-                    }
+                    registered_screens_by_client[websocket] = set(screen_payload.keys())
+                    registered_screen_dimensions_by_client[websocket] = screen_payload
                     latest_visible_screen_ids = set()
                     latest_mapped_screen_ids = set()
                     latest_tracker_camera_pose = None
                     latest_tracker_camera_pose_time = 0.0
+                    set_calibration_mode(True, "register_screen")
                     set_scan_lock(False, "register_screen")
                     broadcast_scan_start("register_screen")
-                    
-                    logger.info(f"Device {client_id} Registered Physical Size: {w}\" x {h}\"")
-                    
-                    # Cache the dimensions to a local JSON file so the cv2 tracker can read them!
-                    config_file = "monitor_configs.json"
-                    configs = {}
-                    try:
-                        with open(config_file, "r") as f:
-                            configs = json.load(f)
-                    except (FileNotFoundError, json.JSONDecodeError):
-                        pass
-                        
-                    configs[d_id] = {"width": w, "height": h}
-                    
-                    with open(config_file, "w") as f:
-                        json.dump(configs, f, indent=4)
+
+                    logger.info("Device %s registered virtual screens: %s", client_id, screen_payload)
+                    _write_monitor_configs(screen_payload)
 
                 elif action == "finish_scan":
                     logger.info("Device %s requested scan finish via keyboard.", client_id)
+                    set_calibration_mode(False, "manual_finish")
                     set_scan_lock(True, "manual_finish")
 
                 elif action == "rescan_layout":
@@ -263,6 +321,7 @@ async def handle_client(websocket, path=None):
                     latest_mapped_screen_ids = set()
                     latest_tracker_camera_pose = None
                     latest_tracker_camera_pose_time = 0.0
+                    set_calibration_mode(True, "rescan_layout")
                     set_scan_lock(False, "rescan_layout")
                     send_tracker_command({"type": "reset_spatial_map"})
                     broadcast_scan_start("rescan_layout")
@@ -326,6 +385,7 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data, addr):
         global latest_visible_screen_ids, latest_mapped_screen_ids, latest_tracker_camera_pose, latest_tracker_camera_pose_time
+        global latest_logged_scan_status, latest_logged_scan_status_time, measured_screen_dimensions
         # 1. Intercept OpenCV JSON Layout Maps
         if data.startswith(b'{'):
             try:
@@ -340,10 +400,38 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
                     elif msg_type == "scan_status":
                         latest_visible_screen_ids = {str(screen_id) for screen_id in json_data.get("visible_screens", [])}
                         latest_mapped_screen_ids = {str(screen_id) for screen_id in json_data.get("mapped_screens", [])}
-                        print(f"Tracker status: {json_data.get('state', 'unknown')}")
+                        state = str(json_data.get("state", "unknown"))
+                        now = time.monotonic()
+                        if state != latest_logged_scan_status or now - latest_logged_scan_status_time >= 10.0:
+                            print(f"Tracker status: {state}")
+                            latest_logged_scan_status = state
+                            latest_logged_scan_status_time = now
                     elif msg_type == "tracker_camera_pose":
                         latest_tracker_camera_pose = json_data
                         latest_tracker_camera_pose_time = time.monotonic()
+                    elif msg_type == "measured_screen_size":
+                        screen_id = str(json_data.get("screen_id", "")).strip()
+                        width = float(json_data.get("width", 0.0))
+                        height = float(json_data.get("height", 0.0))
+                        if screen_id and width > 0.0 and height > 0.0:
+                            measured_screen_dimensions[screen_id] = {
+                                "width": width,
+                                "height": height,
+                                "source": str(json_data.get("source", "realsense_stereo")),
+                            }
+                            _write_monitor_configs({screen_id: measured_screen_dimensions[screen_id]})
+                            logger.info(
+                                "Measured screen %s size from stereo: %.2f x %.2f in",
+                                screen_id,
+                                width,
+                                height,
+                            )
+                            broadcast_json(
+                                {
+                                    "type": "registered_screens_update",
+                                    "registered_screens": get_registered_screen_dimensions(),
+                                }
+                            )
                     if connected_clients and msg_type != "tracker_camera_pose":
                         websockets.broadcast(connected_clients, decoded)
                     if msg_type == "layout_map":
