@@ -949,6 +949,7 @@ def detect_aruco_poses_for_scale(image_bgr, intrinsics, label, marker_size_m, di
                     "area_px": area,
                     "dictionary": dict_label,
                     "marker_id": int(detected_id),
+                    "center_px": np.mean(img, axis=0).astype(np.float64),
                 }
             selected_corners.append(corners[index])
             selected_ids.append([int(detected_id)])
@@ -972,6 +973,41 @@ def detect_aruco_poses_for_scale(image_bgr, intrinsics, label, marker_size_m, di
         dict_status = normalize_aruco_dict_name(dictionary_name)
         id_status = "any" if requested_ids is None else ",".join(str(item) for item in sorted(requested_ids))
         return {}, f"{label}: big ArUco dict={dict_status} id={id_status} markers=0", detect_debug, 0
+
+    if str(dictionary_name).strip().lower() == "auto":
+        by_dictionary = {}
+        for key, detection in detections.items():
+            by_dictionary.setdefault(str(key[0]), {})[key] = detection
+        if len(by_dictionary) > 1:
+            preferred_order = {
+                "4x4_50": 0,
+                "4x4_100": 1,
+                "4x4_250": 2,
+                "5x5_100": 3,
+                "5x5_250": 4,
+                "6x6_250": 5,
+                "6x6_1000": 6,
+                "7x7_250": 7,
+            }
+            best_dict, best_dict_detections = max(
+                by_dictionary.items(),
+                key=lambda item: (
+                    len(item[1]),
+                    sum(float(det.get("area_px", 0.0)) for det in item[1].values()),
+                    -preferred_order.get(item[0], 99),
+                ),
+            )
+            detections = best_dict_detections
+            cv2.putText(
+                detect_debug,
+                f"auto selected {best_dict}",
+                (12, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
 
     ids_text = ",".join(f"{key[0]}:{key[1]}" for key in sorted(detections.keys()))
     status = f"{label}: big ArUco size={marker_size_m:.4f}m markers={len(detections)} ids={ids_text}"
@@ -1105,6 +1141,219 @@ def read_realsense_point_cloud_snapshot(capture):
         depth = None if capture._latest_depth_m is None else capture._latest_depth_m.copy()
     intrinsics = getattr(capture, "point_cloud_intrinsics", capture.intrinsics)
     return color, depth, intrinsics
+
+def robust_depth_at_pixel(depth_m, pixel, radius_px=10, min_depth=0.15, max_depth=6.0):
+    if depth_m is None or pixel is None:
+        return None
+    image_h, image_w = depth_m.shape[:2]
+    x = int(round(float(pixel[0])))
+    y = int(round(float(pixel[1])))
+    x0 = max(0, x - int(radius_px))
+    x1 = min(image_w, x + int(radius_px) + 1)
+    y0 = max(0, y - int(radius_px))
+    y1 = min(image_h, y + int(radius_px) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return None
+    roi = depth_m[y0:y1, x0:x1]
+    valid = roi[np.isfinite(roi) & (roi >= min_depth) & (roi <= max_depth)]
+    if valid.size < 8:
+        return None
+    return float(np.median(valid))
+
+def estimate_depth_scale_offset_from_marker_poses(depth_m, detections, min_depth=0.15, max_depth=6.0):
+    measured = []
+    expected = []
+    details = []
+    for key, detection in sorted(detections.items()):
+        center = detection.get("center_px")
+        measured_depth = robust_depth_at_pixel(depth_m, center, radius_px=12, min_depth=min_depth, max_depth=max_depth)
+        if measured_depth is None:
+            continue
+        transform = np.asarray(detection["transform"], dtype=np.float64)
+        expected_depth = float(transform[2, 3])
+        if not np.isfinite(expected_depth) or expected_depth <= 0.0:
+            continue
+        measured.append(measured_depth)
+        expected.append(expected_depth)
+        details.append(
+            {
+                "dictionary": str(key[0]),
+                "marker_id": int(key[1]),
+                "measured_depth_m": float(measured_depth),
+                "pose_depth_m": float(expected_depth),
+                "center_px": [float(center[0]), float(center[1])] if center is not None else None,
+            }
+        )
+    if not measured:
+        return 1.0, 0.0, details, "depth correction skipped: no marker depth samples"
+
+    measured_arr = np.asarray(measured, dtype=np.float64)
+    expected_arr = np.asarray(expected, dtype=np.float64)
+    if measured_arr.size >= 2 and float(np.ptp(measured_arr)) > 0.02:
+        a = np.stack([measured_arr, np.ones_like(measured_arr)], axis=1)
+        scale, offset = np.linalg.lstsq(a, expected_arr, rcond=None)[0]
+    else:
+        scale = float(np.median(expected_arr / np.maximum(measured_arr, 1e-6)))
+        offset = 0.0
+    scale = float(np.clip(scale, 0.70, 1.30))
+    offset = float(np.clip(offset, -0.30, 0.30))
+    corrected = measured_arr * scale + offset
+    residual = corrected - expected_arr
+    status = (
+        f"depth correction scale={scale:.5f} offset={offset:.4f}m "
+        f"samples={len(measured)} median_abs_err={float(np.median(np.abs(residual))):.4f}m"
+    )
+    return scale, offset, details, status
+
+def median_marker_depth_error(details, scale, offset, quadratic=0.0):
+    errors = []
+    for item in details or []:
+        measured = item.get("measured_depth_m")
+        expected = item.get("pose_depth_m")
+        if measured is None or expected is None:
+            continue
+        corrected = (float(measured) * float(measured) * float(quadratic)) + (float(measured) * float(scale)) + float(offset)
+        if np.isfinite(corrected) and np.isfinite(float(expected)):
+            errors.append(abs(corrected - float(expected)))
+    if not errors:
+        return None
+    return float(np.median(np.asarray(errors, dtype=np.float64)))
+
+def estimate_depth_scale_offset_from_cross_depth(
+    oak_depth,
+    rs_depth,
+    oak_intrinsics,
+    rs_intrinsics,
+    oakd_to_realsense,
+    min_depth=0.15,
+    max_depth=6.0,
+    stride=8,
+    max_samples=12000,
+):
+    if oak_depth is None or rs_depth is None or oak_intrinsics is None or rs_intrinsics is None:
+        return None, None, {}, "scene depth correction skipped: missing depth or intrinsics"
+    if oak_depth.size <= 0 or rs_depth.size <= 0:
+        return None, None, {}, "scene depth correction skipped: empty depth image"
+
+    stride = max(2, int(stride))
+    rows = np.arange(0, oak_depth.shape[0], stride, dtype=np.int32)
+    cols = np.arange(0, oak_depth.shape[1], stride, dtype=np.int32)
+    sampled_depth = oak_depth[np.ix_(rows, cols)].astype(np.float64, copy=False)
+    valid = np.isfinite(sampled_depth) & (sampled_depth >= float(min_depth)) & (sampled_depth <= float(max_depth))
+    if int(valid.sum()) < 200:
+        return None, None, {"sample_count": int(valid.sum())}, "scene depth correction skipped: too few OAK-D samples"
+
+    grid_x = cols[np.newaxis, :].astype(np.float64)
+    grid_y = rows[:, np.newaxis].astype(np.float64)
+    ray_x = (grid_x - float(oak_intrinsics.ppx)) / max(1e-6, float(oak_intrinsics.fx))
+    ray_y = -(grid_y - float(oak_intrinsics.ppy)) / max(1e-6, float(oak_intrinsics.fy))
+    ray_z = -np.ones_like(sampled_depth, dtype=np.float64)
+
+    raw_depth = sampled_depth[valid]
+    rays = np.stack([ray_x + np.zeros_like(sampled_depth), ray_y + np.zeros_like(sampled_depth), ray_z], axis=2)[valid]
+    if raw_depth.shape[0] > max_samples:
+        keep = np.linspace(0, raw_depth.shape[0] - 1, int(max_samples), dtype=np.int64)
+        raw_depth = raw_depth[keep]
+        rays = rays[keep]
+
+    transform = np.asarray(oakd_to_realsense, dtype=np.float64)
+    rotation = transform[:3, :3]
+    translation = transform[:3, 3]
+
+    raw_points = rays * raw_depth[:, np.newaxis]
+    raw_rs_points = (rotation @ raw_points.T).T + translation[np.newaxis, :]
+    raw_rs_z = -raw_rs_points[:, 2]
+    projected_valid = np.isfinite(raw_rs_z) & (raw_rs_z >= float(min_depth)) & (raw_rs_z <= float(max_depth))
+    if int(projected_valid.sum()) < 200:
+        return None, None, {"sample_count": int(projected_valid.sum())}, "scene depth correction skipped: too few projected samples"
+
+    raw_depth = raw_depth[projected_valid]
+    rays = rays[projected_valid]
+    raw_rs_points = raw_rs_points[projected_valid]
+    raw_rs_z = raw_rs_z[projected_valid]
+
+    rs_u = raw_rs_points[:, 0] * float(rs_intrinsics.fx) / np.maximum(raw_rs_z, 1e-6) + float(rs_intrinsics.ppx)
+    rs_v = -raw_rs_points[:, 1] * float(rs_intrinsics.fy) / np.maximum(raw_rs_z, 1e-6) + float(rs_intrinsics.ppy)
+    rs_x = np.rint(rs_u).astype(np.int32)
+    rs_y = np.rint(rs_v).astype(np.int32)
+    in_bounds = (rs_x >= 0) & (rs_x < rs_depth.shape[1]) & (rs_y >= 0) & (rs_y < rs_depth.shape[0])
+    if int(in_bounds.sum()) < 200:
+        return None, None, {"sample_count": int(in_bounds.sum())}, "scene depth correction skipped: too little overlap"
+
+    raw_depth = raw_depth[in_bounds]
+    rays = rays[in_bounds]
+    rs_x = rs_x[in_bounds]
+    rs_y = rs_y[in_bounds]
+    observed_rs_depth = rs_depth[rs_y, rs_x].astype(np.float64, copy=False)
+    finite = np.isfinite(observed_rs_depth) & (observed_rs_depth >= float(min_depth)) & (observed_rs_depth <= float(max_depth))
+    if int(finite.sum()) < 200:
+        return None, None, {"sample_count": int(finite.sum())}, "scene depth correction skipped: too few matching RealSense samples"
+
+    raw_depth = raw_depth[finite]
+    rays = rays[finite]
+    observed_rs_depth = observed_rs_depth[finite]
+
+    rz = (rotation[2, :] @ rays.T)
+    denom = np.asarray(rz, dtype=np.float64)
+    usable = np.isfinite(denom) & (np.abs(denom) > 1e-4)
+    expected_oak_depth = (-observed_rs_depth - float(translation[2])) / denom
+    usable &= np.isfinite(expected_oak_depth) & (expected_oak_depth >= float(min_depth)) & (expected_oak_depth <= float(max_depth))
+    if int(usable.sum()) < 200:
+        return None, None, {"sample_count": int(usable.sum())}, "scene depth correction skipped: too few usable correspondences"
+
+    raw_depth = raw_depth[usable]
+    expected_oak_depth = expected_oak_depth[usable]
+    residual = expected_oak_depth - raw_depth
+    abs_residual = np.abs(residual)
+    keep = abs_residual <= max(0.08, float(np.percentile(abs_residual, 75)) * 2.5)
+    if int(keep.sum()) >= 200:
+        raw_depth = raw_depth[keep]
+        expected_oak_depth = expected_oak_depth[keep]
+
+    if raw_depth.size < 200 or float(np.ptp(raw_depth)) < 0.08:
+        return None, None, {
+            "sample_count": int(raw_depth.size),
+            "depth_span_m": float(np.ptp(raw_depth)) if raw_depth.size else 0.0,
+        }, "scene depth correction skipped: not enough depth range"
+
+    quadratic = 0.0
+    if raw_depth.size >= 800 and float(np.ptp(raw_depth)) >= 0.35:
+        qa = np.stack([raw_depth * raw_depth, raw_depth, np.ones_like(raw_depth)], axis=1)
+        q_candidate, scale_candidate, offset_candidate = np.linalg.lstsq(qa, expected_oak_depth, rcond=None)[0]
+        q_candidate = float(np.clip(q_candidate, -0.15, 0.15))
+        scale_candidate = float(np.clip(scale_candidate, 0.55, 1.45))
+        offset_candidate = float(np.clip(offset_candidate, -0.40, 0.40))
+        near_slope = (2.0 * q_candidate * float(np.min(raw_depth))) + scale_candidate
+        far_slope = (2.0 * q_candidate * float(np.max(raw_depth))) + scale_candidate
+        if 0.25 <= near_slope <= 2.0 and 0.25 <= far_slope <= 2.0:
+            quadratic = q_candidate
+            scale = scale_candidate
+            offset = offset_candidate
+        else:
+            a = np.stack([raw_depth, np.ones_like(raw_depth)], axis=1)
+            scale, offset = np.linalg.lstsq(a, expected_oak_depth, rcond=None)[0]
+    else:
+        a = np.stack([raw_depth, np.ones_like(raw_depth)], axis=1)
+        scale, offset = np.linalg.lstsq(a, expected_oak_depth, rcond=None)[0]
+    scale = float(np.clip(scale, 0.70, 1.30))
+    offset = float(np.clip(offset, -0.30, 0.30))
+    corrected = (raw_depth * raw_depth * quadratic) + (raw_depth * scale) + offset
+    error = corrected - expected_oak_depth
+    details = {
+        "sample_count": int(raw_depth.size),
+        "depth_span_m": float(np.ptp(raw_depth)),
+        "raw_depth_median_m": float(np.median(raw_depth)),
+        "expected_depth_median_m": float(np.median(expected_oak_depth)),
+        "quadratic_coeff": float(quadratic),
+        "median_abs_err_m": float(np.median(np.abs(error))),
+        "p90_abs_err_m": float(np.percentile(np.abs(error), 90)),
+    }
+    status = (
+        f"scene depth correction q={quadratic:.5f} scale={scale:.5f} offset={offset:.4f}m "
+        f"samples={raw_depth.size} span={details['depth_span_m']:.3f}m "
+        f"median_abs_err={details['median_abs_err_m']:.4f}m"
+    )
+    return scale, offset, details, status
 
 def blend_transform(previous_transform, observed_transform, alpha):
     if previous_transform is None:
@@ -2010,6 +2259,8 @@ class OakDCapture:
         fast_stereo_torch_compile=None,
         fast_stereo_backend=None,
         fast_stereo_model_profile=None,
+        use_rgb_color_for_host_depth=None,
+        host_depth_color_mode=None,
     ):
         ensure_depthai()
         self.width = int(width)
@@ -2042,6 +2293,18 @@ class OakDCapture:
         ).strip().lower()
         if self.fast_stereo_model_profile not in FAST_FOUNDATION_MODEL_PROFILES:
             self.fast_stereo_model_profile = "full_320x736_i4"
+        self.use_rgb_color_for_host_depth = (
+            os.environ.get("OAKD_USE_RGB_COLOR_FOR_HOST_DEPTH", "1").strip().lower() in ("1", "true", "yes", "on")
+            if use_rgb_color_for_host_depth is None
+            else bool(use_rgb_color_for_host_depth)
+        )
+        self.host_depth_color_mode = str(
+            host_depth_color_mode or os.environ.get("OAKD_HOST_DEPTH_COLOR_MODE", "rgb_projected")
+        ).strip().lower()
+        if self.host_depth_color_mode not in ("gray", "rgb_preview", "rgb_projected"):
+            self.host_depth_color_mode = "rgb_projected"
+        if not self.use_rgb_color_for_host_depth:
+            self.host_depth_color_mode = "gray"
         self.pipeline = None
         self.rgb_queue = None
         self.depth_queue = None
@@ -2053,10 +2316,17 @@ class OakDCapture:
         self.fast_foundation_worker = None
         self.host_stereo_fx = 790.0
         self.host_stereo_baseline_m = float(os.environ.get("OAKD_HOST_STEREO_BASELINE_M", "0.075"))
+        self.calibration = None
         self.rgb_intrinsics = None
         self.mono_intrinsics = None
+        self.left_to_rgb_extrinsics_m = None
+        self.left_rectification_rotation = None
+        self._host_rgb_projection_cache = None
         self.latest_color_bgr = None
         self.latest_depth_m = None
+        self.depth_correction_quadratic = float(os.environ.get("OAKD_DEPTH_CORRECTION_QUADRATIC", "0.0"))
+        self.depth_correction_scale = float(os.environ.get("OAKD_DEPTH_CORRECTION_SCALE", "1.0"))
+        self.depth_correction_offset_m = float(os.environ.get("OAKD_DEPTH_CORRECTION_OFFSET_M", "0.0"))
         self.capture_fps = 0.0
         self._capture_count = 0
         self._last_capture_fps_time = time.perf_counter()
@@ -2128,12 +2398,19 @@ class OakDCapture:
             self.median_filter = str(settings.get("median_filter", self.median_filter)).strip().lower()
             self.speckle_filter = bool(settings.get("speckle_filter", self.speckle_filter))
             self.speckle_range = int(settings.get("speckle_range", self.speckle_range))
+            self.use_rgb_color_for_host_depth = bool(settings.get("use_rgb_color_for_host_depth", self.use_rgb_color_for_host_depth))
+            self.host_depth_color_mode = str(settings.get("host_depth_color_mode", self.host_depth_color_mode)).strip().lower()
+            if self.host_depth_color_mode not in ("gray", "rgb_preview", "rgb_projected"):
+                self.host_depth_color_mode = "rgb_projected"
+            if not self.use_rgb_color_for_host_depth:
+                self.host_depth_color_mode = "gray"
             print(
                 ">>> OAK-D runtime stereo config queued locally only; "
                 "DepthAI inputConfig is disabled while RGB depthAlign is active to avoid native crashes. "
                 f"confidence={max(0, min(255, self.confidence_threshold))} "
                 f"median={self.median_filter} "
-                f"speckle={'on' if self.speckle_filter else 'off'}:{max(0, self.speckle_range)} <<<"
+                f"speckle={'on' if self.speckle_filter else 'off'}:{max(0, self.speckle_range)} "
+                f"host_color={self.host_depth_color_mode} <<<"
             )
             return False
 
@@ -2147,15 +2424,13 @@ class OakDCapture:
         preset = preset if preset in self.PRESETS else "fast_density"
 
         pipeline = dai.Pipeline()
-        color = None
-        if not self.host_stereo_enabled:
-            color = pipeline.create(dai.node.ColorCamera)
-            color.setBoardSocket(dai.CameraBoardSocket.CAM_A)
-            color.setResolution(self.COLOR_RESOLUTIONS[rgb_res])
-            color.setPreviewSize(self.width, self.height)
-            color.setInterleaved(False)
-            color.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-            color.setFps(self.fps)
+        color = pipeline.create(dai.node.ColorCamera)
+        color.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+        color.setResolution(self.COLOR_RESOLUTIONS[rgb_res])
+        color.setPreviewSize(self.width, self.height)
+        color.setInterleaved(False)
+        color.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+        color.setFps(self.fps)
 
         mono_left = pipeline.create(dai.node.MonoCamera)
         mono_right = pipeline.create(dai.node.MonoCamera)
@@ -2168,41 +2443,30 @@ class OakDCapture:
 
         stereo = pipeline.create(dai.node.StereoDepth)
         stereo.setDefaultProfilePreset(self.PRESETS[preset])
-        if not self.host_stereo_enabled:
-            if not self.lr_check:
-                print(
-                    ">>> OAK-D forcing lr_check=on because DepthAI RGB/CENTER depth alignment rejects lr_check=off. "
-                    "Use host_sgbm for a live no-LR-check path. <<<"
-                )
-                self.lr_check = True
-            stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
-            stereo.setOutputSize(self.width, self.height)
-        if self.host_stereo_enabled:
-            stereo.setLeftRightCheck(False)
-            stereo.setSubpixel(False)
-            stereo.initialConfig.setMedianFilter(dai.MedianFilter.MEDIAN_OFF)
-            stereo.initialConfig.setConfidenceThreshold(255)
-            stereo.initialConfig.postProcessing.speckleFilter.enable = False
-        else:
-            stereo.setLeftRightCheck(self.lr_check)
-            stereo.setSubpixel(self.subpixel)
-            if self.subpixel and hasattr(stereo.initialConfig, "setSubpixelFractionalBits"):
-                stereo.initialConfig.setSubpixelFractionalBits(max(3, min(5, self.subpixel_bits)))
-            stereo.initialConfig.setConfidenceThreshold(max(0, min(255, self.confidence_threshold)))
-            stereo.initialConfig.setMedianFilter(self._median_filter_mode())
-            stereo.initialConfig.postProcessing.speckleFilter.enable = bool(self.speckle_filter)
-            stereo.initialConfig.postProcessing.speckleFilter.speckleRange = max(0, self.speckle_range)
+        if not self.lr_check:
+            print(
+                ">>> OAK-D forcing lr_check=on because DepthAI RGB/CENTER depth alignment rejects lr_check=off. "
+                "Host stereo source switches still work, but the on-device DepthAI queue needs LR check. <<<"
+            )
+            self.lr_check = True
+        stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+        stereo.setOutputSize(self.width, self.height)
+        stereo.setLeftRightCheck(self.lr_check)
+        stereo.setSubpixel(self.subpixel)
+        if self.subpixel and hasattr(stereo.initialConfig, "setSubpixelFractionalBits"):
+            stereo.initialConfig.setSubpixelFractionalBits(max(3, min(5, self.subpixel_bits)))
+        stereo.initialConfig.setConfidenceThreshold(max(0, min(255, self.confidence_threshold)))
+        stereo.initialConfig.setMedianFilter(self._median_filter_mode())
+        stereo.initialConfig.postProcessing.speckleFilter.enable = bool(self.speckle_filter)
+        stereo.initialConfig.postProcessing.speckleFilter.speckleRange = max(0, self.speckle_range)
         mono_left.out.link(stereo.left)
         mono_right.out.link(stereo.right)
 
         self.config_queue = stereo.inputConfig.createInputQueue(maxSize=1, blocking=False)
-        self.rgb_queue = color.preview.createOutputQueue(maxSize=1, blocking=False) if color is not None else None
+        self.rgb_queue = color.preview.createOutputQueue(maxSize=1, blocking=False)
         self.left_queue = stereo.rectifiedLeft.createOutputQueue(maxSize=1, blocking=False)
         self.right_queue = stereo.rectifiedRight.createOutputQueue(maxSize=1, blocking=False)
-        if self.host_stereo_enabled:
-            self.depth_queue = None
-        else:
-            self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
+        self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
         self.pipeline = pipeline
         self.pipeline.start()
         self._try_load_intrinsics()
@@ -2220,7 +2484,7 @@ class OakDCapture:
                 backend=self.fast_stereo_backend,
                 model_profile=self.fast_stereo_model_profile,
             )
-        color_label = "off" if self.host_stereo_enabled else rgb_res
+        color_label = rgb_res
         print(
             f">>> OAK-D RGB+depth source active at {self.width}x{self.height} "
             f"{self.fps:.0f}fps rgb={color_label} mono={mono_res} preset={preset} "
@@ -2235,10 +2499,30 @@ class OakDCapture:
         try:
             device = self.pipeline.getDefaultDevice()
             calibration = device.readCalibration()
+            self.calibration = calibration
             rgb_matrix = calibration.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A, self.width, self.height)
             mono_matrix = calibration.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B, self.width, self.height)
             self.rgb_intrinsics = CameraIntrinsics(rgb_matrix[0][0], rgb_matrix[1][1], rgb_matrix[0][2], rgb_matrix[1][2])
             self.mono_intrinsics = CameraIntrinsics(mono_matrix[0][0], mono_matrix[1][1], mono_matrix[0][2], mono_matrix[1][2])
+            try:
+                self.left_to_rgb_extrinsics_m = np.array(
+                    calibration.getCameraExtrinsics(
+                        dai.CameraBoardSocket.CAM_B,
+                        dai.CameraBoardSocket.CAM_A,
+                        False,
+                        dai.LengthUnit.METER,
+                    ),
+                    dtype=np.float32,
+                )
+            except Exception as exc:
+                self.left_to_rgb_extrinsics_m = None
+                print(f">>> OAK-D left->RGB extrinsics unavailable; projected host color disabled: {exc} <<<")
+            try:
+                self.left_rectification_rotation = np.array(calibration.getStereoLeftRectificationRotation(), dtype=np.float32)
+                if self.left_rectification_rotation.shape != (3, 3):
+                    self.left_rectification_rotation = None
+            except Exception:
+                self.left_rectification_rotation = None
             try:
                 self.host_stereo_baseline_m = float(calibration.getBaselineDistance(dai.CameraBoardSocket.CAM_B, dai.CameraBoardSocket.CAM_C)) / 100.0
             except Exception:
@@ -2371,7 +2655,87 @@ class OakDCapture:
             "DepthAI on-device stereo remains available by turning off OAK-D Fast Stereo. <<<"
         )
 
-    def _compute_host_stereo_depth(self, left_gray, right_gray):
+    def _project_rgb_color_to_host_depth(self, depth_m, rgb_img, fallback_gray=None):
+        if (
+            depth_m is None
+            or rgb_img is None
+            or self.rgb_intrinsics is None
+            or self.mono_intrinsics is None
+            or self.left_to_rgb_extrinsics_m is None
+        ):
+            return None
+        h, w = depth_m.shape[:2]
+        rgb_h, rgb_w = rgb_img.shape[:2]
+        cache_key = (
+            h,
+            w,
+            float(self.mono_intrinsics.fx),
+            float(self.mono_intrinsics.fy),
+            float(self.mono_intrinsics.ppx),
+            float(self.mono_intrinsics.ppy),
+        )
+        if self._host_rgb_projection_cache is None or self._host_rgb_projection_cache.get("key") != cache_key:
+            ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+            self._host_rgb_projection_cache = {
+                "key": cache_key,
+                "x_norm": (xs - float(self.mono_intrinsics.ppx)) / max(1e-6, float(self.mono_intrinsics.fx)),
+                "y_norm": (ys - float(self.mono_intrinsics.ppy)) / max(1e-6, float(self.mono_intrinsics.fy)),
+            }
+        x_norm = self._host_rgb_projection_cache["x_norm"]
+        y_norm = self._host_rgb_projection_cache["y_norm"]
+        z = depth_m.astype(np.float32, copy=False)
+        valid = np.isfinite(z) & (z > 0.05) & (z < 10.0)
+        if int(valid.sum()) <= 0:
+            return None
+
+        left_x = x_norm[valid] * z[valid]
+        left_y = y_norm[valid] * z[valid]
+        left_z = z[valid]
+        if self.left_rectification_rotation is not None:
+            rect_points = np.stack([left_x, left_y, left_z], axis=0)
+            raw_points = self.left_rectification_rotation.T @ rect_points
+            left_x, left_y, left_z = raw_points[0], raw_points[1], raw_points[2]
+
+        left_points = np.stack([left_x, left_y, left_z, np.ones_like(left_z, dtype=np.float32)], axis=0)
+        rgb_points = self.left_to_rgb_extrinsics_m @ left_points
+        rgb_z = rgb_points[2]
+        valid_z = np.isfinite(rgb_z) & (rgb_z > 1e-4)
+        if int(valid_z.sum()) <= 0:
+            return None
+
+        u = np.rint((rgb_points[0] * float(self.rgb_intrinsics.fx) / np.maximum(rgb_z, 1e-6)) + float(self.rgb_intrinsics.ppx)).astype(np.int32)
+        v = np.rint((rgb_points[1] * float(self.rgb_intrinsics.fy) / np.maximum(rgb_z, 1e-6)) + float(self.rgb_intrinsics.ppy)).astype(np.int32)
+        inside = valid_z & (u >= 0) & (u < rgb_w) & (v >= 0) & (v < rgb_h)
+        if int(inside.sum()) <= 0:
+            return None
+
+        if fallback_gray is None:
+            fallback_gray = np.zeros((h, w, 3), dtype=np.uint8)
+        projected = fallback_gray.copy()
+        flat_indices = np.flatnonzero(valid)
+        inside_flat = flat_indices[inside]
+        rgb_linear = v[inside].astype(np.int64) * int(rgb_w) + u[inside].astype(np.int64)
+        nearest = np.full(int(rgb_h) * int(rgb_w), np.inf, dtype=np.float32)
+        np.minimum.at(nearest, rgb_linear, rgb_z[inside].astype(np.float32))
+        nearest_z = nearest[rgb_linear]
+        visible = np.abs(rgb_z[inside].astype(np.float32) - nearest_z) <= 0.035
+        if int(visible.sum()) <= 0:
+            return projected
+        projected.reshape(-1, 3)[inside_flat[visible]] = rgb_img[v[inside][visible], u[inside][visible]]
+        return projected
+
+    def _color_for_host_depth(self, left_gray, depth_m, color_img=None):
+        gray_color = cv2.cvtColor(left_gray, cv2.COLOR_GRAY2BGR)
+        if color_img is None or self.host_depth_color_mode == "gray":
+            return gray_color
+        if self.host_depth_color_mode == "rgb_preview":
+            return cv2.resize(color_img, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+        projected = self._project_rgb_color_to_host_depth(depth_m, color_img, gray_color)
+        if projected is not None:
+            return projected
+        return cv2.resize(color_img, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+    def _compute_host_stereo_depth(self, left_gray, right_gray, color_img=None):
         if left_gray is None or right_gray is None:
             return None, None
         if left_gray.ndim == 3:
@@ -2399,7 +2763,7 @@ class OakDCapture:
         depth_m = np.zeros((self.height, self.width), dtype=np.float32)
         depth_m[valid] = (float(self.host_stereo_fx) * float(self.host_stereo_baseline_m)) / np.maximum(disparity[valid], 0.75)
         depth_m[(depth_m < 0.05) | (depth_m > 10.0)] = 0.0
-        color = cv2.cvtColor(left_gray, cv2.COLOR_GRAY2BGR)
+        color = self._color_for_host_depth(left_gray, depth_m, color_img)
         return color, depth_m
 
     def _drain_latest(self, queue):
@@ -2445,24 +2809,31 @@ class OakDCapture:
                 current_pair = (pending_left_serial, pending_right_serial)
                 if self.fast_foundation_enabled:
                     if pending_left is not None and pending_right is not None and current_pair != submitted_fast_pair:
-                        # Use rectified-left grayscale for now so the texture is in the
-                        # same camera frame as the GPU disparity. RGB projection can be
-                        # layered back on once the geometry path is stable.
                         worker = self.fast_foundation_worker
                         if worker is not None:
-                            worker.submit(pending_left, pending_right, None)
+                            color_for_depth = pending_color if self.host_depth_color_mode == "rgb_preview" else None
+                            worker.submit(pending_left, pending_right, color_for_depth)
                             submitted_fast_pair = current_pair
                     worker = self.fast_foundation_worker
                     result = worker.get_latest() if worker is not None else None
                     if result is not None:
                         seq, result_color, result_depth = result
                         if seq != published_fast_seq:
-                            pending_color = result_color
+                            if self.host_depth_color_mode == "rgb_preview":
+                                pending_color = result_color
+                            else:
+                                color_for_depth = pending_color if self.host_depth_color_mode == "rgb_projected" else None
+                                pending_color = self._color_for_host_depth(
+                                    pending_left if pending_left is not None else result_color,
+                                    result_depth,
+                                    color_for_depth,
+                                )
                             pending_depth_m = result_depth
                             pending_stereo_serial = seq
                             published_fast_seq = seq
                 elif pending_left is not None and pending_right is not None and current_pair != computed_host_pair:
-                    pending_color, pending_depth_m = self._compute_host_stereo_depth(pending_left, pending_right)
+                    color_for_depth = pending_color if self.host_depth_color_mode in ("rgb_preview", "rgb_projected") else None
+                    pending_color, pending_depth_m = self._compute_host_stereo_depth(pending_left, pending_right, color_for_depth)
                     pending_stereo_serial += 1
                     computed_host_pair = current_pair
             elif depth_msg is not None:
@@ -2493,11 +2864,38 @@ class OakDCapture:
             elif not got_message:
                 time.sleep(0.001)
 
-    def read_latest(self):
+    def set_depth_correction(self, scale=1.0, offset_m=0.0, quadratic=0.0):
+        with self._frame_lock:
+            self.depth_correction_quadratic = float(np.clip(float(quadratic), -0.15, 0.15))
+            self.depth_correction_scale = float(np.clip(float(scale), 0.70, 1.30))
+            self.depth_correction_offset_m = float(np.clip(float(offset_m), -0.30, 0.30))
+        print(
+            f">>> OAK-D depth correction active: "
+            f"depth = depth^2 * {self.depth_correction_quadratic:.5f} "
+            f"+ depth * {self.depth_correction_scale:.5f} + {self.depth_correction_offset_m:.4f}m <<<"
+        )
+
+    def _correct_depth(self, depth_m):
+        if depth_m is None:
+            return None
+        raw = depth_m.astype(np.float32, copy=True)
+        corrected = (
+            raw * raw * float(self.depth_correction_quadratic)
+            + raw * float(self.depth_correction_scale)
+            + float(self.depth_correction_offset_m)
+        )
+        corrected[~np.isfinite(corrected)] = 0.0
+        corrected[corrected < 0.0] = 0.0
+        return corrected
+
+    def read_latest(self, apply_depth_correction=True):
         with self._frame_lock:
             if self.latest_color_bgr is None or self.latest_depth_m is None:
                 return None, None
-            return self.latest_color_bgr.copy(), self.latest_depth_m.copy()
+            depth = self.latest_depth_m.copy()
+            if apply_depth_correction:
+                depth = self._correct_depth(depth)
+            return self.latest_color_bgr.copy(), depth
 
     def release(self):
         self._stop_event.set()
@@ -3755,6 +4153,8 @@ def main():
         "fast_stereo_torch_compile": os.environ.get("OAKD_FAST_STEREO_TORCH_COMPILE", "0").strip().lower() in ("1", "true", "yes", "on"),
         "fast_stereo_backend": os.environ.get("OAKD_FAST_STEREO_BACKEND", "pytorch").strip().lower(),
         "fast_stereo_model_profile": os.environ.get("OAKD_FAST_STEREO_MODEL_PROFILE", "full_320x736_i4").strip().lower(),
+        "use_rgb_color_for_host_depth": os.environ.get("OAKD_USE_RGB_COLOR_FOR_HOST_DEPTH", "1").strip().lower() in ("1", "true", "yes", "on"),
+        "host_depth_color_mode": os.environ.get("OAKD_HOST_DEPTH_COLOR_MODE", "rgb_projected").strip().lower(),
     }
     if oakd_point_cloud_settings["fast_stereo_model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
         oakd_point_cloud_settings["fast_stereo_model_profile"] = "full_320x736_i4"
@@ -4014,7 +4414,7 @@ def main():
             or (
                 realsense_point_cloud_transport == "tcp"
                 and realsense_point_cloud_mesh_enabled
-                and realsense_point_cloud_mesh_mode in ("gpu_grid", "gpu_points")
+                and realsense_point_cloud_mesh_mode in ("gpu_grid", "gpu_points", "stereo_gpu")
             )
         )
         if uses_grid_transport:
@@ -4025,7 +4425,7 @@ def main():
             tri_mask = None
             needs_triangle_mask = (
                 realsense_point_cloud_transport == "tcp"
-                and realsense_point_cloud_mesh_mode == "gpu_grid"
+                and realsense_point_cloud_mesh_mode in ("gpu_grid", "stereo_gpu")
             )
             if needs_triangle_mask and grid_h > 1 and grid_w > 1:
                 tri_mask = np.empty((max(1, grid_h - 1), max(1, grid_w - 1), 4), dtype=np.uint8)
@@ -4376,7 +4776,99 @@ def main():
         finally:
             oakd_realsense_align_lock.release()
 
-    def _run_single_aruco_alignment_worker(result_path, oak_capture, oak_color, rs_color, rs_intrinsics, marker_size_m, dictionary_name, marker_id, marker_ids=None):
+    def refine_oakd_to_realsense_with_depth(init_transform, oak_depth, rs_depth, oak_intrinsics, rs_intrinsics, min_depth, max_depth, stride):
+        try:
+            import open3d as o3d
+        except Exception as exc:
+            return np.asarray(init_transform, dtype=np.float64), f"depth refine skipped: open3d import failed ({exc})", {}
+
+        align_stride = max(1, int(stride))
+        if align_stride == 1:
+            align_stride = 2
+        oak_points = depth_to_view_points(oak_depth, oak_intrinsics, min_depth, max_depth, align_stride, max_points=90000)
+        rs_points = depth_to_view_points(rs_depth, rs_intrinsics, min_depth, max_depth, align_stride, max_points=90000)
+        if oak_points is None or rs_points is None or oak_points.shape[0] < 800 or rs_points.shape[0] < 800:
+            status = (
+                "depth refine skipped: not enough points "
+                f"OAK={0 if oak_points is None else oak_points.shape[0]} RS={0 if rs_points is None else rs_points.shape[0]}"
+            )
+            return np.asarray(init_transform, dtype=np.float64), status, {}
+
+        source = o3d.geometry.PointCloud()
+        target = o3d.geometry.PointCloud()
+        source.points = o3d.utility.Vector3dVector(oak_points)
+        target.points = o3d.utility.Vector3dVector(rs_points)
+
+        voxel = float(os.environ.get("OAKD_REALSENSE_ARUCO_REFINE_VOXEL_M", "0.025"))
+        max_corr = float(os.environ.get("OAKD_REALSENSE_ARUCO_REFINE_MAX_CORR_M", str(voxel * 3.0)))
+        source_down = source.voxel_down_sample(voxel)
+        target_down = target.voxel_down_sample(voxel)
+        if len(source_down.points) < 200 or len(target_down.points) < 200:
+            source_down = source
+            target_down = target
+        if len(source_down.points) < 200 or len(target_down.points) < 200:
+            status = f"depth refine skipped: downsample too sparse OAK={len(source_down.points)} RS={len(target_down.points)}"
+            return np.asarray(init_transform, dtype=np.float64), status, {}
+
+        target_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 3.0, max_nn=40))
+        init = np.asarray(init_transform, dtype=np.float64)
+        try:
+            icp = o3d.pipelines.registration.registration_icp(
+                source_down,
+                target_down,
+                max_corr,
+                init,
+                o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=60),
+            )
+        except Exception:
+            icp = o3d.pipelines.registration.registration_icp(
+                source_down,
+                target_down,
+                max_corr,
+                init,
+                o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=60),
+            )
+        refined = np.asarray(icp.transformation, dtype=np.float64)
+        details = {
+            "depth_refine_fitness": float(icp.fitness),
+            "depth_refine_rmse": float(icp.inlier_rmse),
+            "depth_refine_oak_points": int(oak_points.shape[0]),
+            "depth_refine_rs_points": int(rs_points.shape[0]),
+            "depth_refine_oak_down": int(len(source_down.points)),
+            "depth_refine_rs_down": int(len(target_down.points)),
+            "depth_refine_voxel_m": float(voxel),
+            "depth_refine_max_corr_m": float(max_corr),
+        }
+        status = (
+            "depth refined "
+            f"fitness={float(icp.fitness):.3f} rmse={float(icp.inlier_rmse):.4f} "
+            f"pts OAK={oak_points.shape[0]} RS={rs_points.shape[0]} down OAK={len(source_down.points)} RS={len(target_down.points)}"
+        )
+        return refined, status, details
+
+    def _run_single_aruco_alignment_worker(
+        result_path,
+        oak_capture,
+        oak_color,
+        rs_color,
+        rs_intrinsics,
+        marker_size_m,
+        dictionary_name,
+        marker_id,
+        marker_ids=None,
+        auto_depth_refine=True,
+        oak_depth=None,
+        rs_depth=None,
+        oak_depth_intrinsics=None,
+        rs_depth_intrinsics=None,
+        min_depth=OAKD_POINT_CLOUD_MIN_DEPTH_M,
+        max_depth=OAKD_POINT_CLOUD_MAX_DEPTH_M,
+        stride=2,
+        requested_method="single_aruco",
+    ):
+        alignment_label = "big ArUco" if str(requested_method).strip().lower() == "big_aruco" else "single ArUco"
         try:
             oak_poses, oak_status = detect_big_aruco_poses(
                 oak_color,
@@ -4398,8 +4890,8 @@ def main():
             )
             shared_keys = sorted(set(oak_poses.keys()) & set(rs_poses.keys()))
             if not oak_poses or not rs_poses or not shared_keys:
-                status = f"single ArUco failed | {oak_status} | {rs_status}"
-                write_oakd_alignment_result(result_path, "single_aruco", False, status)
+                status = f"{alignment_label} failed | {oak_status} | {rs_status}"
+                write_oakd_alignment_result(result_path, requested_method, False, status)
                 print(f">>> OAK-D/RealSense {status} <<<")
                 return
 
@@ -4422,33 +4914,135 @@ def main():
                 )
             oakd_to_realsense = average_rigid_transforms(marker_transforms)
             if oakd_to_realsense is None:
-                status = f"single ArUco failed: no usable shared marker transforms | {oak_status} | {rs_status}"
-                write_oakd_alignment_result(result_path, "single_aruco", False, status)
+                status = f"{alignment_label} failed: no usable shared marker transforms | {oak_status} | {rs_status}"
+                write_oakd_alignment_result(result_path, requested_method, False, status)
                 print(f">>> OAK-D/RealSense {status} <<<")
                 return
             shared_text = ",".join(f"{key[0]}:{key[1]}" for key in shared_keys)
+            depth_correction_status = "depth correction skipped"
+            depth_correction_details = []
+            depth_correction_scale = 1.0
+            depth_correction_offset_m = 0.0
+            depth_correction_quadratic = 0.0
+            scene_depth_correction_status = "scene depth correction skipped"
+            scene_depth_correction_details = {}
+            if oak_depth is not None:
+                shared_oak_poses = {key: oak_poses[key] for key in shared_keys}
+                (
+                    depth_correction_scale,
+                    depth_correction_offset_m,
+                    depth_correction_details,
+                    depth_correction_status,
+                ) = estimate_depth_scale_offset_from_marker_poses(
+                    oak_depth,
+                    shared_oak_poses,
+                    min_depth,
+                    max_depth,
+                )
+                marker_depth_error = median_marker_depth_error(
+                    depth_correction_details,
+                    depth_correction_scale,
+                    depth_correction_offset_m,
+                    0.0,
+                )
+                if rs_depth is not None:
+                    (
+                        scene_scale,
+                        scene_offset_m,
+                        scene_depth_correction_details,
+                        scene_depth_correction_status,
+                    ) = estimate_depth_scale_offset_from_cross_depth(
+                        oak_depth,
+                        rs_depth,
+                        oak_depth_intrinsics if oak_depth_intrinsics is not None else oak_capture.intrinsics,
+                        rs_depth_intrinsics if rs_depth_intrinsics is not None else rs_intrinsics,
+                        oakd_to_realsense,
+                        min_depth,
+                        max_depth,
+                        stride=max(6, int(stride) * 3),
+                    )
+                    if scene_scale is not None and scene_offset_m is not None:
+                        scene_quadratic = float(scene_depth_correction_details.get("quadratic_coeff", 0.0))
+                        scene_marker_error = median_marker_depth_error(
+                            depth_correction_details,
+                            scene_scale,
+                            scene_offset_m,
+                            scene_quadratic,
+                        )
+                        marker_limit = max(0.018, (marker_depth_error or 0.0) + 0.012)
+                        if scene_marker_error is None or scene_marker_error <= marker_limit:
+                            depth_correction_scale = scene_scale
+                            depth_correction_offset_m = scene_offset_m
+                            depth_correction_quadratic = scene_quadratic
+                            depth_correction_status = scene_depth_correction_status
+                        else:
+                            scene_depth_correction_status = (
+                                f"{scene_depth_correction_status}; rejected because marker plane error "
+                                f"{scene_marker_error:.4f}m exceeded {marker_limit:.4f}m"
+                            )
+                if hasattr(oak_capture, "set_depth_correction"):
+                    oak_capture.set_depth_correction(
+                        depth_correction_scale,
+                        depth_correction_offset_m,
+                        depth_correction_quadratic,
+                    )
+                raw_oak_depth = oak_depth.astype(np.float32, copy=True)
+                oak_depth = (
+                    raw_oak_depth * raw_oak_depth * float(depth_correction_quadratic)
+                    + raw_oak_depth * float(depth_correction_scale)
+                    + float(depth_correction_offset_m)
+                )
+                oak_depth[~np.isfinite(oak_depth)] = 0.0
+                oak_depth[oak_depth < 0.0] = 0.0
+            refine_status = "depth refine disabled"
+            refine_details = {}
+            if auto_depth_refine:
+                if oak_depth is not None and rs_depth is not None:
+                    oakd_to_realsense, refine_status, refine_details = refine_oakd_to_realsense_with_depth(
+                        oakd_to_realsense,
+                        oak_depth,
+                        rs_depth,
+                        oak_depth_intrinsics if oak_depth_intrinsics is not None else oak_capture.intrinsics,
+                        rs_depth_intrinsics if rs_depth_intrinsics is not None else rs_intrinsics,
+                        min_depth,
+                        max_depth,
+                        stride,
+                    )
+                else:
+                    refine_status = "depth refine skipped: missing latest OAK-D or RealSense depth"
+            result_details = {
+                "marker_size_m": float(marker_size_m),
+                "dictionary": str(dictionary_name),
+                "marker_id": int(marker_id),
+                "marker_ids": sorted(parse_marker_id_filter(marker_id, marker_ids) or []),
+                "shared_marker_count": int(len(shared_keys)),
+                "shared_markers": marker_details,
+                "oak_depth_correction_scale": float(depth_correction_scale),
+                "oak_depth_correction_offset_m": float(depth_correction_offset_m),
+                "oak_depth_correction_quadratic": float(depth_correction_quadratic),
+                "oak_depth_correction_status": depth_correction_status,
+                "oak_depth_correction_markers": depth_correction_details,
+                "oak_scene_depth_correction_status": scene_depth_correction_status,
+                "oak_scene_depth_correction": scene_depth_correction_details,
+                "auto_depth_refine": bool(auto_depth_refine),
+                "depth_refine_status": refine_status,
+            }
+            result_details.update(refine_details)
             write_oakd_alignment_result(
                 result_path,
-                "single_aruco",
+                requested_method,
                 True,
-                f"big ArUco applied | shared={len(shared_keys)} [{shared_text}] | OAK->RS view transform | {oak_status} | {rs_status}",
+                f"big ArUco applied | shared={len(shared_keys)} [{shared_text}] | {depth_correction_status} | {refine_status} | OAK->RS view transform | {oak_status} | {rs_status}",
                 oakd_to_realsense,
-                {
-                    "marker_size_m": float(marker_size_m),
-                    "dictionary": str(dictionary_name),
-                    "marker_id": int(marker_id),
-                    "marker_ids": sorted(parse_marker_id_filter(marker_id, marker_ids) or []),
-                    "shared_marker_count": int(len(shared_keys)),
-                    "shared_markers": marker_details,
-                },
+                result_details,
             )
             print(
                 f">>> OAK-D/RealSense big ArUco alignment solved from {len(shared_keys)} shared marker(s) "
-                f"and wrote {result_path or '<no result path>'}: OAK->RS view transform | {oak_status} | {rs_status} <<<"
+                f"and wrote {result_path or '<no result path>'}: {depth_correction_status} | {refine_status} | OAK->RS view transform | {oak_status} | {rs_status} <<<"
             )
         except Exception as exc:
-            status = f"single ArUco failed: {exc}"
-            write_oakd_alignment_result(result_path, "single_aruco", False, status)
+            status = f"{alignment_label} failed: {exc}"
+            write_oakd_alignment_result(result_path, requested_method, False, status)
             print(f">>> OAK-D/RealSense {status} <<<")
         finally:
             oakd_realsense_align_lock.release()
@@ -4614,11 +5208,15 @@ def main():
         oakd_realsense_align_thread.start()
         print(">>> OAK-D/RealSense ChArUco alignment started in background; live preview/cloud publishing remains active. <<<")
 
-    def start_single_aruco_alignment(result_path, marker_size_m, dictionary_name, marker_id, marker_ids=None):
+    def start_single_aruco_alignment(result_path, marker_size_m, dictionary_name, marker_id, marker_ids=None, auto_depth_refine=True, min_depth=OAKD_POINT_CLOUD_MIN_DEPTH_M, max_depth=OAKD_POINT_CLOUD_MAX_DEPTH_M, stride=2, requested_method="single_aruco"):
         nonlocal oakd_realsense_align_thread
+        requested_method = str(requested_method).strip().lower()
+        if requested_method not in ("single_aruco", "big_aruco"):
+            requested_method = "single_aruco"
+        alignment_label = "big ArUco" if requested_method == "big_aruco" else "single ArUco"
         if not oakd_realsense_align_lock.acquire(False):
-            status = "single ArUco alignment already running"
-            write_oakd_alignment_result(result_path, "single_aruco", False, status)
+            status = f"{alignment_label} alignment already running"
+            write_oakd_alignment_result(result_path, requested_method, False, status)
             print(f">>> OAK-D/RealSense {status}; ignoring duplicate request. <<<")
             return
         if marker_size_m <= 0.0:
@@ -4626,34 +5224,54 @@ def main():
             print(f">>> OAK-D/RealSense big ArUco marker_size_m was 0; using default {marker_size_m:.4f}m <<<")
         if oakd_capture is None:
             oakd_realsense_align_lock.release()
-            status = "single ArUco failed: OAK-D stream is not active"
-            write_oakd_alignment_result(result_path, "single_aruco", False, status)
+            status = f"{alignment_label} failed: OAK-D stream is not active"
+            write_oakd_alignment_result(result_path, requested_method, False, status)
             print(f">>> OAK-D/RealSense {status} <<<")
             return
         if not isinstance(cap, RealSenseCapture):
             oakd_realsense_align_lock.release()
-            status = "single ArUco failed: RealSense stream is not active"
-            write_oakd_alignment_result(result_path, "single_aruco", False, status)
+            status = f"{alignment_label} failed: RealSense stream is not active"
+            write_oakd_alignment_result(result_path, requested_method, False, status)
             print(f">>> OAK-D/RealSense {status} <<<")
             return
 
-        oak_color, _oak_depth = oakd_capture.read_latest()
+        oak_color, oak_depth = oakd_capture.read_latest(apply_depth_correction=False)
         rs_color, _rs_frame_id = cap.read_latest_color_for_alignment(timeout=0.02)
+        _rs_pc_color, rs_depth, rs_depth_intrinsics = read_realsense_point_cloud_snapshot(cap)
         if oak_color is None or rs_color is None:
             oakd_realsense_align_lock.release()
-            status = "single ArUco failed: missing latest OAK-D or RealSense RGB frame"
-            write_oakd_alignment_result(result_path, "single_aruco", False, status)
+            status = f"{alignment_label} failed: missing latest OAK-D or RealSense RGB frame"
+            write_oakd_alignment_result(result_path, requested_method, False, status)
             print(f">>> OAK-D/RealSense {status} <<<")
             return
         rs_intrinsics = getattr(cap, "charuco_intrinsics", cap.intrinsics)
         oakd_realsense_align_thread = threading.Thread(
             target=_run_single_aruco_alignment_worker,
-            args=(result_path, oakd_capture, oak_color.copy(), rs_color.copy(), rs_intrinsics, float(marker_size_m), dictionary_name, int(marker_id), marker_ids),
-            name="oakd-realsense-single-aruco-align",
+            args=(
+                result_path,
+                oakd_capture,
+                oak_color.copy(),
+                rs_color.copy(),
+                rs_intrinsics,
+                float(marker_size_m),
+                dictionary_name,
+                int(marker_id),
+                marker_ids,
+                bool(auto_depth_refine),
+                None if oak_depth is None else oak_depth.copy(),
+                None if rs_depth is None else rs_depth.copy(),
+                oakd_capture.intrinsics,
+                rs_depth_intrinsics,
+                float(min_depth),
+                float(max_depth),
+                max(1, int(stride)),
+                requested_method,
+            ),
+            name=f"oakd-realsense-{requested_method.replace('_', '-')}-align",
             daemon=True,
         )
         oakd_realsense_align_thread.start()
-        print(">>> OAK-D/RealSense single ArUco alignment started in background; live preview/cloud publishing remains active. <<<")
+        print(f">>> OAK-D/RealSense {alignment_label} alignment started in background; live preview/cloud publishing remains active. <<<")
 
     def start_open3d_alignment(result_path, min_depth, max_depth, stride):
         nonlocal oakd_realsense_align_thread
@@ -4726,6 +5344,8 @@ def main():
                 fast_stereo_torch_compile=settings.get("fast_stereo_torch_compile", False),
                 fast_stereo_backend=settings.get("fast_stereo_backend", "pytorch"),
                 fast_stereo_model_profile=settings.get("fast_stereo_model_profile", "full_320x736_i4"),
+                use_rgb_color_for_host_depth=settings.get("use_rgb_color_for_host_depth", True),
+                host_depth_color_mode=settings.get("host_depth_color_mode", "rgb_projected"),
             )
             capture.settings_signature = signature
             oakd_capture = capture
@@ -5413,7 +6033,7 @@ def main():
                     realsense_point_cloud_max_points = max(0, int(cmd_json.get("max_points", realsense_point_cloud_max_points)))
                     realsense_point_cloud_mesh_enabled = bool(cmd_json.get("mesh_enabled", realsense_point_cloud_mesh_enabled))
                     realsense_point_cloud_mesh_mode = str(cmd_json.get("mesh_mode", realsense_point_cloud_mesh_mode)).strip().lower()
-                    if realsense_point_cloud_mesh_mode not in ("gpu_grid", "gpu_points", "stereo_cpu"):
+                    if realsense_point_cloud_mesh_mode not in ("gpu_grid", "gpu_points", "stereo_cpu", "stereo_gpu"):
                         realsense_point_cloud_mesh_mode = "gpu_grid"
                     realsense_point_cloud_mesh_max_edge = float(cmd_json.get("mesh_max_edge", realsense_point_cloud_mesh_max_edge))
                     realsense_point_cloud_packet_points = max(1, int(cmd_json.get("packet_points", realsense_point_cloud_packet_points)))
@@ -5474,6 +6094,8 @@ def main():
                         "height": max(120, int(cmd_json.get("oakd_height", oakd_point_cloud_settings["height"]))),
                         "fps": min(60.0, max(1.0, float(cmd_json.get("oakd_fps", oakd_point_cloud_settings["fps"])))),
                         "rgb_res": str(cmd_json.get("oakd_rgb_res", oakd_point_cloud_settings["rgb_res"])).strip().lower(),
+                        "use_rgb_color_for_host_depth": bool(cmd_json.get("oakd_use_rgb_color_for_host_depth", oakd_point_cloud_settings.get("use_rgb_color_for_host_depth", True))),
+                        "host_depth_color_mode": str(cmd_json.get("oakd_host_depth_color_mode", oakd_point_cloud_settings.get("host_depth_color_mode", "rgb_projected"))).strip().lower(),
                         "mono_res": str(cmd_json.get("oakd_mono_res", oakd_point_cloud_settings["mono_res"])).strip().lower(),
                         "preset": str(cmd_json.get("oakd_stereo_preset", oakd_point_cloud_settings["preset"])).strip().lower(),
                         "lr_check": bool(cmd_json.get("oakd_lr_check", oakd_point_cloud_settings["lr_check"])),
@@ -5497,6 +6119,10 @@ def main():
                         oakd_point_cloud_settings["fast_stereo_backend"] = "pytorch"
                     if oakd_point_cloud_settings["fast_stereo_model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
                         oakd_point_cloud_settings["fast_stereo_model_profile"] = "full_320x736_i4"
+                    if oakd_point_cloud_settings["host_depth_color_mode"] not in ("gray", "rgb_preview", "rgb_projected"):
+                        oakd_point_cloud_settings["host_depth_color_mode"] = "rgb_projected"
+                    if not oakd_point_cloud_settings.get("use_rgb_color_for_host_depth", True):
+                        oakd_point_cloud_settings["host_depth_color_mode"] = "gray"
                     if oakd_point_cloud_settings["depth_source"] == "depthai" and not oakd_point_cloud_settings["lr_check"]:
                         oakd_point_cloud_settings["lr_check"] = True
                         print(
@@ -5534,6 +6160,7 @@ def main():
                         f"fast_profile={oakd_point_cloud_settings['fast_stereo_model_profile']} "
                         f"fast_iters={oakd_point_cloud_settings['fast_stereo_iters']} "
                         f"fast_compile={'on' if oakd_point_cloud_settings['fast_stereo_torch_compile'] else 'off'} "
+                        f"host_color={oakd_point_cloud_settings.get('host_depth_color_mode', 'rgb_projected')} "
                         f"sync_to_slowest={'on' if point_cloud_sync_to_slowest else 'off'} "
                         f"shm_color={oakd_point_cloud_shm_color_format} "
                         f"shm={OAKD_POINT_CLOUD_SHM_NAME} <<<"
@@ -5553,6 +6180,11 @@ def main():
                             str(cmd_json.get("aruco_dictionary", "auto")),
                             int(cmd_json.get("aruco_marker_id", -1)),
                             cmd_json.get("aruco_marker_ids", None),
+                            bool(cmd_json.get("auto_depth_refine", True)),
+                            float(cmd_json.get("min_depth", OAKD_POINT_CLOUD_MIN_DEPTH_M)),
+                            float(cmd_json.get("max_depth", OAKD_POINT_CLOUD_MAX_DEPTH_M)),
+                            max(1, int(cmd_json.get("stride", 2))),
+                            method,
                         )
                     else:
                         start_open3d_alignment(

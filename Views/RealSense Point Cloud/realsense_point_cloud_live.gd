@@ -35,6 +35,42 @@ extends Node3D
 	set(value):
 		oakd_scene_scale = value
 		_update_oakd_transform()
+@export_subgroup("OAK-D Manual Correction")
+@export_range(-0.25, 0.25, 0.001, "suffix:m") var oakd_manual_offset_x_m: float = 0.0:
+	set(value):
+		oakd_manual_offset_x_m = value
+		_update_oakd_transform()
+@export_range(-0.25, 0.25, 0.001, "suffix:m") var oakd_manual_offset_y_m: float = 0.0:
+	set(value):
+		oakd_manual_offset_y_m = value
+		_update_oakd_transform()
+@export_range(-0.25, 0.25, 0.001, "suffix:m") var oakd_manual_offset_z_m: float = 0.0:
+	set(value):
+		oakd_manual_offset_z_m = value
+		_update_oakd_transform()
+@export_range(-15.0, 15.0, 0.05, "suffix:deg") var oakd_manual_rot_x_deg: float = 0.0:
+	set(value):
+		oakd_manual_rot_x_deg = value
+		_update_oakd_transform()
+@export_range(-15.0, 15.0, 0.05, "suffix:deg") var oakd_manual_rot_y_deg: float = 0.0:
+	set(value):
+		oakd_manual_rot_y_deg = value
+		_update_oakd_transform()
+@export_range(-15.0, 15.0, 0.05, "suffix:deg") var oakd_manual_rot_z_deg: float = 0.0:
+	set(value):
+		oakd_manual_rot_z_deg = value
+		_update_oakd_transform()
+@export var reset_oakd_manual_correction_now: bool = false:
+	set(value):
+		reset_oakd_manual_correction_now = false
+		if value:
+			oakd_manual_offset_x_m = 0.0
+			oakd_manual_offset_y_m = 0.0
+			oakd_manual_offset_z_m = 0.0
+			oakd_manual_rot_x_deg = 0.0
+			oakd_manual_rot_y_deg = 0.0
+			oakd_manual_rot_z_deg = 0.0
+			_update_oakd_transform()
 @export_subgroup("OAK-D Capture")
 @export var apply_oakd_low_latency_preset_now: bool = false:
 	set(value):
@@ -91,6 +127,17 @@ extends Node3D
 @export_enum("720p", "800p", "1080p") var oakd_rgb_res: String = "1080p":
 	set(value):
 		oakd_rgb_res = value
+		_resend_stream_settings()
+@export var oakd_use_rgb_color_for_host_depth: bool = true:
+	set(value):
+		oakd_use_rgb_color_for_host_depth = value
+		_resend_stream_settings()
+@export_enum("rgb_projected", "rgb_preview", "gray") var oakd_host_depth_color_mode: String = "rgb_projected":
+	set(value):
+		if value not in ["rgb_projected", "rgb_preview", "gray"]:
+			value = "rgb_projected"
+		oakd_host_depth_color_mode = value
+		oakd_use_rgb_color_for_host_depth = value != "gray"
 		_resend_stream_settings()
 @export_enum("400p", "480p", "720p", "800p") var oakd_mono_res: String = "800p":
 	set(value):
@@ -190,9 +237,12 @@ extends Node3D
 			_send_oakd_alignment_command("big_aruco")
 @export_subgroup("Big ArUco")
 @export_range(0.05, 0.30, 0.0005, "suffix:m") var single_aruco_marker_size_m: float = 0.15
-@export_enum("auto", "4x4_50", "4x4_100", "4x4_250", "5x5_100", "5x5_250", "6x6_250", "6x6_1000", "7x7_250") var single_aruco_dictionary: String = "auto"
+@export_enum("auto", "4x4_50", "4x4_100", "4x4_250", "5x5_100", "5x5_250", "6x6_250", "6x6_1000", "7x7_250") var single_aruco_dictionary: String = "4x4_50"
 @export_range(-1, 1000, 1) var single_aruco_marker_id: int = -1
 @export var big_aruco_marker_ids: String = "45,46,47,48,49"
+@export var big_aruco_auto_depth_refine: bool = true
+const BIG_ARUCO_MARKER_SIZE_M := 0.15
+const BIG_ARUCO_DICTIONARY := "4x4_50"
 @export_group("Editor Debug")
 @export var show_editor_debug_panel: bool = true:
 	set(value):
@@ -205,7 +255,7 @@ extends Node3D
 		_update_editor_debug_panel(true)
 @export var print_stream_stats_to_console: bool = false
 @export_multiline var editor_debug_text: String = ""
-@export_group("")
+@export_group("Point Cloud Stream")
 @export var editor_stream_enabled: bool = false:
 	set(value):
 		if editor_stream_enabled == value:
@@ -248,6 +298,7 @@ extends Node3D
 	set(value):
 		max_depth_m = value
 		_resend_stream_settings()
+@export_group("Mesh / Fusion Look")
 @export_range(0.001, 0.08, 0.001) var point_size: float = 0.012:
 	set(value):
 		point_size = value
@@ -268,8 +319,10 @@ extends Node3D
 		render_connected_mesh = value
 		_resend_stream_settings()
 		_update_render_visibility()
-@export_enum("gpu_grid", "gpu_points", "stereo_cpu") var live_mesh_mode: String = "gpu_grid":
+@export_enum("gpu_grid", "point_splats", "gpu_points", "stereo_cpu", "stereo_gpu") var live_mesh_mode: String = "gpu_grid":
 	set(value):
+		if value == "gpu_points":
+			value = "point_splats"
 		live_mesh_mode = value
 		_resend_stream_settings()
 		_grid_width = 0
@@ -304,6 +357,36 @@ extends Node3D
 		_sync_native_shm_point_cloud_settings()
 @export_range(0.0, 0.95, 0.01) var mesh_temporal_smoothing: float = 0.55
 @export_range(0.0, 1.0, 0.01) var mesh_mask_smoothing: float = 0.70
+@export var apply_fusion_quality_preset_now: bool = false:
+	set(value):
+		apply_fusion_quality_preset_now = false
+		if value:
+			_apply_fusion_quality_preset()
+@export_subgroup("Feathering")
+@export var mesh_edge_feather_enabled: bool = false:
+	set(value):
+		mesh_edge_feather_enabled = value
+		_sync_native_shm_point_cloud_settings()
+		_update_oakd_native_renderer()
+@export_range(0.001, 0.20, 0.001, "suffix:m") var mesh_edge_feather_width_m: float = 0.035:
+	set(value):
+		mesh_edge_feather_width_m = value
+		_sync_native_shm_point_cloud_settings()
+		_update_oakd_native_renderer()
+@export_range(0.0, 1.0, 0.01) var mesh_edge_feather_min_alpha: float = 0.20:
+	set(value):
+		mesh_edge_feather_min_alpha = value
+		_sync_native_shm_point_cloud_settings()
+		_update_oakd_native_renderer()
+@export_subgroup("Benchmark")
+@export var run_point_cloud_render_benchmark_now: bool = false:
+	set(value):
+		run_point_cloud_render_benchmark_now = false
+		if value:
+			_start_point_cloud_render_benchmark()
+@export_range(0.5, 10.0, 0.25, "suffix:s") var render_benchmark_sample_seconds: float = 3.0
+@export_range(0.25, 5.0, 0.25, "suffix:s") var render_benchmark_settle_seconds: float = 1.0
+@export_multiline var render_benchmark_summary: String = ""
 @export_group("RealSense SDK")
 @export var apply_default_settings_now: bool = false:
 	set(value):
@@ -454,6 +537,9 @@ var _debug_label: Label
 var _debug_label_3d: Label3D
 var _last_debug_panel_update_msec: int = 0
 var _last_oakd_stream_command_json: String = ""
+var _render_benchmark: Dictionary = {}
+var _render_benchmark_request_path: String = ""
+var _render_benchmark_request_token: String = ""
 
 func _ready() -> void:
 	scale = Vector3.ONE * scene_scale
@@ -471,6 +557,8 @@ func _exit_tree() -> void:
 	_free_editor_debug_panel()
 
 func _process(_delta: float) -> void:
+	_poll_point_cloud_render_benchmark_request()
+	_process_point_cloud_render_benchmark()
 	_update_editor_debug_panel()
 	if not _receiver_bound:
 		return
@@ -598,6 +686,12 @@ func _ensure_render_node() -> void:
 	_multimesh.mesh = _point_mesh
 	_point_cloud.multimesh = _multimesh
 
+func _effective_live_mesh_mode() -> String:
+	return "gpu_points" if live_mesh_mode == "point_splats" else live_mesh_mode
+
+func _effective_render_connected_mesh() -> bool:
+	return render_connected_mesh and live_mesh_mode != "point_splats" and live_mesh_mode != "gpu_points"
+
 func _send_stream_command(enabled: bool) -> void:
 	if _point_cloud_stats_path.is_empty():
 		_point_cloud_stats_path = ProjectSettings.globalize_path("user://point_cloud_stream_stats.json")
@@ -613,8 +707,8 @@ func _send_stream_command(enabled: bool) -> void:
 		"min_depth": min_depth_m,
 		"max_depth": max_depth_m,
 		"max_points": max_stream_points,
-		"mesh_enabled": render_connected_mesh,
-		"mesh_mode": live_mesh_mode,
+		"mesh_enabled": _effective_render_connected_mesh(),
+		"mesh_mode": _effective_live_mesh_mode(),
 		"mesh_max_edge": mesh_max_edge_m,
 		"rs_depth_filters_enabled": depth_filters_enabled,
 		"rs_filters_for_point_cloud_geometry": filters_for_point_cloud_geometry,
@@ -646,7 +740,7 @@ func _send_stream_command(enabled: bool) -> void:
 		max_depth_m,
 		max_stream_points,
 		packet_points,
-		"on" if render_connected_mesh else "off",
+		"on" if _effective_render_connected_mesh() else "off",
 		live_mesh_mode,
 	])
 
@@ -668,6 +762,8 @@ func _send_oakd_stream_command(enabled: bool) -> void:
 		"oakd_height": oakd_height,
 		"oakd_fps": oakd_fps,
 		"oakd_rgb_res": oakd_rgb_res,
+		"oakd_use_rgb_color_for_host_depth": oakd_use_rgb_color_for_host_depth,
+		"oakd_host_depth_color_mode": oakd_host_depth_color_mode,
 		"oakd_mono_res": oakd_mono_res,
 		"oakd_stereo_preset": oakd_stereo_preset,
 		"oakd_lr_check": oakd_lr_check,
@@ -714,16 +810,22 @@ func _send_oakd_alignment_command(method: String) -> void:
 	_command_udp.set_dest_address("127.0.0.1", tracker_control_port)
 	if _oakd_alignment_result_path.is_empty():
 		_oakd_alignment_result_path = ProjectSettings.globalize_path("user://oakd_realsense_alignment.json")
+	var marker_size := single_aruco_marker_size_m
+	var aruco_dictionary := single_aruco_dictionary
+	if method == "big_aruco":
+		marker_size = BIG_ARUCO_MARKER_SIZE_M
+		aruco_dictionary = BIG_ARUCO_DICTIONARY
 	var payload := {
 		"type": "oakd_realsense_align",
 		"method": method,
 		"min_depth": min_depth_m,
 		"max_depth": max_depth_m,
 		"stride": maxi(1, stream_stride),
-		"marker_size_m": single_aruco_marker_size_m,
-		"aruco_dictionary": single_aruco_dictionary,
+		"marker_size_m": marker_size,
+		"aruco_dictionary": aruco_dictionary,
 		"aruco_marker_id": single_aruco_marker_id,
 		"aruco_marker_ids": big_aruco_marker_ids,
+		"auto_depth_refine": big_aruco_auto_depth_refine,
 		"result_path": _oakd_alignment_result_path,
 	}
 	_command_udp.put_packet(JSON.stringify(payload).to_utf8_buffer())
@@ -938,15 +1040,24 @@ func _update_editor_debug_panel(force: bool = false) -> void:
 		"on" if point_cloud_delay_compensation_enabled else "off",
 		realsense_point_cloud_delay_ms,
 		oakd_point_cloud_delay_ms,
-		"on" if render_connected_mesh else "off",
+		"on" if _effective_render_connected_mesh() else "off",
 		live_mesh_mode,
 		combined_mesh_mode,
 	])
-	lines.append("Align buttons: Open3D, ChArUco, big ArUco size=%.4fm dict=%s id=%d ids=%s" % [
+	lines.append("Align buttons: Open3D, ChArUco, big ArUco size=%.4fm dict=%s id=%d ids=%s refine=%s" % [
 		single_aruco_marker_size_m,
 		single_aruco_dictionary,
 		single_aruco_marker_id,
 		big_aruco_marker_ids,
+		"on" if big_aruco_auto_depth_refine else "off",
+	])
+	lines.append("OAK manual correction pos=(%.3f, %.3f, %.3f)m rot=(%.2f, %.2f, %.2f)deg" % [
+		oakd_manual_offset_x_m,
+		oakd_manual_offset_y_m,
+		oakd_manual_offset_z_m,
+		oakd_manual_rot_x_deg,
+		oakd_manual_rot_y_deg,
+		oakd_manual_rot_z_deg,
 	])
 	var text := "\n".join(lines)
 	editor_debug_text = text
@@ -954,6 +1065,193 @@ func _update_editor_debug_panel(force: bool = false) -> void:
 		_debug_label.text = text
 	if _debug_label_3d != null:
 		_debug_label_3d.text = text
+
+func _render_benchmark_output_path() -> String:
+	return ProjectSettings.globalize_path("user://point_cloud_render_benchmark.json")
+
+func _poll_point_cloud_render_benchmark_request() -> void:
+	if not Engine.is_editor_hint():
+		return
+	if _render_benchmark_request_path.is_empty():
+		_render_benchmark_request_path = ProjectSettings.globalize_path("user://point_cloud_render_benchmark_request.json")
+	if not FileAccess.file_exists(_render_benchmark_request_path):
+		return
+	var modified := int(FileAccess.get_modified_time(_render_benchmark_request_path))
+	if modified <= 0:
+		return
+	var file := FileAccess.open(_render_benchmark_request_path, FileAccess.READ)
+	if file == null:
+		return
+	var text := file.get_as_text()
+	var token := "%d:%d" % [modified, text.hash()]
+	if token == _render_benchmark_request_token:
+		return
+	_render_benchmark_request_token = token
+	var parsed = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY or not bool(parsed.get("run", false)):
+		return
+	render_benchmark_sample_seconds = clampf(float(parsed.get("sample_seconds", render_benchmark_sample_seconds)), 0.5, 10.0)
+	render_benchmark_settle_seconds = clampf(float(parsed.get("settle_seconds", render_benchmark_settle_seconds)), 0.25, 5.0)
+	_start_point_cloud_render_benchmark()
+
+func _start_point_cloud_render_benchmark() -> void:
+	if _render_benchmark.get("running", false):
+		return
+	var cases := []
+	for mode in ["gpu_grid", "point_splats", "stereo_cpu", "stereo_gpu"]:
+		cases.append({"mode": mode, "mesh_on": false})
+		cases.append({"mode": mode, "mesh_on": true})
+	_render_benchmark = {
+		"running": true,
+		"started_unix": Time.get_unix_time_from_system(),
+		"case_index": -1,
+		"phase_started_msec": Time.get_ticks_msec(),
+		"samples": [],
+		"results": [],
+		"cases": cases,
+		"original": {
+			"live_mesh_mode": live_mesh_mode,
+			"render_connected_mesh": render_connected_mesh,
+			"combined_mesh_mode": combined_mesh_mode,
+		},
+		"sample_seconds": render_benchmark_sample_seconds,
+		"settle_seconds": render_benchmark_settle_seconds,
+	}
+	render_benchmark_summary = "Point cloud render benchmark running..."
+	_advance_point_cloud_render_benchmark_case()
+
+func _advance_point_cloud_render_benchmark_case() -> void:
+	var cases: Array = _render_benchmark.get("cases", [])
+	var next_index := int(_render_benchmark.get("case_index", -1)) + 1
+	if next_index >= cases.size():
+		_finish_point_cloud_render_benchmark()
+		return
+	_render_benchmark["case_index"] = next_index
+	_render_benchmark["phase"] = "settle"
+	_render_benchmark["phase_started_msec"] = Time.get_ticks_msec()
+	_render_benchmark["samples"] = []
+	var case: Dictionary = cases[next_index]
+	live_mesh_mode = str(case.get("mode", "gpu_grid"))
+	render_connected_mesh = bool(case.get("mesh_on", false))
+	_resend_stream_settings()
+	_sync_native_shm_point_cloud_settings()
+	_update_oakd_native_renderer()
+	render_benchmark_summary = "Benchmark %d/%d: %s mesh=%s settling..." % [
+		next_index + 1,
+		cases.size(),
+		live_mesh_mode,
+		"on" if render_connected_mesh else "off",
+	]
+
+func _process_point_cloud_render_benchmark() -> void:
+	if not _render_benchmark.get("running", false):
+		return
+	var now_msec := Time.get_ticks_msec()
+	var phase := str(_render_benchmark.get("phase", "settle"))
+	var elapsed_sec := float(now_msec - int(_render_benchmark.get("phase_started_msec", now_msec))) / 1000.0
+	if phase == "settle":
+		if elapsed_sec < float(_render_benchmark.get("settle_seconds", render_benchmark_settle_seconds)):
+			return
+		_render_benchmark["phase"] = "sample"
+		_render_benchmark["phase_started_msec"] = now_msec
+		_render_benchmark["samples"] = []
+		return
+	if phase != "sample":
+		return
+	var samples: Array = _render_benchmark.get("samples", [])
+	samples.append(_point_cloud_render_benchmark_sample())
+	_render_benchmark["samples"] = samples
+	if elapsed_sec < float(_render_benchmark.get("sample_seconds", render_benchmark_sample_seconds)):
+		return
+	var cases: Array = _render_benchmark.get("cases", [])
+	var case_index := int(_render_benchmark.get("case_index", 0))
+	var case: Dictionary = cases[case_index]
+	var results: Array = _render_benchmark.get("results", [])
+	results.append(_summarize_point_cloud_render_benchmark_case(case, samples))
+	_render_benchmark["results"] = results
+	_write_point_cloud_render_benchmark(false)
+	_advance_point_cloud_render_benchmark_case()
+
+func _point_cloud_render_benchmark_sample() -> Dictionary:
+	_poll_point_cloud_stats()
+	var rs_stats: Dictionary = _point_cloud_stats.get("realsense", {})
+	var oak_stats: Dictionary = _point_cloud_stats.get("oakd", {})
+	return {
+		"timestamp": Time.get_unix_time_from_system(),
+		"effective_mesh_on": _effective_render_connected_mesh(),
+		"effective_mode": _effective_live_mesh_mode(),
+		"native_active": _is_native_shm_renderer_active(),
+		"rs_capture_fps": float(rs_stats.get("capture_fps", 0.0)),
+		"rs_publish_fps": float(rs_stats.get("publish_fps", 0.0)),
+		"rs_render_fps": _native_stat(_native_shm_point_cloud, "get_render_fps", 0.0),
+		"rs_points": float(rs_stats.get("points", 0.0)),
+		"rs_native_points": _native_stat(_native_shm_point_cloud, "get_last_point_count", 0.0),
+		"rs_triangles": _native_stat(_native_shm_point_cloud, "get_last_triangle_count", 0.0),
+		"oak_capture_fps": float(oak_stats.get("capture_fps", 0.0)),
+		"oak_publish_fps": float(oak_stats.get("publish_fps", 0.0)),
+		"oak_render_fps": _native_stat(_oakd_native_shm_point_cloud, "get_render_fps", 0.0),
+		"oak_points": float(oak_stats.get("points", 0.0)),
+		"oak_native_points": _native_stat(_oakd_native_shm_point_cloud, "get_last_point_count", 0.0),
+		"oak_triangles": _native_stat(_oakd_native_shm_point_cloud, "get_last_triangle_count", 0.0),
+	}
+
+func _benchmark_average(samples: Array, key: String) -> float:
+	if samples.is_empty():
+		return 0.0
+	var total := 0.0
+	var count := 0
+	for sample in samples:
+		if typeof(sample) == TYPE_DICTIONARY and sample.has(key):
+			total += float(sample.get(key, 0.0))
+			count += 1
+	return total / max(1, count)
+
+func _summarize_point_cloud_render_benchmark_case(case: Dictionary, samples: Array) -> Dictionary:
+	return {
+		"mode": str(case.get("mode", "")),
+		"mesh_on_requested": bool(case.get("mesh_on", false)),
+		"mesh_on_effective": bool(samples.back().get("effective_mesh_on", false)) if not samples.is_empty() else false,
+		"effective_mode": str(samples.back().get("effective_mode", "")) if not samples.is_empty() else "",
+		"native_active": bool(samples.back().get("native_active", false)) if not samples.is_empty() else false,
+		"samples": samples.size(),
+		"rs_capture_fps_avg": _benchmark_average(samples, "rs_capture_fps"),
+		"rs_publish_fps_avg": _benchmark_average(samples, "rs_publish_fps"),
+		"rs_render_fps_avg": _benchmark_average(samples, "rs_render_fps"),
+		"rs_points_avg": _benchmark_average(samples, "rs_points"),
+		"rs_native_points_avg": _benchmark_average(samples, "rs_native_points"),
+		"rs_triangles_avg": _benchmark_average(samples, "rs_triangles"),
+		"oak_capture_fps_avg": _benchmark_average(samples, "oak_capture_fps"),
+		"oak_publish_fps_avg": _benchmark_average(samples, "oak_publish_fps"),
+		"oak_render_fps_avg": _benchmark_average(samples, "oak_render_fps"),
+		"oak_points_avg": _benchmark_average(samples, "oak_points"),
+		"oak_native_points_avg": _benchmark_average(samples, "oak_native_points"),
+		"oak_triangles_avg": _benchmark_average(samples, "oak_triangles"),
+	}
+
+func _finish_point_cloud_render_benchmark() -> void:
+	var original: Dictionary = _render_benchmark.get("original", {})
+	live_mesh_mode = str(original.get("live_mesh_mode", live_mesh_mode))
+	render_connected_mesh = bool(original.get("render_connected_mesh", render_connected_mesh))
+	combined_mesh_mode = str(original.get("combined_mesh_mode", combined_mesh_mode))
+	_render_benchmark["running"] = false
+	_render_benchmark["completed_unix"] = Time.get_unix_time_from_system()
+	_write_point_cloud_render_benchmark(true)
+	render_benchmark_summary = "Point cloud render benchmark complete: %s" % _render_benchmark_output_path()
+
+func _write_point_cloud_render_benchmark(final: bool) -> void:
+	var output := {
+		"running": bool(_render_benchmark.get("running", false)),
+		"final": final,
+		"started_unix": float(_render_benchmark.get("started_unix", 0.0)),
+		"completed_unix": float(_render_benchmark.get("completed_unix", 0.0)),
+		"sample_seconds": float(_render_benchmark.get("sample_seconds", render_benchmark_sample_seconds)),
+		"settle_seconds": float(_render_benchmark.get("settle_seconds", render_benchmark_settle_seconds)),
+		"results": _render_benchmark.get("results", []),
+	}
+	var path := _render_benchmark_output_path()
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file != null:
+		file.store_string(JSON.stringify(output, "\t"))
 
 func _apply_realsense_default_settings() -> void:
 	_command_udp.set_dest_address("127.0.0.1", tracker_control_port)
@@ -963,6 +1261,35 @@ func _apply_realsense_default_settings() -> void:
 	}
 	_command_udp.put_packet(JSON.stringify(payload).to_utf8_buffer())
 	print("RealSense apply default_settings.json requested")
+
+func _apply_fusion_quality_preset() -> void:
+	stream_stride = 2
+	sync_point_cloud_fps_to_slowest = false
+	point_cloud_delay_compensation_enabled = false
+	realsense_point_cloud_delay_ms = 0
+	oakd_point_cloud_delay_ms = 0
+	render_connected_mesh = false
+	live_mesh_mode = "gpu_grid"
+	combined_mesh_mode = "separate_meshes"
+	mesh_max_edge_m = 0.055
+	mesh_max_depth_delta_m = 0.055
+	mesh_min_triangle_area_m2 = 0.0
+	mesh_max_color_delta = 2.0
+	texture_map_mesh = false
+	depth_filters_enabled = true
+	filters_for_point_cloud_geometry = false
+	filter_geometry_edge_guard_m = 0.045
+	disparity_filters_enabled = true
+	spatial_alpha = 0.55
+	spatial_delta = 18.0
+	temporal_alpha = 0.35
+	temporal_delta = 25.0
+	oakd_use_rgb_color_for_host_depth = true
+	oakd_host_depth_color_mode = "rgb_projected"
+	_resend_stream_settings()
+	_sync_native_shm_point_cloud_settings()
+	_update_oakd_native_renderer()
+	print("Fusion fast-quality preset applied: stride=2, GPU grid/points, no CPU connected mesh, RGB OAK-D host color, current OAK-D depth settings preserved.")
 
 func _apply_oakd_low_latency_preset() -> void:
 	oakd_depth_source = "depthai"
@@ -1092,12 +1419,20 @@ func _update_point_mesh_size() -> void:
 func _sync_native_shm_point_cloud_settings() -> void:
 	if _native_shm_point_cloud == null:
 		return
-	var unified_mesh := oakd_fusion_enabled and render_connected_mesh and live_mesh_mode == "stereo_cpu" and combined_mesh_mode == "single_combined_mesh"
+	var unified_mesh := oakd_fusion_enabled and _effective_render_connected_mesh() and live_mesh_mode == "stereo_cpu" and combined_mesh_mode == "single_combined_mesh"
 	_native_shm_point_cloud.call("set_shared_memory_name", "realsense_point_cloud_grid")
 	_native_shm_point_cloud.call("set_point_pixel_size", gpu_point_pixel_size)
+	if _native_shm_point_cloud.has_method("set_circular_point_splats"):
+		_native_shm_point_cloud.call("set_circular_point_splats", circular_point_splats and _effective_live_mesh_mode() == "gpu_points")
 	_native_shm_point_cloud.call("set_min_depth", min_depth_m)
 	_native_shm_point_cloud.call("set_max_depth", max_depth_m)
-	_native_shm_point_cloud.call("set_render_connected_mesh", render_connected_mesh and live_mesh_mode == "stereo_cpu")
+	_native_shm_point_cloud.call("set_render_connected_mesh", _effective_render_connected_mesh() and live_mesh_mode in ["stereo_cpu", "stereo_gpu"])
+	if _native_shm_point_cloud.has_method("set_gpu_connected_mesh"):
+		_native_shm_point_cloud.call("set_gpu_connected_mesh", _effective_render_connected_mesh() and live_mesh_mode == "stereo_gpu")
+	if _native_shm_point_cloud.has_method("set_edge_feather_enabled"):
+		_native_shm_point_cloud.call("set_edge_feather_enabled", mesh_edge_feather_enabled)
+		_native_shm_point_cloud.call("set_edge_feather_width", mesh_edge_feather_width_m)
+		_native_shm_point_cloud.call("set_edge_feather_min_alpha", mesh_edge_feather_min_alpha)
 	_native_shm_point_cloud.call("set_mesh_max_edge", mesh_max_edge_m)
 	_native_shm_point_cloud.call("set_mesh_max_depth_delta", mesh_max_depth_delta_m)
 	_native_shm_point_cloud.call("set_texture_map_mesh", texture_map_mesh)
@@ -1119,7 +1454,7 @@ func _sync_native_shm_point_cloud_settings() -> void:
 	_update_render_visibility()
 
 func _update_oakd_native_renderer() -> void:
-	var unified_mesh := oakd_fusion_enabled and render_connected_mesh and live_mesh_mode == "stereo_cpu" and combined_mesh_mode == "single_combined_mesh" and _native_shm_point_cloud != null and _native_shm_point_cloud.has_method("set_secondary_shared_memory_name")
+	var unified_mesh := oakd_fusion_enabled and _effective_render_connected_mesh() and live_mesh_mode == "stereo_cpu" and combined_mesh_mode == "single_combined_mesh" and _native_shm_point_cloud != null and _native_shm_point_cloud.has_method("set_secondary_shared_memory_name")
 	if unified_mesh:
 		_free_oakd_native_shm_point_cloud()
 		_sync_native_shm_point_cloud_settings()
@@ -1135,9 +1470,17 @@ func _update_oakd_native_renderer() -> void:
 			add_child(_oakd_native_shm_point_cloud)
 	_oakd_native_shm_point_cloud.call("set_shared_memory_name", "oakd_point_cloud_grid")
 	_oakd_native_shm_point_cloud.call("set_point_pixel_size", gpu_point_pixel_size)
+	if _oakd_native_shm_point_cloud.has_method("set_circular_point_splats"):
+		_oakd_native_shm_point_cloud.call("set_circular_point_splats", circular_point_splats and _effective_live_mesh_mode() == "gpu_points")
 	_oakd_native_shm_point_cloud.call("set_min_depth", min_depth_m)
 	_oakd_native_shm_point_cloud.call("set_max_depth", max_depth_m)
-	_oakd_native_shm_point_cloud.call("set_render_connected_mesh", render_connected_mesh and live_mesh_mode == "stereo_cpu")
+	_oakd_native_shm_point_cloud.call("set_render_connected_mesh", _effective_render_connected_mesh() and live_mesh_mode in ["stereo_cpu", "stereo_gpu"])
+	if _oakd_native_shm_point_cloud.has_method("set_gpu_connected_mesh"):
+		_oakd_native_shm_point_cloud.call("set_gpu_connected_mesh", _effective_render_connected_mesh() and live_mesh_mode == "stereo_gpu")
+	if _oakd_native_shm_point_cloud.has_method("set_edge_feather_enabled"):
+		_oakd_native_shm_point_cloud.call("set_edge_feather_enabled", mesh_edge_feather_enabled)
+		_oakd_native_shm_point_cloud.call("set_edge_feather_width", mesh_edge_feather_width_m)
+		_oakd_native_shm_point_cloud.call("set_edge_feather_min_alpha", mesh_edge_feather_min_alpha)
 	_oakd_native_shm_point_cloud.call("set_mesh_max_edge", mesh_max_edge_m)
 	_oakd_native_shm_point_cloud.call("set_mesh_max_depth_delta", mesh_max_depth_delta_m)
 	_oakd_native_shm_point_cloud.call("set_texture_map_mesh", texture_map_mesh)
@@ -1157,23 +1500,33 @@ func _update_oakd_transform() -> void:
 		_native_shm_point_cloud.call("set_secondary_transform", _oakd_transform())
 	if _oakd_native_shm_point_cloud == null:
 		return
-	_oakd_native_shm_point_cloud.position = oakd_position
-	_oakd_native_shm_point_cloud.rotation_degrees = oakd_rotation_degrees
-	_oakd_native_shm_point_cloud.scale = Vector3.ONE * oakd_scene_scale
+	_oakd_native_shm_point_cloud.transform = _oakd_transform()
 
 func _oakd_transform() -> Transform3D:
-	var basis := Basis.from_euler(Vector3(
+	var base_basis := Basis.from_euler(Vector3(
 		deg_to_rad(oakd_rotation_degrees.x),
 		deg_to_rad(oakd_rotation_degrees.y),
 		deg_to_rad(oakd_rotation_degrees.z)
 	))
-	basis = basis.scaled(Vector3.ONE * oakd_scene_scale)
-	return Transform3D(basis, oakd_position)
+	base_basis = base_basis.scaled(Vector3.ONE * oakd_scene_scale)
+	var correction_basis := Basis.from_euler(Vector3(
+		deg_to_rad(oakd_manual_rot_x_deg),
+		deg_to_rad(oakd_manual_rot_y_deg),
+		deg_to_rad(oakd_manual_rot_z_deg)
+	))
+	var corrected_basis := correction_basis * base_basis
+	var corrected_origin := oakd_position + Vector3(
+		oakd_manual_offset_x_m,
+		oakd_manual_offset_y_m,
+		oakd_manual_offset_z_m
+	)
+	return Transform3D(corrected_basis, corrected_origin)
 
 func _is_native_shm_renderer_compatible() -> bool:
-	var native_points := not render_connected_mesh
-	var native_cpu_mesh := render_connected_mesh and live_mesh_mode == "stereo_cpu"
-	return use_native_shm_renderer and (native_points or native_cpu_mesh) and ClassDB.class_exists("RealSenseSharedMemoryPointCloud")
+	var native_points := not _effective_render_connected_mesh()
+	var native_cpu_mesh := _effective_render_connected_mesh() and live_mesh_mode == "stereo_cpu"
+	var native_gpu_mesh := _effective_render_connected_mesh() and live_mesh_mode == "stereo_gpu"
+	return use_native_shm_renderer and (native_points or native_cpu_mesh or native_gpu_mesh) and ClassDB.class_exists("RealSenseSharedMemoryPointCloud")
 
 func _is_native_shm_renderer_active() -> bool:
 	return stream_transport == "shm" and _native_shm_point_cloud != null and _is_native_shm_renderer_compatible()
@@ -1295,7 +1648,7 @@ func _process_shm() -> void:
 	if depth_image == null or color_image == null or grid_w <= 1 or grid_h <= 1:
 		return
 	var upload_start_msec := Time.get_ticks_msec()
-	var as_points := not render_connected_mesh or live_mesh_mode == "gpu_points"
+	var as_points := not _effective_render_connected_mesh() or _effective_live_mesh_mode() == "gpu_points"
 	var recreate_textures := _depth_texture == null or _color_texture == null or _grid_width != grid_w or _grid_height != grid_h
 	_ensure_grid_mesh(grid_w, grid_h, frame_stride, as_points)
 	var depth_data := depth_image.get_data()
@@ -1305,7 +1658,7 @@ func _process_shm() -> void:
 		depth_image = Image.create_from_data(grid_w, grid_h, false, Image.FORMAT_RF, depth_data)
 	else:
 		_smoothed_depth_bytes.clear()
-	if render_connected_mesh and live_mesh_mode == "stereo_cpu":
+	if _effective_render_connected_mesh() and live_mesh_mode == "stereo_cpu":
 		var color_data := color_image.get_data()
 		var triangle_count := _update_live_cpu_mesh_from_grid(depth_data, color_data, grid_w, grid_h, frame_stride, intrinsics)
 		if _multimesh != null:
@@ -1355,6 +1708,9 @@ func _process_shm() -> void:
 		_grid_material.set_shader_parameter("circular_point_splats", circular_point_splats)
 		_grid_material.set_shader_parameter("near_point_size_boost", near_point_size_boost)
 		_grid_material.set_shader_parameter("far_point_brightness", far_point_brightness)
+		_grid_material.set_shader_parameter("edge_feather_enabled", mesh_edge_feather_enabled)
+		_grid_material.set_shader_parameter("edge_feather_width", mesh_edge_feather_width_m)
+		_grid_material.set_shader_parameter("edge_feather_min_alpha", mesh_edge_feather_min_alpha)
 	if _multimesh != null:
 		_multimesh.instance_count = 0
 	_buffer_upload_counter += 1
@@ -1414,7 +1770,7 @@ func _consume_tcp_frame(frame: PackedByteArray) -> void:
 			offset += 4
 	_packet_decode_counter += 1
 	_point_decode_counter += point_count
-	if render_connected_mesh and index_count > 0:
+	if _effective_render_connected_mesh() and index_count > 0:
 		_update_mesh_surface(vertices, colors, indices)
 	else:
 		_update_multimesh_visible(vertices, colors)
@@ -1461,9 +1817,9 @@ func _consume_tcp_grid_frame(frame: PackedByteArray, frame_id: int, cell_count: 
 		return
 	var upload_start_msec := Time.get_ticks_msec()
 	var recreate_textures := _depth_texture == null or _color_texture == null or _triangle_texture == null or _grid_width != grid_w or _grid_height != grid_h
-	_ensure_grid_mesh(grid_w, grid_h, frame_stride, live_mesh_mode == "gpu_points")
+	_ensure_grid_mesh(grid_w, grid_h, frame_stride, _effective_live_mesh_mode() == "gpu_points")
 	var depth_data := frame.slice(offset, offset + depth_byte_count)
-	if render_connected_mesh and live_mesh_mode != "gpu_points":
+	if _effective_render_connected_mesh() and _effective_live_mesh_mode() != "gpu_points":
 		depth_data = _smooth_float32_bytes(depth_data, _smoothed_depth_bytes, mesh_temporal_smoothing, min_depth_m, max_depth_m)
 		_smoothed_depth_bytes = depth_data
 	else:
@@ -1481,7 +1837,7 @@ func _consume_tcp_grid_frame(frame: PackedByteArray, frame_id: int, cell_count: 
 	else:
 		tri_data.resize(tri_byte_count)
 		tri_data.fill(255)
-	if render_connected_mesh and live_mesh_mode != "gpu_points":
+	if _effective_render_connected_mesh() and _effective_live_mesh_mode() != "gpu_points":
 		tri_data = _smooth_mask_bytes(tri_data, _smoothed_triangle_bytes, mesh_mask_smoothing)
 		_smoothed_triangle_bytes = tri_data
 	else:
@@ -1510,10 +1866,13 @@ func _consume_tcp_grid_frame(frame: PackedByteArray, frame_id: int, cell_count: 
 		_grid_material.set_shader_parameter("max_depth_delta", mesh_max_depth_delta_m)
 		_grid_material.set_shader_parameter("point_size_m", point_size)
 		_grid_material.set_shader_parameter("point_pixel_size", gpu_point_pixel_size)
-		_grid_material.set_shader_parameter("render_gpu_points", live_mesh_mode == "gpu_points")
+		_grid_material.set_shader_parameter("render_gpu_points", _effective_live_mesh_mode() == "gpu_points")
 		_grid_material.set_shader_parameter("circular_point_splats", circular_point_splats)
 		_grid_material.set_shader_parameter("near_point_size_boost", near_point_size_boost)
 		_grid_material.set_shader_parameter("far_point_brightness", far_point_brightness)
+		_grid_material.set_shader_parameter("edge_feather_enabled", mesh_edge_feather_enabled)
+		_grid_material.set_shader_parameter("edge_feather_width", mesh_edge_feather_width_m)
+		_grid_material.set_shader_parameter("edge_feather_min_alpha", mesh_edge_feather_min_alpha)
 	if _multimesh != null:
 		_multimesh.instance_count = 0
 	_buffer_upload_counter += 1
@@ -1838,12 +2197,18 @@ func _print_native_shm_stats() -> void:
 	var now_msec := Time.get_ticks_msec()
 	if now_msec - _last_fps_print_msec < 2000:
 		return
-	var mode := "cpu-mesh" if render_connected_mesh and live_mesh_mode == "stereo_cpu" else "gpu-points"
+	var mode := "gpu-points"
+	if _effective_render_connected_mesh() and live_mesh_mode == "stereo_cpu":
+		mode = "cpu-mesh"
+	elif _effective_render_connected_mesh() and live_mesh_mode == "stereo_gpu":
+		mode = "gpu-mesh"
 	var fps := float(_native_shm_point_cloud.call("get_render_fps"))
-	var tris := int(_native_shm_point_cloud.call("get_last_triangle_count")) if mode == "cpu-mesh" else 0
+	var tris := int(_native_shm_point_cloud.call("get_last_triangle_count")) if mode in ["cpu-mesh", "gpu-mesh"] else 0
 	var pts := int(_native_shm_point_cloud.call("get_last_point_count")) if _native_shm_point_cloud.has_method("get_last_point_count") else 0
 	if mode == "cpu-mesh":
 		print("RealSense point cloud native shm cpu-mesh stats: frames %.1f/s | last %d pts | last %d tris | mesh_mode=%s" % [fps, pts, tris, combined_mesh_mode])
+	elif mode == "gpu-mesh":
+		print("RealSense point cloud native shm gpu-mesh stats: frames %.1f/s | last %d pts | max %d tris" % [fps, pts, tris])
 	else:
 		print("RealSense point cloud native shm gpu-points stats: frames %.1f/s" % fps)
 	_last_fps_print_msec = now_msec
@@ -1988,7 +2353,7 @@ func _build_grid_material() -> ShaderMaterial:
 	var shader := Shader.new()
 	shader.code = """
 shader_type spatial;
-render_mode unshaded, cull_disabled, depth_draw_opaque;
+render_mode unshaded, cull_disabled, blend_mix, depth_draw_alpha_prepass;
 
 uniform sampler2D depth_tex : filter_nearest;
 uniform sampler2D color_tex : filter_nearest;
@@ -2005,6 +2370,9 @@ uniform bool circular_point_splats = true;
 uniform float near_point_size_boost = 0.35;
 uniform float far_point_brightness = 0.80;
 uniform bool render_gpu_points = false;
+uniform bool edge_feather_enabled = false;
+uniform float edge_feather_width = 0.035;
+uniform float edge_feather_min_alpha = 0.20;
 
 varying float depth_valid;
 varying vec2 mesh_uv;
@@ -2036,6 +2404,7 @@ void fragment() {
 		discard;
 	}
 	float topology_valid = 1.0;
+	float alpha = 1.0;
 	if (!render_gpu_points) {
 		float d = texture(depth_tex, mesh_uv).r;
 		vec2 cell_space = clamp(mesh_uv * grid_size - vec2(0.5), vec2(0.0), grid_size - vec2(1.001));
@@ -2052,6 +2421,7 @@ void fragment() {
 		float dr = texture(depth_tex, mesh_uv + vec2(texel_size.x, 0.0)).r;
 		float du = texture(depth_tex, mesh_uv + vec2(0.0, -texel_size.y)).r;
 		float dd = texture(depth_tex, mesh_uv + vec2(0.0, texel_size.y)).r;
+		float max_jump = max(max(abs(d - dl), abs(d - dr)), max(abs(d - du), abs(d - dd)));
 		if (
 			d < depth_range.x || d > depth_range.y ||
 			(dl > depth_range.x && abs(d - dl) > max_depth_delta) ||
@@ -2061,10 +2431,15 @@ void fragment() {
 		) {
 			discard;
 		}
+		if (edge_feather_enabled) {
+			float feather = 1.0 - smoothstep(max_depth_delta - edge_feather_width, max_depth_delta, max_jump);
+			alpha = mix(edge_feather_min_alpha, 1.0, feather);
+		}
 	}
 	vec3 color = texture(color_tex, mesh_uv).rgb;
 	float depth_t = clamp((point_depth_m - depth_range.x) / max(0.0001, depth_range.y - depth_range.x), 0.0, 1.0);
 	ALBEDO = color * mix(1.0, far_point_brightness, depth_t);
+	ALPHA = alpha;
 }
 """
 	_grid_material = ShaderMaterial.new()
@@ -2075,9 +2450,9 @@ func _update_render_visibility() -> void:
 	var native_realsense_active := _is_native_shm_renderer_active()
 	var has_mesh := _mesh_surface != null and _mesh_surface.mesh != null
 	if _point_cloud != null:
-		_point_cloud.visible = not native_realsense_active and (not render_connected_mesh or not has_mesh) and _multimesh != null and _multimesh.instance_count > 0
+		_point_cloud.visible = not native_realsense_active and (not _effective_render_connected_mesh() or not has_mesh) and _multimesh != null and _multimesh.instance_count > 0
 	if _mesh_surface != null:
-		_mesh_surface.visible = not native_realsense_active and (render_connected_mesh or stream_transport == "shm" or live_mesh_mode == "gpu_points") and has_mesh
+		_mesh_surface.visible = not native_realsense_active and (_effective_render_connected_mesh() or stream_transport == "shm" or _effective_live_mesh_mode() == "gpu_points") and has_mesh
 
 func _build_vertex_color_material() -> StandardMaterial3D:
 	if _material != null:

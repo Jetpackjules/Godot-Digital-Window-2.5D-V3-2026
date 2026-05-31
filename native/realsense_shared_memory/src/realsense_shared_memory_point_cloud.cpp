@@ -36,12 +36,22 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_shared_memory_name"), &RealSenseSharedMemoryPointCloud::get_shared_memory_name);
     ClassDB::bind_method(D_METHOD("set_point_pixel_size", "size"), &RealSenseSharedMemoryPointCloud::set_point_pixel_size);
     ClassDB::bind_method(D_METHOD("get_point_pixel_size"), &RealSenseSharedMemoryPointCloud::get_point_pixel_size);
+    ClassDB::bind_method(D_METHOD("set_circular_point_splats", "enabled"), &RealSenseSharedMemoryPointCloud::set_circular_point_splats);
+    ClassDB::bind_method(D_METHOD("get_circular_point_splats"), &RealSenseSharedMemoryPointCloud::get_circular_point_splats);
+    ClassDB::bind_method(D_METHOD("set_point_cleanup_enabled", "enabled"), &RealSenseSharedMemoryPointCloud::set_point_cleanup_enabled);
+    ClassDB::bind_method(D_METHOD("get_point_cleanup_enabled"), &RealSenseSharedMemoryPointCloud::get_point_cleanup_enabled);
+    ClassDB::bind_method(D_METHOD("set_point_cleanup_depth_delta", "delta"), &RealSenseSharedMemoryPointCloud::set_point_cleanup_depth_delta);
+    ClassDB::bind_method(D_METHOD("get_point_cleanup_depth_delta"), &RealSenseSharedMemoryPointCloud::get_point_cleanup_depth_delta);
+    ClassDB::bind_method(D_METHOD("set_point_cleanup_min_neighbors", "count"), &RealSenseSharedMemoryPointCloud::set_point_cleanup_min_neighbors);
+    ClassDB::bind_method(D_METHOD("get_point_cleanup_min_neighbors"), &RealSenseSharedMemoryPointCloud::get_point_cleanup_min_neighbors);
     ClassDB::bind_method(D_METHOD("set_min_depth", "depth"), &RealSenseSharedMemoryPointCloud::set_min_depth);
     ClassDB::bind_method(D_METHOD("get_min_depth"), &RealSenseSharedMemoryPointCloud::get_min_depth);
     ClassDB::bind_method(D_METHOD("set_max_depth", "depth"), &RealSenseSharedMemoryPointCloud::set_max_depth);
     ClassDB::bind_method(D_METHOD("get_max_depth"), &RealSenseSharedMemoryPointCloud::get_max_depth);
     ClassDB::bind_method(D_METHOD("set_render_connected_mesh", "enabled"), &RealSenseSharedMemoryPointCloud::set_render_connected_mesh);
     ClassDB::bind_method(D_METHOD("get_render_connected_mesh"), &RealSenseSharedMemoryPointCloud::get_render_connected_mesh);
+    ClassDB::bind_method(D_METHOD("set_gpu_connected_mesh", "enabled"), &RealSenseSharedMemoryPointCloud::set_gpu_connected_mesh);
+    ClassDB::bind_method(D_METHOD("get_gpu_connected_mesh"), &RealSenseSharedMemoryPointCloud::get_gpu_connected_mesh);
     ClassDB::bind_method(D_METHOD("set_mesh_max_edge", "edge"), &RealSenseSharedMemoryPointCloud::set_mesh_max_edge);
     ClassDB::bind_method(D_METHOD("get_mesh_max_edge"), &RealSenseSharedMemoryPointCloud::get_mesh_max_edge);
     ClassDB::bind_method(D_METHOD("set_mesh_max_depth_delta", "delta"), &RealSenseSharedMemoryPointCloud::set_mesh_max_depth_delta);
@@ -52,6 +62,12 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mesh_min_triangle_area"), &RealSenseSharedMemoryPointCloud::get_mesh_min_triangle_area);
     ClassDB::bind_method(D_METHOD("set_mesh_max_color_delta", "delta"), &RealSenseSharedMemoryPointCloud::set_mesh_max_color_delta);
     ClassDB::bind_method(D_METHOD("get_mesh_max_color_delta"), &RealSenseSharedMemoryPointCloud::get_mesh_max_color_delta);
+    ClassDB::bind_method(D_METHOD("set_edge_feather_enabled", "enabled"), &RealSenseSharedMemoryPointCloud::set_edge_feather_enabled);
+    ClassDB::bind_method(D_METHOD("get_edge_feather_enabled"), &RealSenseSharedMemoryPointCloud::get_edge_feather_enabled);
+    ClassDB::bind_method(D_METHOD("set_edge_feather_width", "width"), &RealSenseSharedMemoryPointCloud::set_edge_feather_width);
+    ClassDB::bind_method(D_METHOD("get_edge_feather_width"), &RealSenseSharedMemoryPointCloud::get_edge_feather_width);
+    ClassDB::bind_method(D_METHOD("set_edge_feather_min_alpha", "alpha"), &RealSenseSharedMemoryPointCloud::set_edge_feather_min_alpha);
+    ClassDB::bind_method(D_METHOD("get_edge_feather_min_alpha"), &RealSenseSharedMemoryPointCloud::get_edge_feather_min_alpha);
     ClassDB::bind_method(D_METHOD("set_delay_enabled", "enabled"), &RealSenseSharedMemoryPointCloud::set_delay_enabled);
     ClassDB::bind_method(D_METHOD("get_delay_enabled"), &RealSenseSharedMemoryPointCloud::get_delay_enabled);
     ClassDB::bind_method(D_METHOD("set_primary_delay_ms", "delay_ms"), &RealSenseSharedMemoryPointCloud::set_primary_delay_ms);
@@ -71,14 +87,22 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
 
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "shared_memory_name"), "set_shared_memory_name", "get_shared_memory_name");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "point_pixel_size"), "set_point_pixel_size", "get_point_pixel_size");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "circular_point_splats"), "set_circular_point_splats", "get_circular_point_splats");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "point_cleanup_enabled"), "set_point_cleanup_enabled", "get_point_cleanup_enabled");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "point_cleanup_depth_delta"), "set_point_cleanup_depth_delta", "get_point_cleanup_depth_delta");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "point_cleanup_min_neighbors"), "set_point_cleanup_min_neighbors", "get_point_cleanup_min_neighbors");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_depth"), "set_min_depth", "get_min_depth");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_depth"), "set_max_depth", "get_max_depth");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "render_connected_mesh"), "set_render_connected_mesh", "get_render_connected_mesh");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_connected_mesh"), "set_gpu_connected_mesh", "get_gpu_connected_mesh");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_max_edge"), "set_mesh_max_edge", "get_mesh_max_edge");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_max_depth_delta"), "set_mesh_max_depth_delta", "get_mesh_max_depth_delta");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "texture_map_mesh"), "set_texture_map_mesh", "get_texture_map_mesh");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_min_triangle_area"), "set_mesh_min_triangle_area", "get_mesh_min_triangle_area");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_max_color_delta"), "set_mesh_max_color_delta", "get_mesh_max_color_delta");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "edge_feather_enabled"), "set_edge_feather_enabled", "get_edge_feather_enabled");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "edge_feather_width"), "set_edge_feather_width", "get_edge_feather_width");
+    ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "edge_feather_min_alpha"), "set_edge_feather_min_alpha", "get_edge_feather_min_alpha");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "delay_enabled"), "set_delay_enabled", "get_delay_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "primary_delay_ms"), "set_primary_delay_ms", "get_primary_delay_ms");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "secondary_delay_ms"), "set_secondary_delay_ms", "get_secondary_delay_ms");
@@ -131,7 +155,7 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
     if (primary_frame.depth_image.is_null() || primary_frame.color_image.is_null()) {
         return;
     }
-    if (render_connected_mesh) {
+    if (render_connected_mesh && !gpu_connected_mesh) {
         if (secondary_enabled) {
             if (secondary_reader.is_null()) {
                 secondary_reader.instantiate();
@@ -165,6 +189,13 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
         color_texture->update(primary_frame.color_image);
     }
     update_material_params();
+    if (render_connected_mesh && gpu_connected_mesh) {
+        last_point_count = width * height;
+        last_triangle_count = (width - 1) * (height - 1) * 2;
+    } else {
+        last_point_count = width * height;
+        last_triangle_count = 0;
+    }
 
     frames++;
     fps_accum += p_delta;
@@ -201,6 +232,47 @@ void RealSenseSharedMemoryPointCloud::set_point_pixel_size(double p_size) {
 
 double RealSenseSharedMemoryPointCloud::get_point_pixel_size() const { return point_pixel_size; }
 
+void RealSenseSharedMemoryPointCloud::set_circular_point_splats(bool p_enabled) {
+    if (circular_point_splats == p_enabled) {
+        return;
+    }
+    circular_point_splats = p_enabled;
+    update_material_params();
+}
+
+bool RealSenseSharedMemoryPointCloud::get_circular_point_splats() const { return circular_point_splats; }
+
+void RealSenseSharedMemoryPointCloud::set_point_cleanup_enabled(bool p_enabled) {
+    if (point_cleanup_enabled == p_enabled) {
+        return;
+    }
+    point_cleanup_enabled = p_enabled;
+    update_material_params();
+}
+
+bool RealSenseSharedMemoryPointCloud::get_point_cleanup_enabled() const { return point_cleanup_enabled; }
+
+void RealSenseSharedMemoryPointCloud::set_point_cleanup_depth_delta(double p_delta) {
+    if (Math::is_equal_approx(point_cleanup_depth_delta, p_delta)) {
+        return;
+    }
+    point_cleanup_depth_delta = MAX(0.001, p_delta);
+    update_material_params();
+}
+
+double RealSenseSharedMemoryPointCloud::get_point_cleanup_depth_delta() const { return point_cleanup_depth_delta; }
+
+void RealSenseSharedMemoryPointCloud::set_point_cleanup_min_neighbors(double p_count) {
+    const double clamped = CLAMP(p_count, 0.0, 4.0);
+    if (Math::is_equal_approx(point_cleanup_min_neighbors, clamped)) {
+        return;
+    }
+    point_cleanup_min_neighbors = clamped;
+    update_material_params();
+}
+
+double RealSenseSharedMemoryPointCloud::get_point_cleanup_min_neighbors() const { return point_cleanup_min_neighbors; }
+
 void RealSenseSharedMemoryPointCloud::set_min_depth(double p_depth) {
     if (Math::is_equal_approx(min_depth, p_depth)) {
         return;
@@ -233,6 +305,19 @@ void RealSenseSharedMemoryPointCloud::set_render_connected_mesh(bool p_enabled) 
 }
 
 bool RealSenseSharedMemoryPointCloud::get_render_connected_mesh() const { return render_connected_mesh; }
+
+void RealSenseSharedMemoryPointCloud::set_gpu_connected_mesh(bool p_enabled) {
+    if (gpu_connected_mesh == p_enabled) {
+        return;
+    }
+    gpu_connected_mesh = p_enabled;
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+}
+
+bool RealSenseSharedMemoryPointCloud::get_gpu_connected_mesh() const { return gpu_connected_mesh; }
 
 void RealSenseSharedMemoryPointCloud::set_mesh_max_edge(double p_edge) {
     if (Math::is_equal_approx(mesh_max_edge, p_edge)) {
@@ -286,6 +371,27 @@ void RealSenseSharedMemoryPointCloud::set_mesh_max_color_delta(double p_delta) {
 }
 
 double RealSenseSharedMemoryPointCloud::get_mesh_max_color_delta() const { return mesh_max_color_delta; }
+
+void RealSenseSharedMemoryPointCloud::set_edge_feather_enabled(bool p_enabled) {
+    edge_feather_enabled = p_enabled;
+    update_material_params();
+}
+
+bool RealSenseSharedMemoryPointCloud::get_edge_feather_enabled() const { return edge_feather_enabled; }
+
+void RealSenseSharedMemoryPointCloud::set_edge_feather_width(double p_width) {
+    edge_feather_width = std::max(0.001, p_width);
+    update_material_params();
+}
+
+double RealSenseSharedMemoryPointCloud::get_edge_feather_width() const { return edge_feather_width; }
+
+void RealSenseSharedMemoryPointCloud::set_edge_feather_min_alpha(double p_alpha) {
+    edge_feather_min_alpha = std::max(0.0, std::min(1.0, p_alpha));
+    update_material_params();
+}
+
+double RealSenseSharedMemoryPointCloud::get_edge_feather_min_alpha() const { return edge_feather_min_alpha; }
 
 void RealSenseSharedMemoryPointCloud::set_delay_enabled(bool p_enabled) {
     delay_enabled = p_enabled;
@@ -363,20 +469,32 @@ void RealSenseSharedMemoryPointCloud::ensure_material() {
     shader.instantiate();
     shader->set_code(R"(
 shader_type spatial;
-render_mode unshaded, cull_disabled, depth_draw_opaque;
+render_mode unshaded, cull_disabled, blend_mix, depth_draw_alpha_prepass;
 
 uniform sampler2D depth_tex : filter_nearest;
 uniform sampler2D color_tex : filter_nearest;
 uniform vec4 intrinsics = vec4(600.0, 600.0, 320.0, 240.0);
 uniform vec2 depth_range = vec2(0.2, 4.5);
 uniform float point_pixel_size = 2.0;
+uniform bool circular_point_splats = false;
+uniform bool point_cleanup_enabled = false;
+uniform float point_cleanup_depth_delta = 0.06;
+uniform float point_cleanup_min_neighbors = 2.0;
+uniform vec2 texel_size = vec2(0.01, 0.01);
+uniform float max_depth_delta = 0.08;
+uniform bool gpu_connected_mesh = false;
+uniform bool edge_feather_enabled = false;
+uniform float edge_feather_width = 0.035;
+uniform float edge_feather_min_alpha = 0.20;
 
 varying vec2 point_uv;
 varying float point_valid;
+varying float point_depth_m;
 
 void vertex() {
     point_uv = UV;
     float depth_m = texture(depth_tex, UV).r;
+    point_depth_m = depth_m;
     point_valid = step(depth_range.x, depth_m) * step(depth_m, depth_range.y);
     POINT_SIZE = point_pixel_size;
     vec2 pixel = VERTEX.xy;
@@ -391,8 +509,36 @@ void fragment() {
     if (point_valid < 0.5) {
         discard;
     }
+    if (!gpu_connected_mesh && circular_point_splats && distance(POINT_COORD, vec2(0.5)) > 0.5) {
+        discard;
+    }
+    float d = point_depth_m;
+    float dl = texture(depth_tex, point_uv + vec2(-texel_size.x, 0.0)).r;
+    float dr = texture(depth_tex, point_uv + vec2(texel_size.x, 0.0)).r;
+    float du = texture(depth_tex, point_uv + vec2(0.0, -texel_size.y)).r;
+    float dd = texture(depth_tex, point_uv + vec2(0.0, texel_size.y)).r;
+    float close_neighbors = 0.0;
+    close_neighbors += (dl >= depth_range.x && dl <= depth_range.y && abs(d - dl) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (dr >= depth_range.x && dr <= depth_range.y && abs(d - dr) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (du >= depth_range.x && du <= depth_range.y && abs(d - du) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (dd >= depth_range.x && dd <= depth_range.y && abs(d - dd) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    if (point_cleanup_enabled && close_neighbors < point_cleanup_min_neighbors) {
+        discard;
+    }
+    float alpha = 1.0;
+    if (gpu_connected_mesh) {
+        float max_jump = max(max(abs(d - dl), abs(d - dr)), max(abs(d - du), abs(d - dd)));
+        if (d < depth_range.x || d > depth_range.y || (max_jump > max_depth_delta && close_neighbors < 2.0)) {
+            discard;
+        }
+        if (edge_feather_enabled) {
+            float feather = 1.0 - smoothstep(max_depth_delta - edge_feather_width, max_depth_delta, max_jump);
+            alpha = mix(edge_feather_min_alpha, 1.0, feather);
+        }
+    }
     vec4 color = texture(color_tex, point_uv);
     ALBEDO = color.rgb;
+    ALPHA = alpha;
 }
 )");
     material.instantiate();
@@ -428,6 +574,7 @@ void RealSenseSharedMemoryPointCloud::rebuild_mesh(int p_width, int p_height, in
 
     PackedVector3Array vertices;
     PackedVector2Array uvs;
+    PackedInt32Array indices;
     int count = p_width * p_height;
     vertices.resize(count);
     uvs.resize(count);
@@ -439,14 +586,35 @@ void RealSenseSharedMemoryPointCloud::rebuild_mesh(int p_width, int p_height, in
             index++;
         }
     }
+    if (render_connected_mesh && gpu_connected_mesh) {
+        indices.resize((p_width - 1) * (p_height - 1) * 6);
+        int write_index = 0;
+        for (int y = 0; y < p_height - 1; y++) {
+            for (int x = 0; x < p_width - 1; x++) {
+                const int a = y * p_width + x;
+                const int b = a + 1;
+                const int c = a + p_width;
+                const int d = c + 1;
+                indices.set(write_index++, a);
+                indices.set(write_index++, c);
+                indices.set(write_index++, b);
+                indices.set(write_index++, b);
+                indices.set(write_index++, c);
+                indices.set(write_index++, d);
+            }
+        }
+    }
 
     Array arrays;
     arrays.resize(Mesh::ARRAY_MAX);
     arrays[Mesh::ARRAY_VERTEX] = vertices;
     arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    if (render_connected_mesh && gpu_connected_mesh) {
+        arrays[Mesh::ARRAY_INDEX] = indices;
+    }
     Ref<ArrayMesh> mesh;
     mesh.instantiate();
-    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_POINTS, arrays);
+    mesh->add_surface_from_arrays((render_connected_mesh && gpu_connected_mesh) ? Mesh::PRIMITIVE_TRIANGLES : Mesh::PRIMITIVE_POINTS, arrays);
     set_mesh(mesh);
     ensure_material();
     set_material_override(material);
@@ -839,4 +1007,14 @@ void RealSenseSharedMemoryPointCloud::update_material_params() {
     material->set_shader_parameter("intrinsics", reader.is_valid() ? reader->get_intrinsics() : Vector4());
     material->set_shader_parameter("depth_range", Vector2(float(min_depth), float(max_depth)));
     material->set_shader_parameter("point_pixel_size", float(point_pixel_size));
+    material->set_shader_parameter("circular_point_splats", circular_point_splats);
+    material->set_shader_parameter("point_cleanup_enabled", point_cleanup_enabled);
+    material->set_shader_parameter("point_cleanup_depth_delta", float(point_cleanup_depth_delta));
+    material->set_shader_parameter("point_cleanup_min_neighbors", float(point_cleanup_min_neighbors));
+    material->set_shader_parameter("texel_size", Vector2(grid_width > 0 ? 1.0f / float(grid_width) : 1.0f, grid_height > 0 ? 1.0f / float(grid_height) : 1.0f));
+    material->set_shader_parameter("max_depth_delta", float(mesh_max_depth_delta));
+    material->set_shader_parameter("gpu_connected_mesh", gpu_connected_mesh && render_connected_mesh);
+    material->set_shader_parameter("edge_feather_enabled", edge_feather_enabled);
+    material->set_shader_parameter("edge_feather_width", float(edge_feather_width));
+    material->set_shader_parameter("edge_feather_min_alpha", float(edge_feather_min_alpha));
 }
