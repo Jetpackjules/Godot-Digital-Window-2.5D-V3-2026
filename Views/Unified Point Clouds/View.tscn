@@ -1,15 +1,24 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://dnghk8l0qx7rm"]
 
-[ext_resource type="Script" path="res://Views/Unified Point Clouds/unified_point_cloud_view.gd" id="1_unified"]
+[ext_resource type="Script" uid="uid://dtrcgdq8e01b7" path="res://Views/Unified Point Clouds/unified_point_cloud_view.gd" id="1_unified"]
 
-[node name="Unified Point Clouds" type="Node3D"]
+[node name="Unified Point Clouds" type="Node3D" unique_id=267359055]
 script = ExtResource("1_unified")
 
-[node name="PreviewCamera" type="Camera3D" parent="."]
+[node name="CameraClouds" type="Node3D" parent="." unique_id=1373529331]
+
+[node name="RealSenseCloudAnchor" type="Node3D" parent="CameraClouds"]
+
+[node name="OAKDCloudAnchor" type="Node3D" parent="CameraClouds"]
+
+[node name="DebugPanelAnchor" type="Node3D" parent="." unique_id=533157947]
+transform = Transform3D(1, 0, 0, 0, 0.906308, 0.422618, 0, -0.422618, 0.906308, -1.15, 0.95, -1.35)
+
+[node name="PreviewCamera" type="Camera3D" parent="." unique_id=215518306]
 transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 1.1, 2.4)
 current = true
 fov = 55.0
 
-[node name="PreviewLight" type="DirectionalLight3D" parent="."]
+[node name="PreviewLight" type="DirectionalLight3D" parent="." unique_id=1944190877]
 transform = Transform3D(0.707107, -0.353553, 0.612372, 0, 0.866025, 0.5, -0.707107, -0.353553, 0.612372, 0, 1.5, 0)
 light_energy = 0.45

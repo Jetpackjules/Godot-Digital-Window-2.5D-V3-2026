@@ -52,6 +52,10 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_render_connected_mesh"), &RealSenseSharedMemoryPointCloud::get_render_connected_mesh);
     ClassDB::bind_method(D_METHOD("set_gpu_connected_mesh", "enabled"), &RealSenseSharedMemoryPointCloud::set_gpu_connected_mesh);
     ClassDB::bind_method(D_METHOD("get_gpu_connected_mesh"), &RealSenseSharedMemoryPointCloud::get_gpu_connected_mesh);
+    ClassDB::bind_method(D_METHOD("set_cpu_project_points", "enabled"), &RealSenseSharedMemoryPointCloud::set_cpu_project_points);
+    ClassDB::bind_method(D_METHOD("get_cpu_project_points"), &RealSenseSharedMemoryPointCloud::get_cpu_project_points);
+    ClassDB::bind_method(D_METHOD("set_color_enabled", "enabled"), &RealSenseSharedMemoryPointCloud::set_color_enabled);
+    ClassDB::bind_method(D_METHOD("get_color_enabled"), &RealSenseSharedMemoryPointCloud::get_color_enabled);
     ClassDB::bind_method(D_METHOD("set_mesh_max_edge", "edge"), &RealSenseSharedMemoryPointCloud::set_mesh_max_edge);
     ClassDB::bind_method(D_METHOD("get_mesh_max_edge"), &RealSenseSharedMemoryPointCloud::get_mesh_max_edge);
     ClassDB::bind_method(D_METHOD("set_mesh_max_depth_delta", "delta"), &RealSenseSharedMemoryPointCloud::set_mesh_max_depth_delta);
@@ -95,6 +99,8 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_depth"), "set_max_depth", "get_max_depth");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "render_connected_mesh"), "set_render_connected_mesh", "get_render_connected_mesh");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_connected_mesh"), "set_gpu_connected_mesh", "get_gpu_connected_mesh");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cpu_project_points"), "set_cpu_project_points", "get_cpu_project_points");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "color_enabled"), "set_color_enabled", "get_color_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_max_edge"), "set_mesh_max_edge", "get_mesh_max_edge");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mesh_max_depth_delta"), "set_mesh_max_depth_delta", "get_mesh_max_depth_delta");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "texture_map_mesh"), "set_texture_map_mesh", "get_texture_map_mesh");
@@ -141,7 +147,8 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
     if (width <= 1 || height <= 1) {
         return;
     }
-    if (width != grid_width || height != grid_height || stride != grid_stride || get_mesh().is_null()) {
+    const bool cpu_built_surface = cpu_project_points || (render_connected_mesh && !gpu_connected_mesh);
+    if (!cpu_built_surface && (width != grid_width || height != grid_height || stride != grid_stride || get_mesh().is_null())) {
         rebuild_mesh(width, height, stride);
     }
 
@@ -181,6 +188,18 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
         }
         return;
     }
+    if (cpu_project_points && !render_connected_mesh) {
+        last_triangle_count = 0;
+        last_point_count = rebuild_cpu_point_cloud(primary_frame.depth_image, primary_frame.color_image);
+        frames++;
+        fps_accum += p_delta;
+        if (fps_accum >= 1.0) {
+            render_fps = double(frames) / fps_accum;
+            frames = 0;
+            fps_accum = 0.0;
+        }
+        return;
+    }
     if (depth_texture.is_null() || color_texture.is_null()) {
         depth_texture = ImageTexture::create_from_image(primary_frame.depth_image);
         color_texture = ImageTexture::create_from_image(primary_frame.color_image);
@@ -188,6 +207,8 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
         depth_texture->update(primary_frame.depth_image);
         color_texture->update(primary_frame.color_image);
     }
+    ensure_material();
+    set_material_override(Ref<Material>());
     update_material_params();
     if (render_connected_mesh && gpu_connected_mesh) {
         last_point_count = width * height;
@@ -228,6 +249,9 @@ void RealSenseSharedMemoryPointCloud::set_point_pixel_size(double p_size) {
     }
     point_pixel_size = p_size;
     update_material_params();
+    if (cpu_project_points) {
+        set_mesh(Ref<Mesh>());
+    }
 }
 
 double RealSenseSharedMemoryPointCloud::get_point_pixel_size() const { return point_pixel_size; }
@@ -238,6 +262,9 @@ void RealSenseSharedMemoryPointCloud::set_circular_point_splats(bool p_enabled) 
     }
     circular_point_splats = p_enabled;
     update_material_params();
+    if (cpu_point_material.is_valid()) {
+        cpu_point_material->set_shader_parameter("circular_point_splats", circular_point_splats);
+    }
 }
 
 bool RealSenseSharedMemoryPointCloud::get_circular_point_splats() const { return circular_point_splats; }
@@ -248,6 +275,9 @@ void RealSenseSharedMemoryPointCloud::set_point_cleanup_enabled(bool p_enabled) 
     }
     point_cleanup_enabled = p_enabled;
     update_material_params();
+    if (cpu_project_points) {
+        set_mesh(Ref<Mesh>());
+    }
 }
 
 bool RealSenseSharedMemoryPointCloud::get_point_cleanup_enabled() const { return point_cleanup_enabled; }
@@ -258,6 +288,9 @@ void RealSenseSharedMemoryPointCloud::set_point_cleanup_depth_delta(double p_del
     }
     point_cleanup_depth_delta = MAX(0.001, p_delta);
     update_material_params();
+    if (cpu_project_points && point_cleanup_enabled) {
+        set_mesh(Ref<Mesh>());
+    }
 }
 
 double RealSenseSharedMemoryPointCloud::get_point_cleanup_depth_delta() const { return point_cleanup_depth_delta; }
@@ -269,6 +302,9 @@ void RealSenseSharedMemoryPointCloud::set_point_cleanup_min_neighbors(double p_c
     }
     point_cleanup_min_neighbors = clamped;
     update_material_params();
+    if (cpu_project_points && point_cleanup_enabled) {
+        set_mesh(Ref<Mesh>());
+    }
 }
 
 double RealSenseSharedMemoryPointCloud::get_point_cleanup_min_neighbors() const { return point_cleanup_min_neighbors; }
@@ -318,6 +354,35 @@ void RealSenseSharedMemoryPointCloud::set_gpu_connected_mesh(bool p_enabled) {
 }
 
 bool RealSenseSharedMemoryPointCloud::get_gpu_connected_mesh() const { return gpu_connected_mesh; }
+
+void RealSenseSharedMemoryPointCloud::set_cpu_project_points(bool p_enabled) {
+    if (cpu_project_points == p_enabled) {
+        return;
+    }
+    cpu_project_points = p_enabled;
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+}
+
+bool RealSenseSharedMemoryPointCloud::get_cpu_project_points() const { return cpu_project_points; }
+
+void RealSenseSharedMemoryPointCloud::set_color_enabled(bool p_enabled) {
+    if (color_enabled == p_enabled) {
+        return;
+    }
+    color_enabled = p_enabled;
+    update_material_params();
+    if (cpu_point_material.is_valid()) {
+        cpu_point_material->set_shader_parameter("color_enabled", color_enabled);
+    }
+    if (cpu_project_points || (render_connected_mesh && !gpu_connected_mesh)) {
+        set_mesh(Ref<Mesh>());
+    }
+}
+
+bool RealSenseSharedMemoryPointCloud::get_color_enabled() const { return color_enabled; }
 
 void RealSenseSharedMemoryPointCloud::set_mesh_max_edge(double p_edge) {
     if (Math::is_equal_approx(mesh_max_edge, p_edge)) {
@@ -469,7 +534,7 @@ void RealSenseSharedMemoryPointCloud::ensure_material() {
     shader.instantiate();
     shader->set_code(R"(
 shader_type spatial;
-render_mode unshaded, cull_disabled, blend_mix, depth_draw_alpha_prepass;
+render_mode unshaded, cull_disabled, blend_mix;
 
 uniform sampler2D depth_tex : filter_nearest;
 uniform sampler2D color_tex : filter_nearest;
@@ -486,6 +551,7 @@ uniform bool gpu_connected_mesh = false;
 uniform bool edge_feather_enabled = false;
 uniform float edge_feather_width = 0.035;
 uniform float edge_feather_min_alpha = 0.20;
+uniform bool color_enabled = true;
 
 varying vec2 point_uv;
 varying float point_valid;
@@ -537,7 +603,8 @@ void fragment() {
         }
     }
     vec4 color = texture(color_tex, point_uv);
-    ALBEDO = color.rgb;
+    float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+    ALBEDO = color_enabled ? color.rgb : vec3(gray);
     ALPHA = alpha;
 }
 )");
@@ -554,6 +621,41 @@ void RealSenseSharedMemoryPointCloud::ensure_vertex_color_material() {
     vertex_color_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
     vertex_color_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
     vertex_color_material->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+}
+
+void RealSenseSharedMemoryPointCloud::ensure_cpu_point_material() {
+    if (cpu_point_material.is_valid()) {
+        return;
+    }
+    Ref<Shader> shader;
+    shader.instantiate();
+    shader->set_code(R"(
+shader_type spatial;
+render_mode unshaded, cull_disabled, blend_mix;
+
+uniform float point_pixel_size = 2.0;
+uniform bool circular_point_splats = false;
+uniform bool color_enabled = true;
+
+varying vec4 point_color;
+varying vec2 point_quad_uv;
+
+void vertex() {
+    point_color = COLOR;
+    point_quad_uv = UV;
+}
+
+void fragment() {
+    if (circular_point_splats && distance(point_quad_uv, vec2(0.5)) > 0.5) {
+        discard;
+    }
+    float gray = dot(point_color.rgb, vec3(0.299, 0.587, 0.114));
+    ALBEDO = color_enabled ? point_color.rgb : vec3(gray);
+    ALPHA = point_color.a;
+}
+)");
+    cpu_point_material.instantiate();
+    cpu_point_material->set_shader(shader);
 }
 
 void RealSenseSharedMemoryPointCloud::ensure_texture_material() {
@@ -615,9 +717,10 @@ void RealSenseSharedMemoryPointCloud::rebuild_mesh(int p_width, int p_height, in
     Ref<ArrayMesh> mesh;
     mesh.instantiate();
     mesh->add_surface_from_arrays((render_connected_mesh && gpu_connected_mesh) ? Mesh::PRIMITIVE_TRIANGLES : Mesh::PRIMITIVE_POINTS, arrays);
-    set_mesh(mesh);
     ensure_material();
-    set_material_override(material);
+    mesh->surface_set_material(0, material);
+    set_mesh(mesh);
+    set_material_override(Ref<Material>());
     set_custom_aabb(AABB(Vector3(-100.0, -100.0, -100.0), Vector3(200.0, 200.0, 200.0)));
 }
 
@@ -744,12 +847,7 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image>
             ));
             uvs.set(kept_count, Vector2((float(x) + 0.5f) / float(width), (float(y) + 0.5f) / float(height)));
             const int color_offset = source_index * 4;
-            colors.set(kept_count, Color(
-                float(uint8_t(color_data[color_offset])) / 255.0f,
-                float(uint8_t(color_data[color_offset + 1])) / 255.0f,
-                float(uint8_t(color_data[color_offset + 2])) / 255.0f,
-                float(uint8_t(color_data[color_offset + 3])) / 255.0f
-            ));
+            colors.set(kept_count, decode_point_color(color_data, color_offset));
             kept_count++;
         }
     }
@@ -823,6 +921,131 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image>
     return write_index / 3;
 }
 
+int RealSenseSharedMemoryPointCloud::rebuild_cpu_point_cloud(const Ref<Image> &p_depth_image, const Ref<Image> &p_color_image) {
+    if (reader.is_null() || p_depth_image.is_null() || p_color_image.is_null()) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+    int width = reader->get_width();
+    int height = reader->get_height();
+    int stride = reader->get_stride();
+    if (width <= 1 || height <= 1) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+
+    PackedByteArray depth_data = p_depth_image->get_data();
+    PackedByteArray color_data = p_color_image->get_data();
+    const int cell_count = width * height;
+    if (depth_data.size() < cell_count * 4 || color_data.size() < cell_count * 4) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+
+    Vector4 intrinsics = reader->get_intrinsics();
+    const double fx = MAX(0.000001, double(intrinsics.x));
+    const double fy = MAX(0.000001, double(intrinsics.y));
+    const double ppx = intrinsics.z;
+    const double ppy = intrinsics.w;
+
+    PackedVector3Array vertices;
+    PackedColorArray colors;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+    const int max_vertices = cell_count * 4;
+    const int max_indices = cell_count * 6;
+    vertices.resize(max_vertices);
+    colors.resize(max_vertices);
+    uvs.resize(max_vertices);
+    indices.resize(max_indices);
+    int kept_count = 0;
+    int vertex_count = 0;
+    int index_count = 0;
+    for (int y = 0; y < height; ++y) {
+        const double py = double(y * stride);
+        for (int x = 0; x < width; ++x) {
+            const int source_index = y * width + x;
+            const float depth_m = depth_data.decode_float(source_index * 4);
+            if (depth_m < min_depth || depth_m > max_depth) {
+                continue;
+            }
+            if (point_cleanup_enabled) {
+                int close_neighbors = 0;
+                const int nx[4] = { x - 1, x + 1, x, x };
+                const int ny[4] = { y, y, y - 1, y + 1 };
+                for (int i = 0; i < 4; ++i) {
+                    if (nx[i] < 0 || nx[i] >= width || ny[i] < 0 || ny[i] >= height) {
+                        continue;
+                    }
+                    const int neighbor_index = ny[i] * width + nx[i];
+                    const float neighbor_depth = depth_data.decode_float(neighbor_index * 4);
+                    if (neighbor_depth >= min_depth && neighbor_depth <= max_depth && Math::abs(double(depth_m - neighbor_depth)) <= point_cleanup_depth_delta) {
+                        close_neighbors++;
+                    }
+                }
+                if (double(close_neighbors) < point_cleanup_min_neighbors) {
+                    continue;
+                }
+            }
+            const double px = double(x * stride);
+            const Vector3 point(
+                float((px - ppx) * depth_m / fx),
+                float(-(py - ppy) * depth_m / fy),
+                -depth_m
+            );
+            const int color_offset = source_index * 4;
+            const Color color = decode_point_color(color_data, color_offset);
+            const int base = vertex_count;
+            const float half_size = float(MAX(0.00025, point_pixel_size * 0.0012 * MAX(0.2, double(depth_m))));
+            vertices.set(base + 0, point + Vector3(-half_size, -half_size, 0.0f));
+            vertices.set(base + 1, point + Vector3(half_size, -half_size, 0.0f));
+            vertices.set(base + 2, point + Vector3(-half_size, half_size, 0.0f));
+            vertices.set(base + 3, point + Vector3(half_size, half_size, 0.0f));
+            colors.set(base + 0, color);
+            colors.set(base + 1, color);
+            colors.set(base + 2, color);
+            colors.set(base + 3, color);
+            uvs.set(base + 0, Vector2(0.0f, 0.0f));
+            uvs.set(base + 1, Vector2(1.0f, 0.0f));
+            uvs.set(base + 2, Vector2(0.0f, 1.0f));
+            uvs.set(base + 3, Vector2(1.0f, 1.0f));
+            indices.set(index_count + 0, base + 0);
+            indices.set(index_count + 1, base + 2);
+            indices.set(index_count + 2, base + 1);
+            indices.set(index_count + 3, base + 1);
+            indices.set(index_count + 4, base + 2);
+            indices.set(index_count + 5, base + 3);
+            vertex_count += 4;
+            index_count += 6;
+            kept_count++;
+        }
+    }
+    vertices.resize(vertex_count);
+    colors.resize(vertex_count);
+    uvs.resize(vertex_count);
+    indices.resize(index_count);
+    if (kept_count <= 0) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_COLOR] = colors;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+    Ref<ArrayMesh> mesh;
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    ensure_vertex_color_material();
+    mesh->surface_set_material(0, vertex_color_material);
+    set_mesh(mesh);
+    set_material_override(Ref<Material>());
+    set_custom_aabb(AABB(Vector3(-100.0, -100.0, -100.0), Vector3(200.0, 200.0, 200.0)));
+    return kept_count;
+}
+
 int RealSenseSharedMemoryPointCloud::append_cpu_grid_surface(
     Ref<ArrayMesh> &p_mesh,
     const Ref<RealSenseSharedMemoryReader> &p_reader,
@@ -882,12 +1105,7 @@ int RealSenseSharedMemoryPointCloud::append_cpu_grid_surface(
             );
             vertices.set(kept_count, p_transform.xform(point));
             const int color_offset = source_index * 4;
-            colors.set(kept_count, Color(
-                float(uint8_t(color_data[color_offset])) / 255.0f,
-                float(uint8_t(color_data[color_offset + 1])) / 255.0f,
-                float(uint8_t(color_data[color_offset + 2])) / 255.0f,
-                float(uint8_t(color_data[color_offset + 3])) / 255.0f
-            ));
+            colors.set(kept_count, decode_point_color(color_data, color_offset));
             kept_count++;
         }
     }
@@ -994,6 +1212,18 @@ bool RealSenseSharedMemoryPointCloud::triangle_color_valid(const PackedColorArra
     return va.distance_to(vb) <= mesh_max_color_delta && vb.distance_to(vc) <= mesh_max_color_delta && vc.distance_to(va) <= mesh_max_color_delta;
 }
 
+Color RealSenseSharedMemoryPointCloud::decode_point_color(const PackedByteArray &p_color_data, int p_color_offset) const {
+    const float r = float(uint8_t(p_color_data[p_color_offset])) / 255.0f;
+    const float g = float(uint8_t(p_color_data[p_color_offset + 1])) / 255.0f;
+    const float b = float(uint8_t(p_color_data[p_color_offset + 2])) / 255.0f;
+    const float a = float(uint8_t(p_color_data[p_color_offset + 3])) / 255.0f;
+    if (color_enabled) {
+        return Color(r, g, b, a);
+    }
+    const float gray = r * 0.299f + g * 0.587f + b * 0.114f;
+    return Color(gray, gray, gray, a);
+}
+
 void RealSenseSharedMemoryPointCloud::update_material_params() {
     if (material.is_null()) {
         return;
@@ -1017,4 +1247,5 @@ void RealSenseSharedMemoryPointCloud::update_material_params() {
     material->set_shader_parameter("edge_feather_enabled", edge_feather_enabled);
     material->set_shader_parameter("edge_feather_width", float(edge_feather_width));
     material->set_shader_parameter("edge_feather_min_alpha", float(edge_feather_min_alpha));
+    material->set_shader_parameter("color_enabled", color_enabled);
 }

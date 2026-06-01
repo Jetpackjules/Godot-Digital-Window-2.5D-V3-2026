@@ -2353,7 +2353,7 @@ func _build_grid_material() -> ShaderMaterial:
 	var shader := Shader.new()
 	shader.code = """
 shader_type spatial;
-render_mode unshaded, cull_disabled, blend_mix, depth_draw_alpha_prepass;
+render_mode unshaded, cull_disabled, blend_mix;
 
 uniform sampler2D depth_tex : filter_nearest;
 uniform sampler2D color_tex : filter_nearest;

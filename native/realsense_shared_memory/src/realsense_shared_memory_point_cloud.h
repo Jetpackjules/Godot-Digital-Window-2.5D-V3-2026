@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 
 #include <deque>
@@ -41,6 +42,10 @@ public:
     bool get_render_connected_mesh() const;
     void set_gpu_connected_mesh(bool p_enabled);
     bool get_gpu_connected_mesh() const;
+    void set_cpu_project_points(bool p_enabled);
+    bool get_cpu_project_points() const;
+    void set_color_enabled(bool p_enabled);
+    bool get_color_enabled() const;
     void set_mesh_max_edge(double p_edge);
     double get_mesh_max_edge() const;
     void set_mesh_max_depth_delta(double p_delta);
@@ -88,10 +93,12 @@ private:
     double max_depth = 4.5;
     bool render_connected_mesh = false;
     bool gpu_connected_mesh = false;
+    bool cpu_project_points = false;
+    bool color_enabled = true;
     bool texture_map_mesh = false;
     double mesh_max_edge = 0.08;
     double mesh_max_depth_delta = 0.08;
-    double mesh_min_triangle_area = 0.000025;
+    double mesh_min_triangle_area = 0.0;
     double mesh_max_color_delta = 2.0;
     bool edge_feather_enabled = false;
     double edge_feather_width = 0.035;
@@ -107,6 +114,7 @@ private:
     godot::Ref<godot::ImageTexture> depth_texture;
     godot::Ref<godot::ImageTexture> color_texture;
     godot::Ref<godot::ShaderMaterial> material;
+    godot::Ref<godot::ShaderMaterial> cpu_point_material;
     godot::Ref<godot::StandardMaterial3D> texture_material;
     godot::Ref<godot::StandardMaterial3D> vertex_color_material;
     int grid_width = 0;
@@ -133,6 +141,7 @@ private:
     std::deque<FrameSnapshot> secondary_history;
 
     void ensure_material();
+    void ensure_cpu_point_material();
     void ensure_texture_material();
     void ensure_vertex_color_material();
     void rebuild_mesh(int p_width, int p_height, int p_stride);
@@ -140,6 +149,7 @@ private:
     FrameSnapshot select_frame_for_delay(const std::deque<FrameSnapshot> &p_history, double p_delay_ms, const godot::Ref<RealSenseSharedMemoryReader> &p_reader, const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image) const;
     double now_seconds() const;
     int rebuild_cpu_connected_mesh(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
+    int rebuild_cpu_point_cloud(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int rebuild_cpu_combined_mesh(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int append_cpu_grid_surface(
         godot::Ref<godot::ArrayMesh> &p_mesh,
@@ -149,6 +159,7 @@ private:
         const godot::Transform3D &p_transform,
         int &r_point_count
     );
+    godot::Color decode_point_color(const godot::PackedByteArray &p_color_data, int p_color_offset) const;
     bool triangle_valid(const godot::PackedVector3Array &p_vertices, int p_a, int p_b, int p_c, double p_max_edge_sq) const;
     bool triangle_color_valid(const godot::PackedColorArray &p_colors, int p_a, int p_b, int p_c) const;
     void update_material_params();

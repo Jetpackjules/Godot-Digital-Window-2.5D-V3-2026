@@ -2299,12 +2299,14 @@ class OakDCapture:
             else bool(use_rgb_color_for_host_depth)
         )
         self.host_depth_color_mode = str(
-            host_depth_color_mode or os.environ.get("OAKD_HOST_DEPTH_COLOR_MODE", "rgb_projected")
+            host_depth_color_mode or os.environ.get("OAKD_HOST_DEPTH_COLOR_MODE", "rgb_projected_stable")
         ).strip().lower()
-        if self.host_depth_color_mode not in ("gray", "rgb_preview", "rgb_projected"):
-            self.host_depth_color_mode = "rgb_projected"
+        if self.host_depth_color_mode not in ("gray", "rgb_preview", "rgb_projected", "rgb_projected_stable"):
+            self.host_depth_color_mode = "rgb_projected_stable"
         if not self.use_rgb_color_for_host_depth:
             self.host_depth_color_mode = "gray"
+        self._stable_projected_color_bgr = None
+        self._stable_projected_color_alpha = float(np.clip(float(os.environ.get("OAKD_PROJECTED_COLOR_SMOOTHING", "0.55")), 0.0, 0.95))
         self.pipeline = None
         self.rgb_queue = None
         self.depth_queue = None
@@ -2324,6 +2326,8 @@ class OakDCapture:
         self._host_rgb_projection_cache = None
         self.latest_color_bgr = None
         self.latest_depth_m = None
+        self.latest_frame_serial = 0
+        self.latest_frame_time = 0.0
         self.depth_correction_quadratic = float(os.environ.get("OAKD_DEPTH_CORRECTION_QUADRATIC", "0.0"))
         self.depth_correction_scale = float(os.environ.get("OAKD_DEPTH_CORRECTION_SCALE", "1.0"))
         self.depth_correction_offset_m = float(os.environ.get("OAKD_DEPTH_CORRECTION_OFFSET_M", "0.0"))
@@ -2400,10 +2404,12 @@ class OakDCapture:
             self.speckle_range = int(settings.get("speckle_range", self.speckle_range))
             self.use_rgb_color_for_host_depth = bool(settings.get("use_rgb_color_for_host_depth", self.use_rgb_color_for_host_depth))
             self.host_depth_color_mode = str(settings.get("host_depth_color_mode", self.host_depth_color_mode)).strip().lower()
-            if self.host_depth_color_mode not in ("gray", "rgb_preview", "rgb_projected"):
-                self.host_depth_color_mode = "rgb_projected"
+            if self.host_depth_color_mode not in ("gray", "rgb_preview", "rgb_projected", "rgb_projected_stable"):
+                self.host_depth_color_mode = "rgb_projected_stable"
             if not self.use_rgb_color_for_host_depth:
                 self.host_depth_color_mode = "gray"
+            if self.host_depth_color_mode != "rgb_projected_stable":
+                self._stable_projected_color_bgr = None
             print(
                 ">>> OAK-D runtime stereo config queued locally only; "
                 "DepthAI inputConfig is disabled while RGB depthAlign is active to avoid native crashes. "
@@ -2727,12 +2733,24 @@ class OakDCapture:
     def _color_for_host_depth(self, left_gray, depth_m, color_img=None):
         gray_color = cv2.cvtColor(left_gray, cv2.COLOR_GRAY2BGR)
         if color_img is None or self.host_depth_color_mode == "gray":
+            self._stable_projected_color_bgr = None
             return gray_color
         if self.host_depth_color_mode == "rgb_preview":
+            self._stable_projected_color_bgr = None
             return cv2.resize(color_img, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
         projected = self._project_rgb_color_to_host_depth(depth_m, color_img, gray_color)
         if projected is not None:
+            if self.host_depth_color_mode == "rgb_projected_stable":
+                if self._stable_projected_color_bgr is None or self._stable_projected_color_bgr.shape != projected.shape:
+                    self._stable_projected_color_bgr = projected.copy()
+                    return projected
+                alpha = float(self._stable_projected_color_alpha)
+                stable = cv2.addWeighted(self._stable_projected_color_bgr, alpha, projected, 1.0 - alpha, 0.0)
+                self._stable_projected_color_bgr = stable
+                return stable
+            self._stable_projected_color_bgr = None
             return projected
+        self._stable_projected_color_bgr = None
         return cv2.resize(color_img, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
 
     def _compute_host_stereo_depth(self, left_gray, right_gray, color_img=None):
@@ -2822,7 +2840,7 @@ class OakDCapture:
                             if self.host_depth_color_mode == "rgb_preview":
                                 pending_color = result_color
                             else:
-                                color_for_depth = pending_color if self.host_depth_color_mode == "rgb_projected" else None
+                                color_for_depth = pending_color if self.host_depth_color_mode in ("rgb_projected", "rgb_projected_stable") else None
                                 pending_color = self._color_for_host_depth(
                                     pending_left if pending_left is not None else result_color,
                                     result_depth,
@@ -2832,7 +2850,7 @@ class OakDCapture:
                             pending_stereo_serial = seq
                             published_fast_seq = seq
                 elif pending_left is not None and pending_right is not None and current_pair != computed_host_pair:
-                    color_for_depth = pending_color if self.host_depth_color_mode in ("rgb_preview", "rgb_projected") else None
+                    color_for_depth = pending_color if self.host_depth_color_mode in ("rgb_preview", "rgb_projected", "rgb_projected_stable") else None
                     pending_color, pending_depth_m = self._compute_host_stereo_depth(pending_left, pending_right, color_for_depth)
                     pending_stereo_serial += 1
                     computed_host_pair = current_pair
@@ -2850,6 +2868,8 @@ class OakDCapture:
                 with self._frame_lock:
                     self.latest_color_bgr = pending_color.copy()
                     self.latest_depth_m = pending_depth_m
+                    self.latest_frame_serial += 1
+                    self.latest_frame_time = time.perf_counter()
                     self._capture_count += 1
                     now = time.perf_counter()
                     if now - self._last_capture_fps_time >= 0.5:
@@ -2896,6 +2916,26 @@ class OakDCapture:
             if apply_depth_correction:
                 depth = self._correct_depth(depth)
             return self.latest_color_bgr.copy(), depth
+
+    def read_latest_with_serial(self, apply_depth_correction=True):
+        with self._frame_lock:
+            if self.latest_color_bgr is None or self.latest_depth_m is None:
+                return None, None, 0, 0.0
+            depth = self.latest_depth_m.copy()
+            if apply_depth_correction:
+                if abs(self.depth_correction_quadratic) > 1e-9:
+                    valid = np.isfinite(depth) & (depth > 0)
+                    corrected = depth.copy()
+                    corrected[valid] = (
+                        self.depth_correction_quadratic * depth[valid] * depth[valid]
+                        + self.depth_correction_scale * depth[valid]
+                        + self.depth_correction_offset_m
+                    )
+                    corrected[~valid] = depth[~valid]
+                    depth = corrected
+                elif abs(self.depth_correction_scale - 1.0) > 1e-9 or abs(self.depth_correction_offset_m) > 1e-9:
+                    depth = depth * self.depth_correction_scale + self.depth_correction_offset_m
+            return self.latest_color_bgr.copy(), depth, int(self.latest_frame_serial), float(self.latest_frame_time)
 
     def release(self):
         self._stop_event.set()
@@ -4132,6 +4172,7 @@ def main():
     oakd_point_cloud_last_fps_print_time = time.time()
     oakd_point_cloud_shm_color_format = "rgba"
     last_oakd_point_cloud_send_time = 0.0
+    last_oakd_point_cloud_frame_serial = 0
     oakd_point_cloud_settings = {
         "width": OAKD_WIDTH,
         "height": OAKD_HEIGHT,
@@ -4154,7 +4195,7 @@ def main():
         "fast_stereo_backend": os.environ.get("OAKD_FAST_STEREO_BACKEND", "pytorch").strip().lower(),
         "fast_stereo_model_profile": os.environ.get("OAKD_FAST_STEREO_MODEL_PROFILE", "full_320x736_i4").strip().lower(),
         "use_rgb_color_for_host_depth": os.environ.get("OAKD_USE_RGB_COLOR_FOR_HOST_DEPTH", "1").strip().lower() in ("1", "true", "yes", "on"),
-        "host_depth_color_mode": os.environ.get("OAKD_HOST_DEPTH_COLOR_MODE", "rgb_projected").strip().lower(),
+        "host_depth_color_mode": os.environ.get("OAKD_HOST_DEPTH_COLOR_MODE", "rgb_projected_stable").strip().lower(),
     }
     if oakd_point_cloud_settings["fast_stereo_model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
         oakd_point_cloud_settings["fast_stereo_model_profile"] = "full_320x736_i4"
@@ -4253,16 +4294,12 @@ def main():
             last_update = float(stats.get("last_update", 0.0) or 0.0)
             if last_update > 0.0 and now - last_update > 2.0:
                 continue
-            fps_values = []
-            for key in ("publish_fps", "capture_fps"):
-                try:
-                    fps = float(stats.get(key, 0.0) or 0.0)
-                except Exception:
-                    fps = 0.0
-                if 0.1 <= fps <= 240.0:
-                    fps_values.append(fps)
-            if fps_values:
-                interval = max(interval, 1.0 / max(0.1, min(fps_values)))
+            try:
+                fps = float(stats.get("capture_fps", 0.0) or 0.0)
+            except Exception:
+                fps = 0.0
+            if 0.1 <= fps <= 240.0:
+                interval = max(interval, 1.0 / max(0.1, fps))
         return min(5.0, max(0.001, interval))
 
     def broadcast_measured_screen_size(screen_id, width_inches, height_inches):
@@ -5345,7 +5382,7 @@ def main():
                 fast_stereo_backend=settings.get("fast_stereo_backend", "pytorch"),
                 fast_stereo_model_profile=settings.get("fast_stereo_model_profile", "full_320x736_i4"),
                 use_rgb_color_for_host_depth=settings.get("use_rgb_color_for_host_depth", True),
-                host_depth_color_mode=settings.get("host_depth_color_mode", "rgb_projected"),
+                host_depth_color_mode=settings.get("host_depth_color_mode", "rgb_projected_stable"),
             )
             capture.settings_signature = signature
             oakd_capture = capture
@@ -5434,7 +5471,7 @@ def main():
 
     def broadcast_oakd_point_cloud():
         nonlocal last_oakd_point_cloud_send_time, oakd_point_cloud_frame_id
-        nonlocal oakd_point_cloud_send_counter, oakd_point_cloud_last_fps_print_time
+        nonlocal oakd_point_cloud_send_counter, oakd_point_cloud_last_fps_print_time, last_oakd_point_cloud_frame_serial
         if not oakd_publish_lock.acquire(False):
             return
         try:
@@ -5445,8 +5482,15 @@ def main():
             now = time.time()
             if now - last_oakd_point_cloud_send_time <= point_cloud_effective_send_interval("oakd"):
                 return
-            color, depth_m = oakd_capture.read_latest()
+            if hasattr(oakd_capture, "read_latest_with_serial"):
+                color, depth_m, frame_serial, frame_time = oakd_capture.read_latest_with_serial()
+            else:
+                color, depth_m = oakd_capture.read_latest()
+                frame_serial = 0
+                frame_time = 0.0
             if color is None or depth_m is None:
+                return
+            if frame_serial > 0 and frame_serial == last_oakd_point_cloud_frame_serial:
                 return
 
             stride = max(1, int(oakd_point_cloud_stride))
@@ -5488,6 +5532,7 @@ def main():
             ):
                 publish_fps = 1.0 / max(0.001, now - last_oakd_point_cloud_send_time)
                 last_oakd_point_cloud_send_time = now
+                last_oakd_point_cloud_frame_serial = int(frame_serial)
                 oakd_point_cloud_send_counter += 1
                 valid_pct = 100.0 * float(valid_count) / max(1.0, float(valid.size))
                 update_point_cloud_stats(
@@ -5501,6 +5546,7 @@ def main():
                     height=int(grid_h),
                     stride=int(stride),
                     source=str(getattr(oakd_capture, "depth_source", oakd_point_cloud_settings.get("depth_source", "depthai"))),
+                    frame_age_ms=float((time.perf_counter() - frame_time) * 1000.0) if frame_time else 0.0,
                     fast_backend=str(getattr(oakd_capture, "fast_stereo_backend", oakd_point_cloud_settings.get("fast_stereo_backend", ""))),
                     fast_profile=str(getattr(oakd_capture, "fast_stereo_model_profile", oakd_point_cloud_settings.get("fast_stereo_model_profile", ""))),
                 )
@@ -6095,7 +6141,7 @@ def main():
                         "fps": min(60.0, max(1.0, float(cmd_json.get("oakd_fps", oakd_point_cloud_settings["fps"])))),
                         "rgb_res": str(cmd_json.get("oakd_rgb_res", oakd_point_cloud_settings["rgb_res"])).strip().lower(),
                         "use_rgb_color_for_host_depth": bool(cmd_json.get("oakd_use_rgb_color_for_host_depth", oakd_point_cloud_settings.get("use_rgb_color_for_host_depth", True))),
-                        "host_depth_color_mode": str(cmd_json.get("oakd_host_depth_color_mode", oakd_point_cloud_settings.get("host_depth_color_mode", "rgb_projected"))).strip().lower(),
+                        "host_depth_color_mode": str(cmd_json.get("oakd_host_depth_color_mode", oakd_point_cloud_settings.get("host_depth_color_mode", "rgb_projected_stable"))).strip().lower(),
                         "mono_res": str(cmd_json.get("oakd_mono_res", oakd_point_cloud_settings["mono_res"])).strip().lower(),
                         "preset": str(cmd_json.get("oakd_stereo_preset", oakd_point_cloud_settings["preset"])).strip().lower(),
                         "lr_check": bool(cmd_json.get("oakd_lr_check", oakd_point_cloud_settings["lr_check"])),
@@ -6119,8 +6165,8 @@ def main():
                         oakd_point_cloud_settings["fast_stereo_backend"] = "pytorch"
                     if oakd_point_cloud_settings["fast_stereo_model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
                         oakd_point_cloud_settings["fast_stereo_model_profile"] = "full_320x736_i4"
-                    if oakd_point_cloud_settings["host_depth_color_mode"] not in ("gray", "rgb_preview", "rgb_projected"):
-                        oakd_point_cloud_settings["host_depth_color_mode"] = "rgb_projected"
+                    if oakd_point_cloud_settings["host_depth_color_mode"] not in ("gray", "rgb_preview", "rgb_projected", "rgb_projected_stable"):
+                        oakd_point_cloud_settings["host_depth_color_mode"] = "rgb_projected_stable"
                     if not oakd_point_cloud_settings.get("use_rgb_color_for_host_depth", True):
                         oakd_point_cloud_settings["host_depth_color_mode"] = "gray"
                     if oakd_point_cloud_settings["depth_source"] == "depthai" and not oakd_point_cloud_settings["lr_check"]:
@@ -6160,7 +6206,7 @@ def main():
                         f"fast_profile={oakd_point_cloud_settings['fast_stereo_model_profile']} "
                         f"fast_iters={oakd_point_cloud_settings['fast_stereo_iters']} "
                         f"fast_compile={'on' if oakd_point_cloud_settings['fast_stereo_torch_compile'] else 'off'} "
-                        f"host_color={oakd_point_cloud_settings.get('host_depth_color_mode', 'rgb_projected')} "
+                        f"host_color={oakd_point_cloud_settings.get('host_depth_color_mode', 'rgb_projected_stable')} "
                         f"sync_to_slowest={'on' if point_cloud_sync_to_slowest else 'off'} "
                         f"shm_color={oakd_point_cloud_shm_color_format} "
                         f"shm={OAKD_POINT_CLOUD_SHM_NAME} <<<"

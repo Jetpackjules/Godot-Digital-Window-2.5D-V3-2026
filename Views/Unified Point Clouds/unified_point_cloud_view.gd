@@ -6,6 +6,8 @@ const CAMERA_OAKD := "oakd"
 const CAMERA_IDS := [CAMERA_REALSENSE, CAMERA_OAKD]
 const BIG_ARUCO_MARKER_SIZE_M := 0.15
 const BIG_ARUCO_DICTIONARY := "4x4_50"
+const CAMERA_CLOUDS_NODE := "CameraClouds"
+const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 
 @export_group("Workflow")
 ## UDP control port used by launch_web_stack.py. Performance impact: none unless changed to the wrong port.
@@ -54,7 +56,7 @@ const BIG_ARUCO_DICTIONARY := "4x4_50"
 	set(value):
 		sync_fps_to_slowest = value
 		_send_all_stream_commands()
-## points = square point sprites, point_splats = larger round sprites, gpu_mesh = connected GPU triangles. Performance impact: points low, splats low to moderate, mesh high.
+## points = native projected points, point_splats = larger round points, gpu_mesh = connected native mesh. Performance impact: points low to moderate, splats moderate, mesh high.
 @export_enum("points", "point_splats", "gpu_mesh") var render_mode: String = "point_splats":
 	set(value):
 		if value not in ["points", "point_splats", "gpu_mesh"]:
@@ -77,10 +79,20 @@ const BIG_ARUCO_DICTIONARY := "4x4_50"
 	set(value):
 		mesh_max_edge_m = value
 		_update_camera_renderers()
+## Minimum triangle area for native mesh mode. Keep this at 0 if mesh disappears into shards. Performance impact: low.
+@export_range(0.0, 0.001, 0.000001, "suffix:m2") var mesh_min_triangle_area_m2: float = 0.0:
+	set(value):
+		mesh_min_triangle_area_m2 = maxf(0.0, value)
+		_update_camera_renderers()
+## Uses the camera color texture on connected mesh mode instead of per-vertex colors. Usually looks richer but can reveal color/depth mismatch. Performance impact: low to moderate.
+@export var texture_map_mesh: bool = true:
+	set(value):
+		texture_map_mesh = value
+		_update_camera_renderers()
 
 @export_subgroup("Cleanup")
 ## Shader-side cleanup for isolated depth pixels. Performance impact: low to moderate; effect is strongest on lone speckles, subtle on dense noisy surfaces.
-@export var cleanup_enabled: bool = true:
+@export var cleanup_enabled: bool = false:
 	set(value):
 		cleanup_enabled = value
 		_update_camera_renderers()
@@ -122,6 +134,11 @@ const BIG_ARUCO_DICTIONARY := "4x4_50"
 	set(value):
 		realsense_stride = maxi(1, value)
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## Shows RealSense RGB on its point cloud. Off renders RealSense as grayscale for easier depth debugging. Performance impact: low.
+@export var realsense_color_enabled: bool = true:
+	set(value):
+		realsense_color_enabled = value
+		_update_camera_renderers()
 ## Intel RealSense SDK post filters. Performance impact: high on this stack; often cuts publish FPS hard while looking subtle in the final cloud.
 @export var realsense_depth_filters_enabled: bool = true:
 	set(value):
@@ -182,11 +199,12 @@ const BIG_ARUCO_DICTIONARY := "4x4_50"
 	set(value):
 		oakd_color_enabled = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
-## OAK-D color path used only when OAK-D Color Enabled is on. rgb_projected is better aligned but heavier; rgb_preview is cheap and less correct.
-@export_enum("rgb_projected", "rgb_preview") var oakd_color_mode: String = "rgb_projected":
+		_update_camera_renderers()
+## OAK-D color path used only when OAK-D Color Enabled is on. rgb_projected_stable damps projection flicker; rgb_projected is raw; rgb_preview is cheap and less aligned.
+@export_enum("rgb_projected_stable", "rgb_projected", "rgb_preview") var oakd_color_mode: String = "rgb_projected_stable":
 	set(value):
-		if value not in ["rgb_projected", "rgb_preview"]:
-			value = "rgb_projected"
+		if value not in ["rgb_projected_stable", "rgb_projected", "rgb_preview"]:
+			value = "rgb_projected_stable"
 		oakd_color_mode = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
 ## FastFoundation backend. onnx_cuda avoids TensorRT ScatterND console errors; onnx_trt may be faster but can spam parser warnings. Performance impact: high.
@@ -235,12 +253,13 @@ const BIG_ARUCO_DICTIONARY := "4x4_50"
 @export_multiline var calibration_status: String = ""
 
 @export_group("Debug")
-## World position of the in-scene FPS table. Performance impact: none.
+## Fallback world position for DebugPanelAnchor when the child node is missing. Move DebugPanelAnchor directly for normal layout work. Performance impact: none.
 @export var debug_panel_position: Vector3 = Vector3(-1.35, 1.15, -1.0):
 	set(value):
 		debug_panel_position = value
-		if _debug_sprite != null:
-			_debug_sprite.position = debug_panel_position
+		var anchor := _debug_panel_anchor(false)
+		if anchor != null:
+			anchor.position = debug_panel_position
 ## Pixel size scale for the in-world FPS table. Performance impact: none.
 @export_range(0.0005, 0.01, 0.0001) var debug_panel_pixel_size: float = 0.0022:
 	set(value):
@@ -274,6 +293,7 @@ var _stream_commands_active := false
 func _ready() -> void:
 	_point_cloud_stats_path = ProjectSettings.globalize_path("user://point_cloud_stream_stats.json")
 	_alignment_result_path = ProjectSettings.globalize_path("user://oakd_realsense_alignment.json")
+	_ensure_scene_anchors()
 	if auto_apply_alignment_file:
 		_poll_alignment_result(true)
 	_update_camera_renderers()
@@ -295,7 +315,7 @@ func _process(_delta: float) -> void:
 func _apply_clean_defaults() -> void:
 	render_mode = "point_splats"
 	point_pixel_size = 2.5
-	cleanup_enabled = true
+	cleanup_enabled = false
 	cleanup_depth_delta_m = 0.055
 	cleanup_min_close_neighbors = 2.0
 	edge_feather_enabled = true
@@ -307,7 +327,7 @@ func _apply_clean_defaults() -> void:
 	realsense_filters_for_geometry = true
 	oakd_depth_source = "fast_foundation"
 	oakd_color_enabled = false
-	oakd_color_mode = "rgb_projected"
+	oakd_color_mode = "rgb_projected_stable"
 	oakd_fast_backend = "onnx_cuda"
 	oakd_fast_profile = "rt_256x512_i2"
 	oakd_fast_iters = 2
@@ -329,6 +349,13 @@ func _camera_stride(camera_id: String) -> int:
 		return maxi(1, oakd_stride)
 	return 1
 
+func _camera_color_enabled(camera_id: String) -> bool:
+	if camera_id == CAMERA_REALSENSE:
+		return realsense_color_enabled
+	if camera_id == CAMERA_OAKD:
+		return oakd_color_enabled
+	return true
+
 func _camera_label(camera_id: String) -> String:
 	if camera_id == CAMERA_REALSENSE:
 		return "RealSense"
@@ -349,6 +376,13 @@ func _camera_shm_name(camera_id: String) -> String:
 func _camera_node_name(camera_id: String) -> String:
 	return "%sUnifiedPointCloud" % _camera_label(camera_id).replace("-", "").replace(" ", "")
 
+func _camera_anchor_name(camera_id: String) -> String:
+	if camera_id == CAMERA_REALSENSE:
+		return "RealSenseCloudAnchor"
+	if camera_id == CAMERA_OAKD:
+		return "OAKDCloudAnchor"
+	return "%sCloudAnchor" % _camera_label(camera_id).replace("-", "").replace(" ", "")
+
 func _camera_transform(camera_id: String) -> Transform3D:
 	return _alignment_transforms.get(camera_id, Transform3D.IDENTITY)
 
@@ -358,15 +392,13 @@ func _mesh_enabled() -> bool:
 func _tracker_mesh_mode() -> String:
 	if render_mode == "gpu_mesh":
 		return "stereo_gpu"
-	if render_mode == "point_splats":
-		return "gpu_points"
-	return "gpu_grid"
+	return "gpu_points"
 
 func _effective_oakd_color_mode() -> String:
 	return oakd_color_mode if oakd_color_enabled else "gray"
 
 func _effective_point_pixel_size() -> float:
-	return point_pixel_size * 1.6 if render_mode == "point_splats" else point_pixel_size
+	return point_pixel_size * 3.0 if render_mode == "point_splats" else point_pixel_size
 
 func _send_udp(payload: Dictionary) -> void:
 	_command_udp.set_dest_address("127.0.0.1", tracker_control_port)
@@ -441,6 +473,50 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 		return
 	_send_udp(payload)
 
+func _ensure_scene_anchors() -> void:
+	_camera_clouds_node(true)
+	for camera_id in CAMERA_IDS:
+		_camera_anchor(camera_id, true)
+	_debug_panel_anchor(true)
+
+func _camera_clouds_node(create: bool) -> Node3D:
+	var node := get_node_or_null(CAMERA_CLOUDS_NODE) as Node3D
+	if node == null and create:
+		node = Node3D.new()
+		node.name = CAMERA_CLOUDS_NODE
+		add_child(node)
+		_assign_editor_owner(node)
+	return node
+
+func _camera_anchor(camera_id: String, create: bool) -> Node3D:
+	var clouds := _camera_clouds_node(create)
+	if clouds == null:
+		return null
+	var anchor := clouds.get_node_or_null(_camera_anchor_name(camera_id)) as Node3D
+	if anchor == null and create:
+		anchor = Node3D.new()
+		anchor.name = _camera_anchor_name(camera_id)
+		clouds.add_child(anchor)
+		_assign_editor_owner(anchor)
+	return anchor
+
+func _debug_panel_anchor(create: bool) -> Node3D:
+	var anchor := get_node_or_null(DEBUG_PANEL_ANCHOR_NODE) as Node3D
+	if anchor == null and create:
+		anchor = Node3D.new()
+		anchor.name = DEBUG_PANEL_ANCHOR_NODE
+		anchor.position = debug_panel_position
+		add_child(anchor)
+		_assign_editor_owner(anchor)
+	return anchor
+
+func _assign_editor_owner(node: Node) -> void:
+	if not Engine.is_editor_hint() or get_tree() == null:
+		return
+	var scene_root := get_tree().edited_scene_root
+	if scene_root != null and (node == scene_root or scene_root.is_ancestor_of(node)):
+		node.owner = scene_root
+
 func _update_camera_renderers() -> void:
 	if not ClassDB.class_exists("RealSenseSharedMemoryPointCloud"):
 		if not _native_missing_warned:
@@ -455,22 +531,37 @@ func _update_camera_renderers() -> void:
 
 func _ensure_camera_renderer(camera_id: String) -> void:
 	var node := _camera_nodes.get(camera_id) as MeshInstance3D
+	var anchor := _camera_anchor(camera_id, true)
 	if node == null or not is_instance_valid(node):
-		node = get_node_or_null(_camera_node_name(camera_id)) as MeshInstance3D
+		node = _find_camera_renderer(camera_id)
 	if node == null:
 		node = ClassDB.instantiate("RealSenseSharedMemoryPointCloud") as MeshInstance3D
 		node.name = _camera_node_name(camera_id)
-		add_child(node)
+		(anchor if anchor != null else self).add_child(node)
+	elif anchor != null and node.get_parent() != anchor:
+		var old_parent := node.get_parent()
+		if old_parent != null:
+			old_parent.remove_child(node)
+		anchor.add_child(node)
 	_camera_nodes[camera_id] = node
 	_apply_camera_renderer_settings(camera_id, node)
 
 func _free_camera_renderer(camera_id: String) -> void:
 	var node := _camera_nodes.get(camera_id) as Node
 	if node == null or not is_instance_valid(node):
-		node = get_node_or_null(_camera_node_name(camera_id))
+		node = _find_camera_renderer(camera_id)
 	if node != null:
 		node.queue_free()
 	_camera_nodes.erase(camera_id)
+
+func _find_camera_renderer(camera_id: String) -> MeshInstance3D:
+	var node_name := _camera_node_name(camera_id)
+	var anchor := _camera_anchor(camera_id, false)
+	if anchor != null:
+		var anchored := anchor.get_node_or_null(node_name) as MeshInstance3D
+		if anchored != null:
+			return anchored
+	return get_node_or_null(node_name) as MeshInstance3D
 
 func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) -> void:
 	node.visible = editor_stream_enabled and _camera_enabled(camera_id)
@@ -482,6 +573,10 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 	node.call("set_render_connected_mesh", _mesh_enabled())
 	if node.has_method("set_gpu_connected_mesh"):
 		node.call("set_gpu_connected_mesh", _mesh_enabled())
+	if node.has_method("set_cpu_project_points"):
+		node.call("set_cpu_project_points", false)
+	if node.has_method("set_color_enabled"):
+		node.call("set_color_enabled", _camera_color_enabled(camera_id))
 	if node.has_method("set_circular_point_splats"):
 		node.call("set_circular_point_splats", render_mode == "point_splats")
 	if node.has_method("set_point_cleanup_enabled"):
@@ -494,7 +589,9 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 		node.call("set_edge_feather_min_alpha", edge_feather_min_alpha)
 	node.call("set_mesh_max_edge", mesh_max_edge_m)
 	node.call("set_mesh_max_depth_delta", mesh_max_depth_delta_m)
-	node.call("set_texture_map_mesh", false)
+	if node.has_method("set_mesh_min_triangle_area"):
+		node.call("set_mesh_min_triangle_area", mesh_min_triangle_area_m2)
+	node.call("set_texture_map_mesh", texture_map_mesh and _mesh_enabled())
 
 func _request_big_aruco_alignment() -> void:
 	if _alignment_result_path.is_empty():
@@ -544,12 +641,12 @@ func _poll_alignment_result(force: bool) -> void:
 	var t: Array = payload["T"]
 	if r.size() < 3 or t.size() < 3:
 		return
-	var basis := Basis(
+	var alignment_basis := Basis(
 		Vector3(float(r[0][0]), float(r[1][0]), float(r[2][0])),
 		Vector3(float(r[0][1]), float(r[1][1]), float(r[2][1])),
 		Vector3(float(r[0][2]), float(r[1][2]), float(r[2][2]))
 	).orthonormalized()
-	_alignment_transforms[CAMERA_OAKD] = Transform3D(basis, Vector3(float(t[0]), float(t[1]), float(t[2])))
+	_alignment_transforms[CAMERA_OAKD] = Transform3D(alignment_basis, Vector3(float(t[0]), float(t[1]), float(t[2])))
 	_update_camera_renderers()
 
 func _poll_point_cloud_stats() -> void:
@@ -612,23 +709,24 @@ func _ensure_debug_panel() -> void:
 		return
 	if _debug_sprite != null and is_instance_valid(_debug_sprite) and _debug_viewport != null and is_instance_valid(_debug_viewport):
 		return
+	var anchor := _debug_panel_anchor(true)
 	_debug_viewport = SubViewport.new()
 	_debug_viewport.name = "UnifiedPointCloudDebugViewport"
 	_debug_viewport.size = Vector2i(660, 190)
 	_debug_viewport.transparent_bg = true
 	_debug_viewport.disable_3d = true
 	_debug_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(_debug_viewport)
+	(anchor if anchor != null else self).add_child(_debug_viewport)
 	_rebuild_debug_table()
 	_debug_sprite = Sprite3D.new()
 	_debug_sprite.name = "UnifiedPointCloudDebugPlane"
 	_debug_sprite.texture = _debug_viewport.get_texture()
-	_debug_sprite.position = debug_panel_position
+	_debug_sprite.position = Vector3.ZERO
 	_debug_sprite.pixel_size = debug_panel_pixel_size
-	_debug_sprite.fixed_size = true
-	_debug_sprite.no_depth_test = true
-	_debug_sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	add_child(_debug_sprite)
+	_debug_sprite.fixed_size = false
+	_debug_sprite.no_depth_test = false
+	_debug_sprite.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	(anchor if anchor != null else self).add_child(_debug_sprite)
 
 func _rebuild_debug_table() -> void:
 	if _debug_viewport == null or not is_instance_valid(_debug_viewport):
