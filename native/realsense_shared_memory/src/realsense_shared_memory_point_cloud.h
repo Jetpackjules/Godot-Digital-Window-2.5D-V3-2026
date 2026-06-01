@@ -76,6 +76,7 @@ public:
     godot::Transform3D get_secondary_transform() const;
     bool is_connected() const;
     double get_render_fps() const;
+    double get_display_frame_age_ms() const;
     int get_last_triangle_count() const;
     int get_last_point_count() const;
 
@@ -114,15 +115,23 @@ private:
     godot::Ref<godot::ImageTexture> depth_texture;
     godot::Ref<godot::ImageTexture> color_texture;
     godot::Ref<godot::ShaderMaterial> material;
+    bool material_gpu_mesh_mode = false;
+    bool material_texture_map_mode = false;
     godot::Ref<godot::ShaderMaterial> cpu_point_material;
     godot::Ref<godot::StandardMaterial3D> texture_material;
     godot::Ref<godot::StandardMaterial3D> vertex_color_material;
     int grid_width = 0;
     int grid_height = 0;
     int grid_stride = 0;
+    int gpu_mesh_cache_width = 0;
+    int gpu_mesh_cache_height = 0;
+    int gpu_mesh_cache_stride = 0;
+    godot::PackedVector3Array gpu_mesh_vertices;
+    godot::PackedVector2Array gpu_mesh_uvs;
     int frames = 0;
     double fps_accum = 0.0;
     double render_fps = 0.0;
+    double last_display_frame_seconds = 0.0;
     int last_triangle_count = 0;
     int last_point_count = 0;
 
@@ -149,6 +158,7 @@ private:
     FrameSnapshot select_frame_for_delay(const std::deque<FrameSnapshot> &p_history, double p_delay_ms, const godot::Ref<RealSenseSharedMemoryReader> &p_reader, const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image) const;
     double now_seconds() const;
     int rebuild_cpu_connected_mesh(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
+    int rebuild_gpu_connected_mesh(const godot::Ref<godot::Image> &p_depth_image);
     int rebuild_cpu_point_cloud(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int rebuild_cpu_combined_mesh(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int append_cpu_grid_surface(

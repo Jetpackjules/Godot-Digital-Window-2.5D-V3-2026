@@ -148,7 +148,7 @@ TRACKER_CAMERA_POSE_SEND_INTERVAL_SEC = 0.1
 RESOLVED_HEAD_POSE_SEND_INTERVAL_SEC = 1.0 / 60.0
 REALSENSE_TRACKING_SEND_INTERVAL_SEC = 1.0 / 60.0
 REALSENSE_POINT_CLOUD_SEND_INTERVAL_SEC = 1.0 / float(os.environ.get("REALSENSE_POINT_CLOUD_FPS", str(REALSENSE_CAMERA_FPS)))
-REALSENSE_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("REALSENSE_POINT_CLOUD_STRIDE", "4"))
+REALSENSE_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("REALSENSE_POINT_CLOUD_STRIDE", "1"))
 REALSENSE_POINT_CLOUD_MIN_DEPTH_M = float(os.environ.get("REALSENSE_POINT_CLOUD_MIN_DEPTH", "0.20"))
 REALSENSE_POINT_CLOUD_MAX_DEPTH_M = float(os.environ.get("REALSENSE_POINT_CLOUD_MAX_DEPTH", "4.50"))
 REALSENSE_POINT_CLOUD_MAX_POINTS = int(os.environ.get("REALSENSE_POINT_CLOUD_MAX_POINTS", "0"))
@@ -162,7 +162,7 @@ REALSENSE_DEPTH_HOLE_FILLING = int(os.environ.get("REALSENSE_DEPTH_HOLE_FILLING"
 REALSENSE_DEPTH_DISPARITY_FILTERS = os.environ.get("REALSENSE_DEPTH_DISPARITY_FILTERS", "1").strip().lower() not in ("0", "false", "no", "off")
 REALSENSE_FILTERS_FOR_POINT_CLOUD_GEOMETRY = os.environ.get("REALSENSE_FILTERS_FOR_POINT_CLOUD_GEOMETRY", "0").strip().lower() not in ("0", "false", "no", "off")
 REALSENSE_FILTER_GEOMETRY_EDGE_GUARD_M = float(os.environ.get("REALSENSE_FILTER_GEOMETRY_EDGE_GUARD_M", "0.07"))
-OAKD_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("OAKD_POINT_CLOUD_STRIDE", "4"))
+OAKD_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("OAKD_POINT_CLOUD_STRIDE", "1"))
 OAKD_POINT_CLOUD_MIN_DEPTH_M = float(os.environ.get("OAKD_POINT_CLOUD_MIN_DEPTH", "0.20"))
 OAKD_POINT_CLOUD_MAX_DEPTH_M = float(os.environ.get("OAKD_POINT_CLOUD_MAX_DEPTH", "4.50"))
 OAKD_WIDTH = int(os.environ.get("OAKD_WIDTH", "1024"))
@@ -1838,7 +1838,7 @@ class FastFoundationDepthWorker:
         np.subtract(tmp, 0.406, out=out[2])
         np.multiply(out[2], 1.0 / 0.225, out=out[2])
 
-    def submit(self, left_img, right_img, color_img=None):
+    def submit(self, left_img, right_img, color_img=None, left_timestamp=None, right_timestamp=None, left_received_perf=0.0, right_received_perf=0.0):
         if left_img is None or right_img is None:
             return
         with self._cond:
@@ -1846,6 +1846,10 @@ class FastFoundationDepthWorker:
                 left_img.copy(),
                 right_img.copy(),
                 None if color_img is None else color_img.copy(),
+                left_timestamp,
+                right_timestamp,
+                float(left_received_perf),
+                float(right_received_perf),
             )
             self._cond.notify()
 
@@ -1853,8 +1857,8 @@ class FastFoundationDepthWorker:
         with self._cond:
             if self._latest is None:
                 return None
-            seq, color, depth = self._latest
-            return int(seq), color.copy(), depth.copy()
+            seq, color, depth, left_timestamp, right_timestamp, left_received_perf, right_received_perf = self._latest
+            return int(seq), color.copy(), depth.copy(), left_timestamp, right_timestamp, float(left_received_perf), float(right_received_perf)
 
     def stop(self):
         with self._cond:
@@ -2215,7 +2219,7 @@ class FastFoundationDepthWorker:
                     return
                 item = self._pending
                 self._pending = None
-            left_img, right_img, color_img = item
+            left_img, right_img, color_img, left_timestamp, right_timestamp, left_received_perf, right_received_perf = item
             try:
                 color, depth = self._infer_depth(left_img, right_img, color_img)
                 now = time.perf_counter()
@@ -2226,7 +2230,7 @@ class FastFoundationDepthWorker:
                     self._fps_last_time = now
                 with self._cond:
                     self._latest_seq += 1
-                    self._latest = (self._latest_seq, color, depth)
+                    self._latest = (self._latest_seq, color, depth, left_timestamp, right_timestamp, left_received_perf, right_received_perf)
                 self.status = "running"
             except Exception as exc:
                 self.status = f"error: {exc}"
@@ -2282,7 +2286,7 @@ class OakDCapture:
         self.fast_foundation_enabled = self.depth_source == "fast_foundation"
         self.host_sgbm_enabled = self.depth_source == "host_sgbm"
         self.host_stereo_enabled = self.fast_foundation_enabled or self.host_sgbm_enabled
-        self.fast_stereo_iters = 8 if fast_stereo_iters is None else int(fast_stereo_iters)
+        self.fast_stereo_iters = 4 if fast_stereo_iters is None else int(fast_stereo_iters)
         self.fast_stereo_scale = 1.0 if fast_stereo_scale is None else float(fast_stereo_scale)
         self.fast_stereo_torch_compile = False if fast_stereo_torch_compile is None else bool(fast_stereo_torch_compile)
         self.fast_stereo_backend = str(fast_stereo_backend or os.environ.get("OAKD_FAST_STEREO_BACKEND", "pytorch")).strip().lower()
@@ -2328,6 +2332,10 @@ class OakDCapture:
         self.latest_depth_m = None
         self.latest_frame_serial = 0
         self.latest_frame_time = 0.0
+        self.latest_sensor_age_ms = 0.0
+        self.latest_color_age_ms = 0.0
+        self.latest_sensor_host_age_ms = 0.0
+        self.latest_color_host_age_ms = 0.0
         self.depth_correction_quadratic = float(os.environ.get("OAKD_DEPTH_CORRECTION_QUADRATIC", "0.0"))
         self.depth_correction_scale = float(os.environ.get("OAKD_DEPTH_CORRECTION_SCALE", "1.0"))
         self.depth_correction_offset_m = float(os.environ.get("OAKD_DEPTH_CORRECTION_OFFSET_M", "0.0"))
@@ -2338,6 +2346,9 @@ class OakDCapture:
         self._config_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._frame_event = threading.Event()
+        self.device_error = False
+        self.device_error_message = ""
+        self._device_error_reported = False
         self.intrinsics = CameraIntrinsics(
             0.5 * self.width / np.tan(np.deg2rad(69.0) * 0.5),
             0.5 * self.width / np.tan(np.deg2rad(69.0) * 0.5),
@@ -2455,8 +2466,14 @@ class OakDCapture:
                 "Host stereo source switches still work, but the on-device DepthAI queue needs LR check. <<<"
             )
             self.lr_check = True
-        stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
-        stereo.setOutputSize(self.width, self.height)
+        if self.host_stereo_enabled:
+            print(
+                ">>> OAK-D host stereo low-latency path: RGB depthAlign disabled; "
+                "host color projection handles RGB/mono alignment. <<<"
+            )
+        else:
+            stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+            stereo.setOutputSize(self.width, self.height)
         stereo.setLeftRightCheck(self.lr_check)
         stereo.setSubpixel(self.subpixel)
         if self.subpixel and hasattr(stereo.initialConfig, "setSubpixelFractionalBits"):
@@ -2472,7 +2489,10 @@ class OakDCapture:
         self.rgb_queue = color.preview.createOutputQueue(maxSize=1, blocking=False)
         self.left_queue = stereo.rectifiedLeft.createOutputQueue(maxSize=1, blocking=False)
         self.right_queue = stereo.rectifiedRight.createOutputQueue(maxSize=1, blocking=False)
-        self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
+        if self.host_stereo_enabled:
+            self.depth_queue = None
+        else:
+            self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
         self.pipeline = pipeline
         self.pipeline.start()
         self._try_load_intrinsics()
@@ -2661,7 +2681,7 @@ class OakDCapture:
             "DepthAI on-device stereo remains available by turning off OAK-D Fast Stereo. <<<"
         )
 
-    def _project_rgb_color_to_host_depth(self, depth_m, rgb_img, fallback_gray=None):
+    def _project_rgb_color_to_host_depth(self, depth_m, rgb_img, fallback_gray=None, visibility_tolerance_m=0.035):
         if (
             depth_m is None
             or rgb_img is None
@@ -2724,7 +2744,7 @@ class OakDCapture:
         nearest = np.full(int(rgb_h) * int(rgb_w), np.inf, dtype=np.float32)
         np.minimum.at(nearest, rgb_linear, rgb_z[inside].astype(np.float32))
         nearest_z = nearest[rgb_linear]
-        visible = np.abs(rgb_z[inside].astype(np.float32) - nearest_z) <= 0.035
+        visible = np.abs(rgb_z[inside].astype(np.float32) - nearest_z) <= float(visibility_tolerance_m)
         if int(visible.sum()) <= 0:
             return projected
         projected.reshape(-1, 3)[inside_flat[visible]] = rgb_img[v[inside][visible], u[inside][visible]]
@@ -2738,9 +2758,14 @@ class OakDCapture:
         if self.host_depth_color_mode == "rgb_preview":
             self._stable_projected_color_bgr = None
             return cv2.resize(color_img, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-        projected = self._project_rgb_color_to_host_depth(depth_m, color_img, gray_color)
+        stable_mode = self.host_depth_color_mode == "rgb_projected_stable"
+        fallback = gray_color
+        if stable_mode and self._stable_projected_color_bgr is not None and self._stable_projected_color_bgr.shape == gray_color.shape:
+            fallback = self._stable_projected_color_bgr
+        tolerance = 0.16 if stable_mode else 0.035
+        projected = self._project_rgb_color_to_host_depth(depth_m, color_img, fallback, tolerance)
         if projected is not None:
-            if self.host_depth_color_mode == "rgb_projected_stable":
+            if stable_mode:
                 if self._stable_projected_color_bgr is None or self._stable_projected_color_bgr.shape != projected.shape:
                     self._stable_projected_color_bgr = projected.copy()
                     return projected
@@ -2787,17 +2812,63 @@ class OakDCapture:
     def _drain_latest(self, queue):
         latest = None
         while queue is not None:
-            msg = queue.tryGet()
+            try:
+                msg = queue.tryGet()
+            except Exception as exc:
+                self.device_error = True
+                self.device_error_message = str(exc)
+                self._stop_event.set()
+                self._frame_event.set()
+                if not self._device_error_reported:
+                    self._device_error_reported = True
+                    print(
+                        f">>> OAK-D stream queue closed; marking capture for restart. "
+                        f"This usually follows a USB/device X_LINK drop: {exc} <<<",
+                        flush=True,
+                    )
+                return latest
             if msg is None:
                 break
             latest = msg
         return latest
+
+    def _message_timestamp(self, msg):
+        if msg is None:
+            return None
+        try:
+            return msg.getTimestamp()
+        except Exception:
+            return None
+
+    def _timestamp_age_ms(self, timestamp, received_perf=0.0):
+        if timestamp is not None:
+            try:
+                age = dai.Clock.now() - timestamp
+                return max(0.0, float(age.total_seconds()) * 1000.0)
+            except Exception:
+                pass
+        if received_perf:
+            return max(0.0, (time.perf_counter() - float(received_perf)) * 1000.0)
+        return 0.0
+
+    def _host_received_age_ms(self, received_perf=0.0):
+        if received_perf:
+            return max(0.0, (time.perf_counter() - float(received_perf)) * 1000.0)
+        return 0.0
 
     def _capture_loop(self):
         pending_color = None
         pending_depth_m = None
         pending_left = None
         pending_right = None
+        pending_color_timestamp = None
+        pending_depth_timestamp = None
+        pending_left_timestamp = None
+        pending_right_timestamp = None
+        pending_color_received_perf = 0.0
+        pending_depth_received_perf = 0.0
+        pending_left_received_perf = 0.0
+        pending_right_received_perf = 0.0
         pending_color_serial = 0
         pending_left_serial = 0
         pending_right_serial = 0
@@ -2816,13 +2887,19 @@ class OakDCapture:
             got_message = rgb_msg is not None or depth_msg is not None or left_msg is not None or right_msg is not None
             if rgb_msg is not None:
                 pending_color = rgb_msg.getCvFrame()
+                pending_color_timestamp = self._message_timestamp(rgb_msg)
+                pending_color_received_perf = time.perf_counter()
                 pending_color_serial += 1
             if self.host_stereo_enabled:
                 if left_msg is not None:
                     pending_left = left_msg.getCvFrame()
+                    pending_left_timestamp = self._message_timestamp(left_msg)
+                    pending_left_received_perf = time.perf_counter()
                     pending_left_serial += 1
                 if right_msg is not None:
                     pending_right = right_msg.getCvFrame()
+                    pending_right_timestamp = self._message_timestamp(right_msg)
+                    pending_right_received_perf = time.perf_counter()
                     pending_right_serial += 1
                 current_pair = (pending_left_serial, pending_right_serial)
                 if self.fast_foundation_enabled:
@@ -2830,12 +2907,20 @@ class OakDCapture:
                         worker = self.fast_foundation_worker
                         if worker is not None:
                             color_for_depth = pending_color if self.host_depth_color_mode == "rgb_preview" else None
-                            worker.submit(pending_left, pending_right, color_for_depth)
+                            worker.submit(
+                                pending_left,
+                                pending_right,
+                                color_for_depth,
+                                pending_left_timestamp,
+                                pending_right_timestamp,
+                                pending_left_received_perf,
+                                pending_right_received_perf,
+                            )
                             submitted_fast_pair = current_pair
                     worker = self.fast_foundation_worker
                     result = worker.get_latest() if worker is not None else None
                     if result is not None:
-                        seq, result_color, result_depth = result
+                        seq, result_color, result_depth, result_left_timestamp, result_right_timestamp, result_left_received_perf, result_right_received_perf = result
                         if seq != published_fast_seq:
                             if self.host_depth_color_mode == "rgb_preview":
                                 pending_color = result_color
@@ -2847,6 +2932,10 @@ class OakDCapture:
                                     color_for_depth,
                                 )
                             pending_depth_m = result_depth
+                            pending_left_timestamp = result_left_timestamp
+                            pending_right_timestamp = result_right_timestamp
+                            pending_left_received_perf = result_left_received_perf
+                            pending_right_received_perf = result_right_received_perf
                             pending_stereo_serial = seq
                             published_fast_seq = seq
                 elif pending_left is not None and pending_right is not None and current_pair != computed_host_pair:
@@ -2856,6 +2945,8 @@ class OakDCapture:
                     computed_host_pair = current_pair
             elif depth_msg is not None:
                 pending_depth_m = depth_msg.getFrame().astype(np.float32) * 0.001
+                pending_depth_timestamp = self._message_timestamp(depth_msg)
+                pending_depth_received_perf = time.perf_counter()
                 pending_depth_serial += 1
             latest_depth_serial = pending_stereo_serial if self.host_stereo_enabled else pending_depth_serial
             color_is_fresh = self.host_stereo_enabled or pending_color_serial != published_color_serial
@@ -2870,6 +2961,20 @@ class OakDCapture:
                     self.latest_depth_m = pending_depth_m
                     self.latest_frame_serial += 1
                     self.latest_frame_time = time.perf_counter()
+                    if self.host_stereo_enabled:
+                        self.latest_sensor_age_ms = max(
+                            self._timestamp_age_ms(pending_left_timestamp, pending_left_received_perf),
+                            self._timestamp_age_ms(pending_right_timestamp, pending_right_received_perf),
+                        )
+                        self.latest_sensor_host_age_ms = max(
+                            self._host_received_age_ms(pending_left_received_perf),
+                            self._host_received_age_ms(pending_right_received_perf),
+                        )
+                    else:
+                        self.latest_sensor_age_ms = self._timestamp_age_ms(pending_depth_timestamp, pending_depth_received_perf)
+                        self.latest_sensor_host_age_ms = self._host_received_age_ms(pending_depth_received_perf)
+                    self.latest_color_age_ms = self._timestamp_age_ms(pending_color_timestamp, pending_color_received_perf)
+                    self.latest_color_host_age_ms = self._host_received_age_ms(pending_color_received_perf)
                     self._capture_count += 1
                     now = time.perf_counter()
                     if now - self._last_capture_fps_time >= 0.5:
@@ -2920,7 +3025,7 @@ class OakDCapture:
     def read_latest_with_serial(self, apply_depth_correction=True):
         with self._frame_lock:
             if self.latest_color_bgr is None or self.latest_depth_m is None:
-                return None, None, 0, 0.0
+                return None, None, 0, 0.0, 0.0, 0.0, 0.0, 0.0
             depth = self.latest_depth_m.copy()
             if apply_depth_correction:
                 if abs(self.depth_correction_quadratic) > 1e-9:
@@ -2935,7 +3040,16 @@ class OakDCapture:
                     depth = corrected
                 elif abs(self.depth_correction_scale - 1.0) > 1e-9 or abs(self.depth_correction_offset_m) > 1e-9:
                     depth = depth * self.depth_correction_scale + self.depth_correction_offset_m
-            return self.latest_color_bgr.copy(), depth, int(self.latest_frame_serial), float(self.latest_frame_time)
+            return (
+                self.latest_color_bgr.copy(),
+                depth,
+                int(self.latest_frame_serial),
+                float(self.latest_frame_time),
+                float(self.latest_sensor_age_ms),
+                float(self.latest_color_age_ms),
+                float(self.latest_sensor_host_age_ms),
+                float(self.latest_color_host_age_ms),
+            )
 
     def release(self):
         self._stop_event.set()
@@ -4189,7 +4303,7 @@ def main():
         "speckle_range": OAKD_SPECKLE_RANGE,
         "depth_source": os.environ.get("OAKD_DEPTH_SOURCE", "depthai"),
         "fast_stereo_enabled": os.environ.get("OAKD_FAST_STEREO_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on"),
-        "fast_stereo_iters": int(os.environ.get("OAKD_FAST_STEREO_ITERS", "8")),
+        "fast_stereo_iters": int(os.environ.get("OAKD_FAST_STEREO_ITERS", "4")),
         "fast_stereo_scale": float(os.environ.get("OAKD_FAST_STEREO_SCALE", "1.0")),
         "fast_stereo_torch_compile": os.environ.get("OAKD_FAST_STEREO_TORCH_COMPILE", "0").strip().lower() in ("1", "true", "yes", "on"),
         "fast_stereo_backend": os.environ.get("OAKD_FAST_STEREO_BACKEND", "pytorch").strip().lower(),
@@ -4202,6 +4316,7 @@ def main():
     oakd_publisher_thread = None
     oakd_start_thread = None
     oakd_starting = False
+    oakd_next_start_time = 0.0
     oakd_publisher_stop_event = threading.Event()
     oakd_publish_lock = threading.Lock()
     oakd_realsense_align_lock = threading.Lock()
@@ -4210,8 +4325,8 @@ def main():
     point_cloud_console_stats = os.environ.get("POINT_CLOUD_CONSOLE_STATS", "0").strip().lower() in ("1", "true", "yes", "on")
     point_cloud_sync_to_slowest = os.environ.get("POINT_CLOUD_SYNC_TO_SLOWEST", "0").strip().lower() in ("1", "true", "yes", "on")
     point_cloud_stats = {
-        "realsense": {"enabled": False, "publish_fps": 0.0, "capture_fps": 0.0, "points": 0, "valid_pct": 0.0, "width": 0, "height": 0},
-        "oakd": {"enabled": False, "publish_fps": 0.0, "capture_fps": 0.0, "points": 0, "valid_pct": 0.0, "width": 0, "height": 0, "source": "depthai"},
+        "realsense": {"enabled": False, "publish_fps": 0.0, "capture_fps": 0.0, "points": 0, "valid_pct": 0.0, "width": 0, "height": 0, "frame_age_ms": 0.0, "sensor_age_ms": 0.0, "color_age_ms": 0.0, "sensor_host_age_ms": 0.0, "color_host_age_ms": 0.0},
+        "oakd": {"enabled": False, "publish_fps": 0.0, "capture_fps": 0.0, "points": 0, "valid_pct": 0.0, "width": 0, "height": 0, "source": "depthai", "frame_age_ms": 0.0, "sensor_age_ms": 0.0, "color_age_ms": 0.0, "sensor_host_age_ms": 0.0, "color_host_age_ms": 0.0},
         "sync_to_slowest": bool(point_cloud_sync_to_slowest),
         "timestamp": time.time(),
     }
@@ -5359,7 +5474,7 @@ def main():
         print(">>> OAK-D/RealSense Open3D point-cloud alignment started in background; live preview/cloud publishing remains active. <<<")
 
     def _start_oakd_capture_worker(signature, settings):
-        nonlocal oakd_capture, oakd_starting
+        nonlocal oakd_capture, oakd_starting, oakd_next_start_time
         try:
             capture = OakDCapture(
                 width=settings["width"],
@@ -5376,7 +5491,7 @@ def main():
                 speckle_filter=settings["speckle_filter"],
                 speckle_range=settings["speckle_range"],
                 depth_source=settings.get("depth_source", "depthai"),
-                fast_stereo_iters=settings.get("fast_stereo_iters", 8),
+                fast_stereo_iters=settings.get("fast_stereo_iters", 4),
                 fast_stereo_scale=settings.get("fast_stereo_scale", 1.0),
                 fast_stereo_torch_compile=settings.get("fast_stereo_torch_compile", False),
                 fast_stereo_backend=settings.get("fast_stereo_backend", "pytorch"),
@@ -5386,9 +5501,11 @@ def main():
             )
             capture.settings_signature = signature
             oakd_capture = capture
+            oakd_next_start_time = 0.0
             _start_oakd_publisher_if_needed()
         except Exception as exc:
             oakd_capture = None
+            oakd_next_start_time = time.time() + 5.0
             print(f">>> OAK-D unavailable: {exc} <<<")
         finally:
             oakd_starting = False
@@ -5396,7 +5513,8 @@ def main():
     def ensure_oakd_capture(enabled):
         nonlocal oakd_capture, oakd_point_cloud_shared_memory
         nonlocal oakd_publisher_thread, oakd_publisher_stop_event
-        nonlocal oakd_start_thread, oakd_starting
+        nonlocal oakd_start_thread, oakd_starting, oakd_next_start_time
+        nonlocal last_oakd_point_cloud_frame_serial
         if not enabled:
             _stop_oakd_publisher()
             if oakd_capture is not None:
@@ -5412,10 +5530,19 @@ def main():
         if oakd_point_cloud_shared_memory is None:
             oakd_point_cloud_shared_memory = LatestGridSharedMemory(OAKD_POINT_CLOUD_SHM_NAME, label="OAK-D point cloud")
         signature = _oakd_settings_signature()
+        if oakd_capture is not None and bool(getattr(oakd_capture, "device_error", False)):
+            reason = str(getattr(oakd_capture, "device_error_message", "stream queue closed"))
+            print(
+                f">>> OAK-D capture marked unhealthy after DepthAI stream error: {reason}. "
+                "Dropping the stale capture object and retrying after a short backoff. <<<"
+            )
+            oakd_capture = None
+            last_oakd_point_cloud_frame_serial = 0
+            oakd_next_start_time = max(oakd_next_start_time, time.time() + 2.0)
         if oakd_capture is not None and getattr(oakd_capture, "settings_signature", None) == signature:
             ok, reason = oakd_capture.set_depth_source(
                 oakd_point_cloud_settings.get("depth_source", "depthai"),
-                fast_stereo_iters=oakd_point_cloud_settings.get("fast_stereo_iters", 8),
+                fast_stereo_iters=oakd_point_cloud_settings.get("fast_stereo_iters", 4),
                 fast_stereo_scale=oakd_point_cloud_settings.get("fast_stereo_scale", 1.0),
                 fast_stereo_torch_compile=oakd_point_cloud_settings.get("fast_stereo_torch_compile", False),
                 fast_stereo_backend=oakd_point_cloud_settings.get("fast_stereo_backend", "pytorch"),
@@ -5431,7 +5558,7 @@ def main():
         if oakd_capture is not None:
             ok, reason = oakd_capture.set_depth_source(
                 oakd_point_cloud_settings.get("depth_source", "depthai"),
-                fast_stereo_iters=oakd_point_cloud_settings.get("fast_stereo_iters", 8),
+                fast_stereo_iters=oakd_point_cloud_settings.get("fast_stereo_iters", 4),
                 fast_stereo_scale=oakd_point_cloud_settings.get("fast_stereo_scale", 1.0),
                 fast_stereo_torch_compile=oakd_point_cloud_settings.get("fast_stereo_torch_compile", False),
                 fast_stereo_backend=oakd_point_cloud_settings.get("fast_stereo_backend", "pytorch"),
@@ -5459,6 +5586,9 @@ def main():
             return
         settings = dict(oakd_point_cloud_settings)
         settings["fps"] = min(60.0, max(1.0, float(settings["fps"])))
+        if time.time() < oakd_next_start_time:
+            return
+        oakd_next_start_time = time.time() + 5.0
         print(
             f">>> Starting OAK-D point cloud capture in background: "
             f"{settings['width']}x{settings['height']} {settings['fps']:.0f}fps mono={settings['mono_res']} "
@@ -5482,8 +5612,18 @@ def main():
             now = time.time()
             if now - last_oakd_point_cloud_send_time <= point_cloud_effective_send_interval("oakd"):
                 return
+            sensor_age_ms = 0.0
+            color_age_ms = 0.0
+            sensor_host_age_ms = 0.0
+            color_host_age_ms = 0.0
             if hasattr(oakd_capture, "read_latest_with_serial"):
-                color, depth_m, frame_serial, frame_time = oakd_capture.read_latest_with_serial()
+                result = oakd_capture.read_latest_with_serial()
+                if len(result) >= 8:
+                    color, depth_m, frame_serial, frame_time, sensor_age_ms, color_age_ms, sensor_host_age_ms, color_host_age_ms = result
+                elif len(result) >= 6:
+                    color, depth_m, frame_serial, frame_time, sensor_age_ms, color_age_ms = result
+                else:
+                    color, depth_m, frame_serial, frame_time = result
             else:
                 color, depth_m = oakd_capture.read_latest()
                 frame_serial = 0
@@ -5547,8 +5687,13 @@ def main():
                     stride=int(stride),
                     source=str(getattr(oakd_capture, "depth_source", oakd_point_cloud_settings.get("depth_source", "depthai"))),
                     frame_age_ms=float((time.perf_counter() - frame_time) * 1000.0) if frame_time else 0.0,
+                    sensor_age_ms=float(sensor_age_ms),
+                    color_age_ms=float(color_age_ms),
+                    sensor_host_age_ms=float(sensor_host_age_ms),
+                    color_host_age_ms=float(color_host_age_ms),
                     fast_backend=str(getattr(oakd_capture, "fast_stereo_backend", oakd_point_cloud_settings.get("fast_stereo_backend", ""))),
                     fast_profile=str(getattr(oakd_capture, "fast_stereo_model_profile", oakd_point_cloud_settings.get("fast_stereo_model_profile", ""))),
+                    fast_timing_ms=dict(getattr(getattr(oakd_capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
                 )
                 if point_cloud_console_stats and now - oakd_point_cloud_last_fps_print_time >= 2.0:
                     elapsed = now - oakd_point_cloud_last_fps_print_time
@@ -6153,7 +6298,7 @@ def main():
                         "speckle_range": max(0, int(cmd_json.get("oakd_speckle_range", oakd_point_cloud_settings["speckle_range"]))),
                         "depth_source": str(cmd_json.get("oakd_depth_source", oakd_point_cloud_settings.get("depth_source", "depthai"))).strip().lower(),
                         "fast_stereo_enabled": bool(cmd_json.get("oakd_fast_stereo_enabled", oakd_point_cloud_settings.get("fast_stereo_enabled", False))),
-                        "fast_stereo_iters": max(1, min(32, int(cmd_json.get("oakd_fast_stereo_iters", oakd_point_cloud_settings.get("fast_stereo_iters", 8))))),
+                        "fast_stereo_iters": max(1, min(32, int(cmd_json.get("oakd_fast_stereo_iters", oakd_point_cloud_settings.get("fast_stereo_iters", 4))))),
                         "fast_stereo_scale": max(0.25, min(1.0, float(cmd_json.get("oakd_fast_stereo_scale", oakd_point_cloud_settings.get("fast_stereo_scale", 1.0))))),
                         "fast_stereo_torch_compile": bool(cmd_json.get("oakd_fast_stereo_torch_compile", oakd_point_cloud_settings.get("fast_stereo_torch_compile", False))),
                         "fast_stereo_backend": str(cmd_json.get("oakd_fast_stereo_backend", oakd_point_cloud_settings.get("fast_stereo_backend", "pytorch"))).strip().lower(),

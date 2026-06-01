@@ -56,10 +56,10 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		sync_fps_to_slowest = value
 		_send_all_stream_commands()
-## points = native projected points, point_splats = larger round points, gpu_mesh = connected native mesh. Performance impact: points low to moderate, splats moderate, mesh high.
-@export_enum("points", "point_splats", "gpu_mesh") var render_mode: String = "point_splats":
+## points = native projected points, point_splats = larger round points, gpu_mesh = shader-connected mesh, cpu_mesh = CPU-built connected mesh fallback. Performance impact: points low, splats moderate, gpu_mesh moderate to high, cpu_mesh high.
+@export_enum("points", "point_splats", "gpu_mesh", "cpu_mesh") var render_mode: String = "point_splats":
 	set(value):
-		if value not in ["points", "point_splats", "gpu_mesh"]:
+		if value not in ["points", "point_splats", "gpu_mesh", "cpu_mesh"]:
 			value = "point_splats"
 		render_mode = value
 		_send_all_stream_commands()
@@ -167,8 +167,8 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		oakd_enabled = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and value)
 		_update_camera_renderers()
-## OAK-D grid sampling stride. 2 is the intended default for speed; 1 gives more points and costs much more. Performance impact: high.
-@export_range(1, 8, 1) var oakd_stride: int = 2:
+## OAK-D grid sampling stride. 1 keeps maximum OAK-D detail; 2 halves each axis and is much faster. Performance impact: high.
+@export_range(1, 8, 1) var oakd_stride: int = 1:
 	set(value):
 		oakd_stride = maxi(1, value)
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
@@ -207,6 +207,11 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 			value = "rgb_projected_stable"
 		oakd_color_mode = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
+## Tiny render-only local Z offset for OAK-D to reduce z-fighting when aligned on top of RealSense. Performance impact: none. Set to 0 for exact visual transform.
+@export_range(-0.03, 0.03, 0.001, "suffix:m") var oakd_render_depth_bias_m: float = 0.004:
+	set(value):
+		oakd_render_depth_bias_m = value
+		_update_camera_renderers()
 ## FastFoundation backend. onnx_cuda avoids TensorRT ScatterND console errors; onnx_trt may be faster but can spam parser warnings. Performance impact: high.
 @export_enum("onnx_cuda", "onnx_trt", "pytorch", "trt_engine") var oakd_fast_backend: String = "onnx_cuda":
 	set(value):
@@ -222,7 +227,7 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		oakd_fast_profile = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
 ## FastFoundation solver iterations. Performance impact: high; more iterations usually improve depth but reduce FPS.
-@export_range(1, 32, 1) var oakd_fast_iters: int = 2:
+@export_range(1, 32, 1) var oakd_fast_iters: int = 4:
 	set(value):
 		oakd_fast_iters = clampi(value, 1, 32)
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
@@ -322,15 +327,16 @@ func _apply_clean_defaults() -> void:
 	mesh_max_depth_delta_m = 0.12
 	mesh_max_edge_m = 0.15
 	realsense_stride = 1
-	oakd_stride = 2
+	oakd_stride = 1
 	realsense_depth_filters_enabled = true
 	realsense_filters_for_geometry = true
 	oakd_depth_source = "fast_foundation"
 	oakd_color_enabled = false
 	oakd_color_mode = "rgb_projected_stable"
+	oakd_render_depth_bias_m = 0.004
 	oakd_fast_backend = "onnx_cuda"
 	oakd_fast_profile = "rt_256x512_i2"
-	oakd_fast_iters = 2
+	oakd_fast_iters = 4
 	oakd_fast_scale = 0.5
 	_send_all_stream_commands()
 	_update_camera_renderers()
@@ -384,14 +390,22 @@ func _camera_anchor_name(camera_id: String) -> String:
 	return "%sCloudAnchor" % _camera_label(camera_id).replace("-", "").replace(" ", "")
 
 func _camera_transform(camera_id: String) -> Transform3D:
-	return _alignment_transforms.get(camera_id, Transform3D.IDENTITY)
+	var camera_transform: Transform3D = _alignment_transforms.get(camera_id, Transform3D.IDENTITY)
+	if camera_id == CAMERA_OAKD and absf(oakd_render_depth_bias_m) > 0.000001:
+		camera_transform = camera_transform * Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, oakd_render_depth_bias_m))
+	return camera_transform
 
 func _mesh_enabled() -> bool:
+	return render_mode == "gpu_mesh" or render_mode == "cpu_mesh"
+
+func _gpu_mesh_enabled() -> bool:
 	return render_mode == "gpu_mesh"
 
 func _tracker_mesh_mode() -> String:
 	if render_mode == "gpu_mesh":
 		return "stereo_gpu"
+	if render_mode == "cpu_mesh":
+		return "stereo_cpu"
 	return "gpu_points"
 
 func _effective_oakd_color_mode() -> String:
@@ -572,7 +586,7 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 	node.call("set_max_depth", max_depth_m)
 	node.call("set_render_connected_mesh", _mesh_enabled())
 	if node.has_method("set_gpu_connected_mesh"):
-		node.call("set_gpu_connected_mesh", _mesh_enabled())
+		node.call("set_gpu_connected_mesh", _gpu_mesh_enabled())
 	if node.has_method("set_cpu_project_points"):
 		node.call("set_cpu_project_points", false)
 	if node.has_method("set_color_enabled"):
@@ -591,7 +605,7 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 	node.call("set_mesh_max_depth_delta", mesh_max_depth_delta_m)
 	if node.has_method("set_mesh_min_triangle_area"):
 		node.call("set_mesh_min_triangle_area", mesh_min_triangle_area_m2)
-	node.call("set_texture_map_mesh", texture_map_mesh and _mesh_enabled())
+	node.call("set_texture_map_mesh", texture_map_mesh)
 
 func _request_big_aruco_alignment() -> void:
 	if _alignment_result_path.is_empty():
@@ -712,7 +726,7 @@ func _ensure_debug_panel() -> void:
 	var anchor := _debug_panel_anchor(true)
 	_debug_viewport = SubViewport.new()
 	_debug_viewport.name = "UnifiedPointCloudDebugViewport"
-	_debug_viewport.size = Vector2i(660, 190)
+	_debug_viewport.size = Vector2i(860, 190)
 	_debug_viewport.transparent_bg = true
 	_debug_viewport.disable_3d = true
 	_debug_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -760,26 +774,31 @@ func _rebuild_debug_table() -> void:
 	vbox.add_child(title)
 
 	var grid := GridContainer.new()
-	grid.columns = 5
-	grid.add_theme_constant_override("h_separation", 8)
+	grid.columns = 10
+	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 5)
 	vbox.add_child(grid)
-	for header in ["Camera", "Capture", "Publish", "Display", "Points"]:
+	for header in ["Camera", "Cap", "Pub", "Disp", "Dev", "Host", "Work", "Frame", "Held", "Pts/Tri"]:
 		grid.add_child(_debug_cell(header, "", true))
 	for camera_id in CAMERA_IDS:
 		grid.add_child(_debug_cell(_camera_label(camera_id), "", false, true))
-		for metric in ["cap", "pub", "render", "points"]:
+		for metric in ["cap", "pub", "render", "device_age", "host_age", "work", "frame", "held", "points_tris"]:
 			grid.add_child(_debug_cell("--", "%s_%s" % [camera_id, metric]))
 	grid.add_child(_debug_cell("Total", "", false, true))
 	grid.add_child(_debug_cell("", "total_cap"))
 	grid.add_child(_debug_cell("", "total_pub"))
 	grid.add_child(_debug_cell("", "total_render"))
-	grid.add_child(_debug_cell("--", "total_points"))
+	grid.add_child(_debug_cell("--", "total_device_age"))
+	grid.add_child(_debug_cell("--", "total_host_age"))
+	grid.add_child(_debug_cell("--", "total_work"))
+	grid.add_child(_debug_cell("--", "total_frame"))
+	grid.add_child(_debug_cell("--", "total_held"))
+	grid.add_child(_debug_cell("--", "total_points_tris"))
 
 func _debug_cell(text: String, key: String = "", header: bool = false, row_label: bool = false) -> Label:
 	var label := Label.new()
 	label.text = text
-	label.custom_minimum_size = Vector2(116, 28)
+	label.custom_minimum_size = Vector2(74 if not row_label else 118, 28)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", debug_font_size if not header else debug_font_size - 1)
@@ -804,24 +823,48 @@ func _update_debug_panel(force: bool) -> void:
 	_last_debug_update_msec = now_msec
 	var total_points := 0
 	var total_render_points := 0
+	var total_tris := 0
 	var cap_values := []
 	var pub_values := []
 	var render_values := []
+	var device_age_values := []
+	var host_age_values := []
+	var work_values := []
+	var frame_age_values := []
+	var held_age_values := []
 	for camera_id in CAMERA_IDS:
 		var values := _camera_debug_values(camera_id)
 		_set_debug_cell("%s_cap" % camera_id, _format_fps(float(values["cap"])))
 		_set_debug_cell("%s_pub" % camera_id, _format_fps(float(values["pub"])))
 		_set_debug_cell("%s_render" % camera_id, _format_fps(float(values["render"])))
-		_set_debug_cell("%s_points" % camera_id, "%s / %s" % [_format_points(int(values["points"])), _format_points(int(values["render_points"]))])
+		_set_debug_cell("%s_device_age" % camera_id, _format_device_age(values))
+		_set_debug_cell("%s_host_age" % camera_id, _format_host_age(values))
+		_set_debug_cell("%s_work" % camera_id, _format_work_age(values))
+		_set_debug_cell("%s_frame" % camera_id, _format_ms(float(values["frame_age"])))
+		_set_debug_cell("%s_held" % camera_id, _format_ms(float(values["held_age"])))
+		_set_debug_cell("%s_points_tris" % camera_id, "%s/%s" % [_format_points(int(values["render_points"])), _format_points(int(values["render_tris"]))])
 		total_points += int(values["points"])
 		total_render_points += int(values["render_points"])
+		total_tris += int(values["render_tris"])
 		cap_values.append(float(values["cap"]))
 		pub_values.append(float(values["pub"]))
 		render_values.append(float(values["render"]))
+		device_age_values.append(float(values["sensor_age"]))
+		device_age_values.append(float(values["color_age"]))
+		host_age_values.append(float(values["sensor_host_age"]))
+		host_age_values.append(float(values["color_host_age"]))
+		work_values.append(float(values["work_age"]))
+		frame_age_values.append(float(values["frame_age"]))
+		held_age_values.append(float(values["held_age"]))
 	_set_debug_cell("total_cap", _format_fps(_average_nonzero(cap_values)))
 	_set_debug_cell("total_pub", _format_fps(_average_nonzero(pub_values)))
 	_set_debug_cell("total_render", _format_fps(_average_nonzero(render_values)))
-	_set_debug_cell("total_points", "%s / %s" % [_format_points(total_points), _format_points(total_render_points)])
+	_set_debug_cell("total_device_age", _format_ms(_max_nonzero(device_age_values)))
+	_set_debug_cell("total_host_age", _format_ms(_max_nonzero(host_age_values)))
+	_set_debug_cell("total_work", _format_ms(_max_nonzero(work_values)))
+	_set_debug_cell("total_frame", _format_ms(_max_nonzero(frame_age_values)))
+	_set_debug_cell("total_held", _format_ms(_max_nonzero(held_age_values)))
+	_set_debug_cell("total_points_tris", "%s/%s" % [_format_points(total_render_points), _format_points(total_tris)])
 	debug_text = "RealSense cap/pub/render %.1f/%.1f/%.1f, OAK-D cap/pub/render %.1f/%.1f/%.1f" % [
 		float(_camera_debug_values(CAMERA_REALSENSE)["cap"]),
 		float(_camera_debug_values(CAMERA_REALSENSE)["pub"]),
@@ -833,12 +876,26 @@ func _update_debug_panel(force: bool) -> void:
 
 func _camera_debug_values(camera_id: String) -> Dictionary:
 	var stats: Dictionary = _point_cloud_stats.get(_camera_stats_key(camera_id), {})
+	var fast_timing: Dictionary = stats.get("fast_timing_ms", {})
+	var work_age := 0.0
+	var model_age := float(fast_timing.get("model", 0.0))
+	for key in fast_timing.keys():
+		work_age += float(fast_timing.get(key, 0.0))
 	return {
 		"cap": float(stats.get("capture_fps", 0.0)),
 		"pub": float(stats.get("publish_fps", 0.0)),
 		"render": _native_stat(camera_id, "get_render_fps"),
 		"points": int(stats.get("points", 0)),
 		"render_points": int(_native_stat(camera_id, "get_last_point_count")),
+		"render_tris": int(_native_stat(camera_id, "get_last_triangle_count")),
+		"held_age": float(_native_stat(camera_id, "get_display_frame_age_ms")),
+		"sensor_age": float(stats.get("sensor_age_ms", 0.0)),
+		"color_age": float(stats.get("color_age_ms", 0.0)),
+		"sensor_host_age": float(stats.get("sensor_host_age_ms", 0.0)),
+		"color_host_age": float(stats.get("color_host_age_ms", 0.0)),
+		"work_age": work_age,
+		"model_age": model_age,
+		"frame_age": float(stats.get("frame_age_ms", 0.0)),
 	}
 
 func _set_debug_cell(key: String, text: String) -> void:
@@ -856,6 +913,30 @@ func _format_points(value: int) -> String:
 		return "%.0fk" % (float(value) / 1000.0)
 	return str(value)
 
+func _format_ms(value: float) -> String:
+	return "--" if value <= 0.01 else "%.0f" % value
+
+func _format_device_age(values: Dictionary) -> String:
+	var sensor := float(values.get("sensor_age", 0.0))
+	var color := float(values.get("color_age", 0.0))
+	if sensor > 0.01 or color > 0.01:
+		return "S%s C%s" % [_format_ms(sensor), _format_ms(color)]
+	return "--"
+
+func _format_host_age(values: Dictionary) -> String:
+	var sensor := float(values.get("sensor_host_age", 0.0))
+	var color := float(values.get("color_host_age", 0.0))
+	if sensor > 0.01 or color > 0.01:
+		return "S%s C%s" % [_format_ms(sensor), _format_ms(color)]
+	return "--"
+
+func _format_work_age(values: Dictionary) -> String:
+	var model := float(values.get("model_age", 0.0))
+	var total := float(values.get("work_age", 0.0))
+	if model > 0.01 or total > 0.01:
+		return "M%s T%s" % [_format_ms(model), _format_ms(total)]
+	return "--"
+
 func _average_nonzero(values: Array) -> float:
 	var total := 0.0
 	var count := 0
@@ -865,3 +946,9 @@ func _average_nonzero(values: Array) -> float:
 			total += f
 			count += 1
 	return total / max(1, count)
+
+func _max_nonzero(values: Array) -> float:
+	var result := 0.0
+	for value in values:
+		result = maxf(result, float(value))
+	return result

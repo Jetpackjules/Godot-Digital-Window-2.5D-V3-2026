@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 using namespace godot;
 
@@ -86,6 +87,7 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_secondary_transform"), &RealSenseSharedMemoryPointCloud::get_secondary_transform);
     ClassDB::bind_method(D_METHOD("is_connected"), &RealSenseSharedMemoryPointCloud::is_connected);
     ClassDB::bind_method(D_METHOD("get_render_fps"), &RealSenseSharedMemoryPointCloud::get_render_fps);
+    ClassDB::bind_method(D_METHOD("get_display_frame_age_ms"), &RealSenseSharedMemoryPointCloud::get_display_frame_age_ms);
     ClassDB::bind_method(D_METHOD("get_last_triangle_count"), &RealSenseSharedMemoryPointCloud::get_last_triangle_count);
     ClassDB::bind_method(D_METHOD("get_last_point_count"), &RealSenseSharedMemoryPointCloud::get_last_point_count);
 
@@ -140,6 +142,7 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
     if (!reader->poll()) {
         return;
     }
+    last_display_frame_seconds = now_seconds();
 
     int width = reader->get_width();
     int height = reader->get_height();
@@ -148,7 +151,7 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
         return;
     }
     const bool cpu_built_surface = cpu_project_points || (render_connected_mesh && !gpu_connected_mesh);
-    if (!cpu_built_surface && (width != grid_width || height != grid_height || stride != grid_stride || get_mesh().is_null())) {
+    if (!cpu_built_surface && !gpu_connected_mesh && (width != grid_width || height != grid_height || stride != grid_stride || get_mesh().is_null())) {
         rebuild_mesh(width, height, stride);
     }
 
@@ -211,8 +214,8 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
     set_material_override(Ref<Material>());
     update_material_params();
     if (render_connected_mesh && gpu_connected_mesh) {
+        last_triangle_count = rebuild_gpu_connected_mesh(primary_frame.depth_image);
         last_point_count = width * height;
-        last_triangle_count = (width - 1) * (height - 1) * 2;
     } else {
         last_point_count = width * height;
         last_triangle_count = 0;
@@ -522,22 +525,74 @@ bool RealSenseSharedMemoryPointCloud::is_connected() const { return reader.is_va
 
 double RealSenseSharedMemoryPointCloud::get_render_fps() const { return render_fps; }
 
+double RealSenseSharedMemoryPointCloud::get_display_frame_age_ms() const {
+    if (last_display_frame_seconds <= 0.0) {
+        return 0.0;
+    }
+    return std::max(0.0, (now_seconds() - last_display_frame_seconds) * 1000.0);
+}
+
 int RealSenseSharedMemoryPointCloud::get_last_triangle_count() const { return last_triangle_count; }
 
 int RealSenseSharedMemoryPointCloud::get_last_point_count() const { return last_point_count; }
 
 void RealSenseSharedMemoryPointCloud::ensure_material() {
-    if (material.is_valid()) {
+    const bool want_gpu_mesh = render_connected_mesh && gpu_connected_mesh;
+    if (material.is_valid() && material_gpu_mesh_mode == want_gpu_mesh && material_texture_map_mode == texture_map_mesh) {
         return;
     }
     Ref<Shader> shader;
     shader.instantiate();
-    shader->set_code(R"(
+    const String color_sampler = texture_map_mesh
+        ? String("uniform sampler2D color_tex : source_color, filter_nearest;")
+        : String("uniform sampler2D color_tex : filter_nearest;");
+    String shader_code;
+    if (want_gpu_mesh) {
+        shader_code = R"(
 shader_type spatial;
-render_mode unshaded, cull_disabled, blend_mix;
+render_mode unshaded, cull_disabled, depth_draw_opaque;
 
 uniform sampler2D depth_tex : filter_nearest;
-uniform sampler2D color_tex : filter_nearest;
+__COLOR_TEX_UNIFORM__
+uniform vec4 intrinsics = vec4(600.0, 600.0, 320.0, 240.0);
+uniform vec2 depth_range = vec2(0.2, 4.5);
+uniform bool color_enabled = true;
+
+varying vec2 point_uv;
+varying float point_valid;
+
+void vertex() {
+    point_uv = UV;
+    float depth_m = texture(depth_tex, UV).r;
+    point_valid = step(depth_range.x, depth_m) * step(depth_m, depth_range.y);
+    vec2 pixel = VERTEX.xy;
+    VERTEX = vec3(
+        (pixel.x - intrinsics.z) * depth_m / max(0.000001, intrinsics.x),
+        -(pixel.y - intrinsics.w) * depth_m / max(0.000001, intrinsics.y),
+        -depth_m
+    );
+}
+
+void fragment() {
+    if (point_valid < 0.5) {
+        discard;
+    }
+    float d = texture(depth_tex, point_uv).r;
+    if (d < depth_range.x || d > depth_range.y) {
+        discard;
+    }
+    vec4 color = texture(color_tex, point_uv);
+    float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+    ALBEDO = color_enabled ? color.rgb : vec3(gray);
+}
+)";
+    } else {
+        shader_code = R"(
+shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_opaque;
+
+uniform sampler2D depth_tex : filter_nearest;
+__COLOR_TEX_UNIFORM__
 uniform vec4 intrinsics = vec4(600.0, 600.0, 320.0, 240.0);
 uniform vec2 depth_range = vec2(0.2, 4.5);
 uniform float point_pixel_size = 2.0;
@@ -578,7 +633,10 @@ void fragment() {
     if (!gpu_connected_mesh && circular_point_splats && distance(POINT_COORD, vec2(0.5)) > 0.5) {
         discard;
     }
-    float d = point_depth_m;
+    float d = texture(depth_tex, point_uv).r;
+    if (d < depth_range.x || d > depth_range.y) {
+        discard;
+    }
     float dl = texture(depth_tex, point_uv + vec2(-texel_size.x, 0.0)).r;
     float dr = texture(depth_tex, point_uv + vec2(texel_size.x, 0.0)).r;
     float du = texture(depth_tex, point_uv + vec2(0.0, -texel_size.y)).r;
@@ -591,7 +649,7 @@ void fragment() {
     if (point_cleanup_enabled && close_neighbors < point_cleanup_min_neighbors) {
         discard;
     }
-    float alpha = 1.0;
+    float edge_shade = 1.0;
     if (gpu_connected_mesh) {
         float max_jump = max(max(abs(d - dl), abs(d - dr)), max(abs(d - du), abs(d - dd)));
         if (d < depth_range.x || d > depth_range.y || (max_jump > max_depth_delta && close_neighbors < 2.0)) {
@@ -599,16 +657,20 @@ void fragment() {
         }
         if (edge_feather_enabled) {
             float feather = 1.0 - smoothstep(max_depth_delta - edge_feather_width, max_depth_delta, max_jump);
-            alpha = mix(edge_feather_min_alpha, 1.0, feather);
+            edge_shade = mix(edge_feather_min_alpha, 1.0, feather);
         }
     }
     vec4 color = texture(color_tex, point_uv);
     float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-    ALBEDO = color_enabled ? color.rgb : vec3(gray);
-    ALPHA = alpha;
+    ALBEDO = (color_enabled ? color.rgb : vec3(gray)) * edge_shade;
 }
-)");
+)";
+    }
+    shader_code = shader_code.replace("__COLOR_TEX_UNIFORM__", color_sampler);
+    shader->set_code(shader_code);
     material.instantiate();
+    material_gpu_mesh_mode = want_gpu_mesh;
+    material_texture_map_mode = texture_map_mesh;
     material->set_shader(shader);
     set_material_override(material);
 }
@@ -631,7 +693,7 @@ void RealSenseSharedMemoryPointCloud::ensure_cpu_point_material() {
     shader.instantiate();
     shader->set_code(R"(
 shader_type spatial;
-render_mode unshaded, cull_disabled, blend_mix;
+render_mode unshaded, cull_disabled, depth_draw_opaque;
 
 uniform float point_pixel_size = 2.0;
 uniform bool circular_point_splats = false;
@@ -651,7 +713,6 @@ void fragment() {
     }
     float gray = dot(point_color.rgb, vec3(0.299, 0.587, 0.114));
     ALBEDO = color_enabled ? point_color.rgb : vec3(gray);
-    ALPHA = point_color.a;
 }
 )");
     cpu_point_material.instantiate();
@@ -676,7 +737,71 @@ void RealSenseSharedMemoryPointCloud::rebuild_mesh(int p_width, int p_height, in
 
     PackedVector3Array vertices;
     PackedVector2Array uvs;
+    PackedVector2Array uv2s;
+    PackedColorArray colors;
     PackedInt32Array indices;
+    if (render_connected_mesh && gpu_connected_mesh) {
+        const int cell_count = (p_width - 1) * (p_height - 1);
+        const int vertex_count = cell_count * 6;
+        vertices.resize(vertex_count);
+        uvs.resize(vertex_count);
+        uv2s.resize(vertex_count);
+        colors.resize(vertex_count);
+
+        auto pixel_for = [p_width, p_stride](int p_index) -> Vector3 {
+            const int y = p_index / p_width;
+            const int x = p_index - y * p_width;
+            return Vector3(float(x * p_stride), float(y * p_stride), 0.0f);
+        };
+        auto uv_for = [p_width, p_height](int p_index) -> Vector2 {
+            const int y = p_index / p_width;
+            const int x = p_index - y * p_width;
+            return Vector2((float(x) + 0.5f) / float(p_width), (float(y) + 0.5f) / float(p_height));
+        };
+        int write_index = 0;
+        auto add_tri = [&](int p_a, int p_b, int p_c) {
+            const Vector2 uv_a = uv_for(p_a);
+            const Vector2 uv_b = uv_for(p_b);
+            const Vector2 uv_c = uv_for(p_c);
+            const Color tri_data(uv_b.x, uv_b.y, uv_c.x, uv_c.y);
+            const int tri_indices[3] = {p_a, p_b, p_c};
+            for (int i = 0; i < 3; ++i) {
+                const int src_index = tri_indices[i];
+                vertices.set(write_index, pixel_for(src_index));
+                uvs.set(write_index, uv_for(src_index));
+                uv2s.set(write_index, uv_a);
+                colors.set(write_index, tri_data);
+                write_index++;
+            }
+        };
+        for (int y = 0; y < p_height - 1; y++) {
+            for (int x = 0; x < p_width - 1; x++) {
+                const int a = y * p_width + x;
+                const int b = a + 1;
+                const int c = a + p_width;
+                const int d = c + 1;
+                add_tri(a, c, b);
+                add_tri(b, c, d);
+            }
+        }
+
+        Array arrays;
+        arrays.resize(Mesh::ARRAY_MAX);
+        arrays[Mesh::ARRAY_VERTEX] = vertices;
+        arrays[Mesh::ARRAY_TEX_UV] = uvs;
+        arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
+        arrays[Mesh::ARRAY_COLOR] = colors;
+        Ref<ArrayMesh> mesh;
+        mesh.instantiate();
+        mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+        ensure_material();
+        mesh->surface_set_material(0, material);
+        set_mesh(mesh);
+        set_material_override(Ref<Material>());
+        set_custom_aabb(AABB(Vector3(-100.0, -100.0, -100.0), Vector3(200.0, 200.0, 200.0)));
+        return;
+    }
+
     int count = p_width * p_height;
     vertices.resize(count);
     uvs.resize(count);
@@ -893,7 +1018,7 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image>
     Array arrays;
     arrays.resize(Mesh::ARRAY_MAX);
     arrays[Mesh::ARRAY_VERTEX] = vertices;
-    if (texture_map_mesh) {
+    if (texture_map_mesh && color_enabled) {
         arrays[Mesh::ARRAY_TEX_UV] = uvs;
     } else {
         arrays[Mesh::ARRAY_COLOR] = colors;
@@ -902,7 +1027,7 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image>
     Ref<ArrayMesh> mesh;
     mesh.instantiate();
     mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-    if (texture_map_mesh) {
+    if (texture_map_mesh && color_enabled) {
         if (color_texture.is_null()) {
             color_texture = ImageTexture::create_from_image(p_color_image);
         } else {
@@ -918,6 +1043,133 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image>
     set_material_override(Ref<Material>());
     set_custom_aabb(AABB(Vector3(-100.0, -100.0, -100.0), Vector3(200.0, 200.0, 200.0)));
     last_point_count = kept_count;
+    return write_index / 3;
+}
+
+int RealSenseSharedMemoryPointCloud::rebuild_gpu_connected_mesh(const Ref<Image> &p_depth_image) {
+    if (reader.is_null() || p_depth_image.is_null()) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+    const int width = reader->get_width();
+    const int height = reader->get_height();
+    const int stride = reader->get_stride();
+    if (width <= 1 || height <= 1) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+
+    PackedByteArray depth_data = p_depth_image->get_data();
+    const int cell_count = width * height;
+    if (depth_data.size() < cell_count * 4) {
+        set_mesh(Ref<Mesh>());
+        return 0;
+    }
+
+    Vector4 intrinsics = reader->get_intrinsics();
+    const double fx = MAX(0.000001, double(intrinsics.x));
+    const double fy = MAX(0.000001, double(intrinsics.y));
+    const double ppx = intrinsics.z;
+    const double ppy = intrinsics.w;
+    const double max_edge_sq = mesh_max_edge * mesh_max_edge;
+
+    if (
+        gpu_mesh_cache_width != width
+        || gpu_mesh_cache_height != height
+        || gpu_mesh_cache_stride != stride
+        || gpu_mesh_vertices.size() != cell_count
+        || gpu_mesh_uvs.size() != cell_count
+    ) {
+        gpu_mesh_vertices.resize(cell_count);
+        gpu_mesh_uvs.resize(cell_count);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const int index = y * width + x;
+                gpu_mesh_vertices.set(index, Vector3(float(x * stride), float(y * stride), 0.0f));
+                gpu_mesh_uvs.set(index, Vector2((float(x) + 0.5f) / float(width), (float(y) + 0.5f) / float(height)));
+            }
+        }
+        gpu_mesh_cache_width = width;
+        gpu_mesh_cache_height = height;
+        gpu_mesh_cache_stride = stride;
+    }
+
+    auto valid_depth = [&](float p_depth) -> bool {
+        return std::isfinite(p_depth) && double(p_depth) >= min_depth && double(p_depth) <= max_depth;
+    };
+    auto projected = [&](int p_x, int p_y, float p_depth) -> Vector3 {
+        const double px = double(p_x * stride);
+        const double py = double(p_y * stride);
+        return Vector3(
+            float((px - ppx) * double(p_depth) / fx),
+            float(-(py - ppy) * double(p_depth) / fy),
+            -p_depth
+        );
+    };
+    auto edge_ok = [max_edge_sq](const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c) -> bool {
+        return p_a.distance_squared_to(p_b) <= max_edge_sq
+            && p_b.distance_squared_to(p_c) <= max_edge_sq
+            && p_c.distance_squared_to(p_a) <= max_edge_sq;
+    };
+
+    PackedInt32Array indices;
+    indices.resize((width - 1) * (height - 1) * 6);
+    int write_index = 0;
+    for (int y = 0; y < height - 1; ++y) {
+        for (int x = 0; x < width - 1; ++x) {
+            const int ia = y * width + x;
+            const int ib = ia + 1;
+            const int ic = ia + width;
+            const int id = ic + 1;
+            const float da = depth_data.decode_float(ia * 4);
+            const float db = depth_data.decode_float(ib * 4);
+            const float dc = depth_data.decode_float(ic * 4);
+            const float dd = depth_data.decode_float(id * 4);
+            const bool first_depth_ok = valid_depth(da) && valid_depth(dc) && valid_depth(db)
+                && Math::abs(double(da - dc)) <= mesh_max_depth_delta
+                && Math::abs(double(dc - db)) <= mesh_max_depth_delta
+                && Math::abs(double(db - da)) <= mesh_max_depth_delta;
+            if (first_depth_ok) {
+                const Vector3 pa = projected(x, y, da);
+                const Vector3 pc = projected(x, y + 1, dc);
+                const Vector3 pb = projected(x + 1, y, db);
+                if (edge_ok(pa, pc, pb)) {
+                    indices.set(write_index++, ia);
+                    indices.set(write_index++, ic);
+                    indices.set(write_index++, ib);
+                }
+            }
+            const bool second_depth_ok = valid_depth(db) && valid_depth(dc) && valid_depth(dd)
+                && Math::abs(double(db - dc)) <= mesh_max_depth_delta
+                && Math::abs(double(dc - dd)) <= mesh_max_depth_delta
+                && Math::abs(double(dd - db)) <= mesh_max_depth_delta;
+            if (second_depth_ok) {
+                const Vector3 pb = projected(x + 1, y, db);
+                const Vector3 pc = projected(x, y + 1, dc);
+                const Vector3 pd = projected(x + 1, y + 1, dd);
+                if (edge_ok(pb, pc, pd)) {
+                    indices.set(write_index++, ib);
+                    indices.set(write_index++, ic);
+                    indices.set(write_index++, id);
+                }
+            }
+        }
+    }
+    indices.resize(write_index);
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = gpu_mesh_vertices;
+    arrays[Mesh::ARRAY_TEX_UV] = gpu_mesh_uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+    Ref<ArrayMesh> mesh;
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    ensure_material();
+    mesh->surface_set_material(0, material);
+    set_mesh(mesh);
+    set_material_override(Ref<Material>());
+    set_custom_aabb(AABB(Vector3(-100.0, -100.0, -100.0), Vector3(200.0, 200.0, 200.0)));
     return write_index / 3;
 }
 
@@ -1243,6 +1495,7 @@ void RealSenseSharedMemoryPointCloud::update_material_params() {
     material->set_shader_parameter("point_cleanup_min_neighbors", float(point_cleanup_min_neighbors));
     material->set_shader_parameter("texel_size", Vector2(grid_width > 0 ? 1.0f / float(grid_width) : 1.0f, grid_height > 0 ? 1.0f / float(grid_height) : 1.0f));
     material->set_shader_parameter("max_depth_delta", float(mesh_max_depth_delta));
+    material->set_shader_parameter("max_mesh_edge", float(mesh_max_edge));
     material->set_shader_parameter("gpu_connected_mesh", gpu_connected_mesh && render_connected_mesh);
     material->set_shader_parameter("edge_feather_enabled", edge_feather_enabled);
     material->set_shader_parameter("edge_feather_width", float(edge_feather_width));
