@@ -4405,7 +4405,13 @@ def main():
 
     def point_cloud_effective_send_interval(camera_name):
         if camera_name == "oakd":
-            interval = float(OAKD_POINT_CLOUD_SEND_INTERVAL_SEC)
+            requested_fps = 0.0
+            try:
+                override = str(os.environ.get("OAKD_POINT_CLOUD_FPS", "")).strip()
+                requested_fps = float(override) if override else float(oakd_point_cloud_settings.get("fps", OAKD_FPS))
+            except Exception:
+                requested_fps = float(OAKD_FPS)
+            interval = 1.0 / max(1.0, min(240.0, requested_fps))
         else:
             interval = float(REALSENSE_POINT_CLOUD_SEND_INTERVAL_SEC)
         if not (
@@ -4415,7 +4421,7 @@ def main():
         ):
             return interval
 
-        interval = max(interval, float(REALSENSE_POINT_CLOUD_SEND_INTERVAL_SEC), float(OAKD_POINT_CLOUD_SEND_INTERVAL_SEC))
+        interval = max(interval, float(REALSENSE_POINT_CLOUD_SEND_INTERVAL_SEC))
         now = time.time()
         for stats_name in ("realsense", "oakd"):
             stats = point_cloud_stats.get(stats_name, {})
