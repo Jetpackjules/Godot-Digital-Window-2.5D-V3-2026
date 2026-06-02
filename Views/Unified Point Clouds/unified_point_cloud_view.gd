@@ -56,10 +56,10 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		sync_fps_to_slowest = value
 		_send_all_stream_commands()
-## points = native projected points, point_splats = larger round points, gpu_mesh = shader-connected mesh, cpu_mesh = CPU-built connected mesh fallback. Performance impact: points low, splats moderate, gpu_mesh moderate to high, cpu_mesh high.
-@export_enum("points", "point_splats", "gpu_mesh", "cpu_mesh") var render_mode: String = "point_splats":
+## points = native projected points, point_splats = larger round points, gpu_mesh = current sparse-index mesh, shader_mesh = static full-grid shader rejected mesh, cpu_mesh = CPU-built connected mesh fallback.
+@export_enum("points", "point_splats", "gpu_mesh", "shader_mesh", "cpu_mesh") var render_mode: String = "point_splats":
 	set(value):
-		if value not in ["points", "point_splats", "gpu_mesh", "cpu_mesh"]:
+		if value not in ["points", "point_splats", "gpu_mesh", "shader_mesh", "cpu_mesh"]:
 			value = "point_splats"
 		render_mode = value
 		_send_all_stream_commands()
@@ -89,7 +89,6 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		texture_map_mesh = value
 		_update_camera_renderers()
-
 @export_subgroup("Cleanup")
 ## Shader-side cleanup for isolated depth pixels. Performance impact: low to moderate; effect is strongest on lone speckles, subtle on dense noisy surfaces.
 @export var cleanup_enabled: bool = false:
@@ -140,12 +139,12 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		realsense_color_enabled = value
 		_update_camera_renderers()
 ## Intel RealSense SDK post filters. Performance impact: high on this stack; often cuts publish FPS hard while looking subtle in the final cloud.
-@export var realsense_depth_filters_enabled: bool = true:
+@export var realsense_depth_filters_enabled: bool = false:
 	set(value):
 		realsense_depth_filters_enabled = value
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 ## Uses filtered depth for geometry, not only preview. Performance impact: high when combined with SDK filters; can stabilize depth but costs FPS.
-@export var realsense_filters_for_geometry: bool = true:
+@export var realsense_filters_for_geometry: bool = false:
 	set(value):
 		realsense_filters_for_geometry = value
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
@@ -158,6 +157,21 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 @export_range(0, 2, 1) var realsense_hole_filling: int = 1:
 	set(value):
 		realsense_hole_filling = value
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## Freezes tiny RealSense depth changes in the published grid. Performance impact: low; reduces floor shimmer without SDK filter cost.
+@export var realsense_stabilization_enabled: bool = true:
+	set(value):
+		realsense_stabilization_enabled = value
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## RealSense depth changes smaller than this are treated as noise. Higher is steadier; lower follows motion more eagerly.
+@export_range(0.0, 0.06, 0.001, "suffix:m") var realsense_stabilization_deadband_m: float = 0.012:
+	set(value):
+		realsense_stabilization_deadband_m = maxf(0.0, value)
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## Holds briefly-missing RealSense grid cells for this many published frames. 0 disables hole hold.
+@export_range(0, 4, 1) var realsense_stabilization_hold_frames: int = 1:
+	set(value):
+		realsense_stabilization_hold_frames = maxi(0, value)
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 
 @export_group("OAK-D Camera")
@@ -212,6 +226,26 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		oakd_render_depth_bias_m = value
 		_update_camera_renderers()
+## Drops OAK-D geometry near local depth jumps before publishing the point cloud. Cleans fringe/flying pixels across points, splats, and meshes. Set 0 to disable.
+@export_range(0.0, 0.30, 0.005, "suffix:m") var oakd_geometry_edge_guard_m: float = 0.06:
+	set(value):
+		oakd_geometry_edge_guard_m = maxf(0.0, value)
+		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
+## Freezes tiny OAK-D depth changes in the published grid. Performance impact: low; reduces floor shimmer without changing depth source quality.
+@export var oakd_stabilization_enabled: bool = true:
+	set(value):
+		oakd_stabilization_enabled = value
+		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
+## OAK-D depth changes smaller than this are treated as noise. FastFoundation usually benefits from a slightly larger value than RealSense.
+@export_range(0.0, 0.08, 0.001, "suffix:m") var oakd_stabilization_deadband_m: float = 0.018:
+	set(value):
+		oakd_stabilization_deadband_m = maxf(0.0, value)
+		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
+## Holds briefly-missing OAK-D grid cells for this many published frames. 0 disables hole hold.
+@export_range(0, 4, 1) var oakd_stabilization_hold_frames: int = 1:
+	set(value):
+		oakd_stabilization_hold_frames = maxi(0, value)
+		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
 ## FastFoundation backend. onnx_cuda avoids TensorRT ScatterND console errors; onnx_trt may be faster but can spam parser warnings. Performance impact: high.
 @export_enum("onnx_cuda", "onnx_trt", "pytorch", "trt_engine") var oakd_fast_backend: String = "onnx_cuda":
 	set(value):
@@ -328,12 +362,19 @@ func _apply_clean_defaults() -> void:
 	mesh_max_edge_m = 0.15
 	realsense_stride = 1
 	oakd_stride = 1
-	realsense_depth_filters_enabled = true
-	realsense_filters_for_geometry = true
+	realsense_depth_filters_enabled = false
+	realsense_filters_for_geometry = false
+	realsense_stabilization_enabled = true
+	realsense_stabilization_deadband_m = 0.012
+	realsense_stabilization_hold_frames = 1
 	oakd_depth_source = "fast_foundation"
 	oakd_color_enabled = false
 	oakd_color_mode = "rgb_projected_stable"
 	oakd_render_depth_bias_m = 0.004
+	oakd_geometry_edge_guard_m = 0.06
+	oakd_stabilization_enabled = true
+	oakd_stabilization_deadband_m = 0.018
+	oakd_stabilization_hold_frames = 1
 	oakd_fast_backend = "onnx_cuda"
 	oakd_fast_profile = "rt_256x512_i2"
 	oakd_fast_iters = 4
@@ -396,13 +437,19 @@ func _camera_transform(camera_id: String) -> Transform3D:
 	return camera_transform
 
 func _mesh_enabled() -> bool:
-	return render_mode == "gpu_mesh" or render_mode == "cpu_mesh"
+	return render_mode == "gpu_mesh" or render_mode == "shader_mesh" or render_mode == "cpu_mesh"
 
 func _gpu_mesh_enabled() -> bool:
-	return render_mode == "gpu_mesh"
+	return render_mode == "gpu_mesh" or render_mode == "shader_mesh"
+
+func _gpu_mesh_compute_enabled() -> bool:
+	return false
+
+func _gpu_mesh_static_shader_enabled() -> bool:
+	return render_mode == "shader_mesh"
 
 func _tracker_mesh_mode() -> String:
-	if render_mode == "gpu_mesh":
+	if render_mode == "gpu_mesh" or render_mode == "shader_mesh":
 		return "stereo_gpu"
 	if render_mode == "cpu_mesh":
 		return "stereo_cpu"
@@ -456,6 +503,9 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 			"rs_filter_geometry_edge_guard_m": realsense_geometry_edge_guard_m,
 			"rs_disparity_filters_enabled": true,
 			"rs_hole_filling": realsense_hole_filling,
+			"rs_stabilization_enabled": realsense_stabilization_enabled,
+			"rs_stabilization_deadband_m": realsense_stabilization_deadband_m,
+			"rs_stabilization_hold_frames": realsense_stabilization_hold_frames,
 		}, true)
 	elif camera_id == CAMERA_OAKD:
 		payload.merge({
@@ -476,6 +526,10 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 			"oakd_depth_source": oakd_depth_source,
 			"oakd_use_rgb_color_for_host_depth": oakd_color_enabled,
 			"oakd_host_depth_color_mode": _effective_oakd_color_mode(),
+			"oakd_geometry_edge_guard_m": oakd_geometry_edge_guard_m,
+			"oakd_stabilization_enabled": oakd_stabilization_enabled,
+			"oakd_stabilization_deadband_m": oakd_stabilization_deadband_m,
+			"oakd_stabilization_hold_frames": oakd_stabilization_hold_frames,
 			"oakd_fast_stereo_enabled": oakd_depth_source == "fast_foundation",
 			"oakd_fast_stereo_backend": oakd_fast_backend,
 			"oakd_fast_stereo_model_profile": oakd_fast_profile,
@@ -606,6 +660,10 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 	if node.has_method("set_mesh_min_triangle_area"):
 		node.call("set_mesh_min_triangle_area", mesh_min_triangle_area_m2)
 	node.call("set_texture_map_mesh", texture_map_mesh)
+	if node.has_method("set_gpu_mesh_compute_indices"):
+		node.call("set_gpu_mesh_compute_indices", _gpu_mesh_compute_enabled())
+	if node.has_method("set_gpu_mesh_static_shader"):
+		node.call("set_gpu_mesh_static_shader", _gpu_mesh_static_shader_enabled())
 
 func _request_big_aruco_alignment() -> void:
 	if _alignment_result_path.is_empty():
@@ -821,7 +879,6 @@ func _update_debug_panel(force: bool) -> void:
 	if not force and now_msec - _last_debug_update_msec < 250:
 		return
 	_last_debug_update_msec = now_msec
-	var total_points := 0
 	var total_render_points := 0
 	var total_tris := 0
 	var cap_values := []
@@ -843,7 +900,6 @@ func _update_debug_panel(force: bool) -> void:
 		_set_debug_cell("%s_frame" % camera_id, _format_ms(float(values["frame_age"])))
 		_set_debug_cell("%s_held" % camera_id, _format_ms(float(values["held_age"])))
 		_set_debug_cell("%s_points_tris" % camera_id, "%s/%s" % [_format_points(int(values["render_points"])), _format_points(int(values["render_tris"]))])
-		total_points += int(values["points"])
 		total_render_points += int(values["render_points"])
 		total_tris += int(values["render_tris"])
 		cap_values.append(float(values["cap"]))

@@ -162,9 +162,16 @@ REALSENSE_DEPTH_HOLE_FILLING = int(os.environ.get("REALSENSE_DEPTH_HOLE_FILLING"
 REALSENSE_DEPTH_DISPARITY_FILTERS = os.environ.get("REALSENSE_DEPTH_DISPARITY_FILTERS", "1").strip().lower() not in ("0", "false", "no", "off")
 REALSENSE_FILTERS_FOR_POINT_CLOUD_GEOMETRY = os.environ.get("REALSENSE_FILTERS_FOR_POINT_CLOUD_GEOMETRY", "0").strip().lower() not in ("0", "false", "no", "off")
 REALSENSE_FILTER_GEOMETRY_EDGE_GUARD_M = float(os.environ.get("REALSENSE_FILTER_GEOMETRY_EDGE_GUARD_M", "0.07"))
+REALSENSE_POINT_CLOUD_STABILIZATION = os.environ.get("REALSENSE_POINT_CLOUD_STABILIZATION", "1").strip().lower() not in ("0", "false", "no", "off")
+REALSENSE_POINT_CLOUD_STABILIZATION_DEADBAND_M = float(os.environ.get("REALSENSE_POINT_CLOUD_STABILIZATION_DEADBAND_M", "0.012"))
+REALSENSE_POINT_CLOUD_STABILIZATION_HOLD_FRAMES = int(os.environ.get("REALSENSE_POINT_CLOUD_STABILIZATION_HOLD_FRAMES", "1"))
 OAKD_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("OAKD_POINT_CLOUD_STRIDE", "1"))
 OAKD_POINT_CLOUD_MIN_DEPTH_M = float(os.environ.get("OAKD_POINT_CLOUD_MIN_DEPTH", "0.20"))
 OAKD_POINT_CLOUD_MAX_DEPTH_M = float(os.environ.get("OAKD_POINT_CLOUD_MAX_DEPTH", "4.50"))
+OAKD_POINT_CLOUD_GEOMETRY_EDGE_GUARD_M = float(os.environ.get("OAKD_POINT_CLOUD_GEOMETRY_EDGE_GUARD_M", "0.06"))
+OAKD_POINT_CLOUD_STABILIZATION = os.environ.get("OAKD_POINT_CLOUD_STABILIZATION", "1").strip().lower() not in ("0", "false", "no", "off")
+OAKD_POINT_CLOUD_STABILIZATION_DEADBAND_M = float(os.environ.get("OAKD_POINT_CLOUD_STABILIZATION_DEADBAND_M", "0.018"))
+OAKD_POINT_CLOUD_STABILIZATION_HOLD_FRAMES = int(os.environ.get("OAKD_POINT_CLOUD_STABILIZATION_HOLD_FRAMES", "1"))
 OAKD_WIDTH = int(os.environ.get("OAKD_WIDTH", "1024"))
 OAKD_HEIGHT = int(os.environ.get("OAKD_HEIGHT", "576"))
 OAKD_FPS = float(os.environ.get("OAKD_FPS", "30"))
@@ -4272,6 +4279,9 @@ def main():
     realsense_point_cloud_packet_points = max(1, REALSENSE_POINT_CLOUD_DEFAULT_PACKET_POINTS)
     realsense_point_cloud_transport = "udp"
     realsense_point_cloud_shm_color_format = "rgba"
+    realsense_point_cloud_stabilization_enabled = bool(REALSENSE_POINT_CLOUD_STABILIZATION)
+    realsense_point_cloud_stabilization_deadband_m = max(0.0, REALSENSE_POINT_CLOUD_STABILIZATION_DEADBAND_M)
+    realsense_point_cloud_stabilization_hold_frames = max(0, REALSENSE_POINT_CLOUD_STABILIZATION_HOLD_FRAMES)
     realsense_point_cloud_frame_id = 0
     realsense_point_cloud_waiting_warned = False
     realsense_point_cloud_send_counter = 0
@@ -4281,6 +4291,10 @@ def main():
     oakd_point_cloud_stride = max(1, OAKD_POINT_CLOUD_DEFAULT_STRIDE)
     oakd_point_cloud_min_depth = OAKD_POINT_CLOUD_MIN_DEPTH_M
     oakd_point_cloud_max_depth = OAKD_POINT_CLOUD_MAX_DEPTH_M
+    oakd_point_cloud_geometry_edge_guard_m = max(0.0, OAKD_POINT_CLOUD_GEOMETRY_EDGE_GUARD_M)
+    oakd_point_cloud_stabilization_enabled = bool(OAKD_POINT_CLOUD_STABILIZATION)
+    oakd_point_cloud_stabilization_deadband_m = max(0.0, OAKD_POINT_CLOUD_STABILIZATION_DEADBAND_M)
+    oakd_point_cloud_stabilization_hold_frames = max(0, OAKD_POINT_CLOUD_STABILIZATION_HOLD_FRAMES)
     oakd_point_cloud_frame_id = 0
     oakd_point_cloud_send_counter = 0
     oakd_point_cloud_last_fps_print_time = time.time()
@@ -4330,6 +4344,7 @@ def main():
         "sync_to_slowest": bool(point_cloud_sync_to_slowest),
         "timestamp": time.time(),
     }
+    point_cloud_stabilizer_state = {}
     point_cloud_stats_last_write_time = 0.0
     capture_loop_frame_count = 0
     capture_loop_fps = 0.0
@@ -4416,6 +4431,58 @@ def main():
             if 0.1 <= fps <= 240.0:
                 interval = max(interval, 1.0 / max(0.1, fps))
         return min(5.0, max(0.001, interval))
+
+    def stabilize_point_cloud_depth(camera_name, sampled_depth, valid, enabled, deadband_m, hold_frames):
+        if not enabled:
+            point_cloud_stabilizer_state.pop(camera_name, None)
+            return sampled_depth, valid
+
+        current_depth = sampled_depth.astype(np.float32, copy=False)
+        current_valid = valid.astype(bool, copy=False)
+        deadband = max(0.0, float(deadband_m))
+        hold_limit = max(0, int(hold_frames))
+        state = point_cloud_stabilizer_state.get(camera_name)
+        if (
+            state is None
+            or state.get("depth") is None
+            or state["depth"].shape != current_depth.shape
+        ):
+            output_depth = current_depth.astype(np.float32, copy=True)
+            output_valid = current_valid.copy()
+            point_cloud_stabilizer_state[camera_name] = {
+                "depth": output_depth,
+                "valid": output_valid,
+                "age": np.zeros(current_depth.shape, dtype=np.uint8),
+            }
+            return output_depth, output_valid
+
+        previous_depth = state["depth"]
+        previous_valid = state["valid"]
+        previous_age = state["age"]
+        output_depth = current_depth.astype(np.float32, copy=True)
+        output_valid = current_valid.copy()
+
+        if deadband > 0.0:
+            stable = current_valid & previous_valid & (np.abs(current_depth - previous_depth) <= deadband)
+            output_depth[stable] = previous_depth[stable]
+
+        if hold_limit > 0:
+            hold = (~current_valid) & previous_valid & (previous_age < hold_limit)
+            output_depth[hold] = previous_depth[hold]
+            output_valid[hold] = True
+        else:
+            hold = np.zeros(current_depth.shape, dtype=bool)
+
+        next_age = np.zeros(current_depth.shape, dtype=np.uint8)
+        if hold_limit > 0 and np.any(hold):
+            next_age[hold] = np.minimum(previous_age[hold].astype(np.uint16) + 1, 255).astype(np.uint8)
+
+        point_cloud_stabilizer_state[camera_name] = {
+            "depth": output_depth,
+            "valid": output_valid,
+            "age": next_age,
+        }
+        return output_depth, output_valid
 
     def broadcast_measured_screen_size(screen_id, width_inches, height_inches):
         send_udp_json(
@@ -4557,6 +4624,14 @@ def main():
         cols = np.arange(0, depth_m.shape[1], stride, dtype=np.int32)
         sampled_depth = depth_m[np.ix_(rows, cols)]
         valid = np.isfinite(sampled_depth) & (sampled_depth >= min_depth) & (sampled_depth <= max_depth)
+        sampled_depth, valid = stabilize_point_cloud_depth(
+            "realsense",
+            sampled_depth,
+            valid,
+            realsense_point_cloud_stabilization_enabled,
+            realsense_point_cloud_stabilization_deadband_m,
+            realsense_point_cloud_stabilization_hold_frames,
+        )
         valid_count = int(valid.sum())
         if valid_count <= 0:
             return
@@ -5640,6 +5715,29 @@ def main():
             cols = np.arange(0, depth_m.shape[1], stride, dtype=np.int32)
             sampled_depth = depth_m[np.ix_(rows, cols)]
             valid = np.isfinite(sampled_depth) & (sampled_depth >= min_depth) & (sampled_depth <= max_depth)
+            sampled_depth, valid = stabilize_point_cloud_depth(
+                "oakd",
+                sampled_depth,
+                valid,
+                oakd_point_cloud_stabilization_enabled,
+                oakd_point_cloud_stabilization_deadband_m,
+                oakd_point_cloud_stabilization_hold_frames,
+            )
+            guard_m = float(oakd_point_cloud_geometry_edge_guard_m)
+            if guard_m > 0.0 and sampled_depth.shape[0] >= 3 and sampled_depth.shape[1] >= 3:
+                valid_u8 = valid.astype(np.uint8)
+                kernel = np.ones((3, 3), dtype=np.uint8)
+                local_min_src = np.where(valid, sampled_depth, np.float32(9999.0)).astype(np.float32, copy=False)
+                local_max_src = np.where(valid, sampled_depth, np.float32(0.0)).astype(np.float32, copy=False)
+                local_min = cv2.erode(local_min_src, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=9999.0)
+                local_max = cv2.dilate(local_max_src, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0.0)
+                neighbor_count = cv2.filter2D(valid_u8, cv2.CV_16U, kernel, borderType=cv2.BORDER_CONSTANT)
+                edge_reject = valid & (((local_max - local_min) > guard_m) | (neighbor_count < 4))
+                valid = valid & ~edge_reject
+                state = point_cloud_stabilizer_state.get("oakd")
+                if state is not None and state.get("valid") is not None and state["valid"].shape == valid.shape:
+                    state["valid"] = valid.copy()
+                    state["age"][~valid] = 0
             valid_count = int(valid.sum())
             if valid_count <= 0:
                 return
@@ -6234,6 +6332,11 @@ def main():
                     realsense_point_cloud_shm_color_format = str(cmd_json.get("shm_color_format", realsense_point_cloud_shm_color_format)).strip().lower()
                     if realsense_point_cloud_shm_color_format not in ("rgba", "rgb", "bgr"):
                         realsense_point_cloud_shm_color_format = "rgba"
+                    realsense_point_cloud_stabilization_enabled = bool(cmd_json.get("rs_stabilization_enabled", realsense_point_cloud_stabilization_enabled))
+                    realsense_point_cloud_stabilization_deadband_m = max(0.0, float(cmd_json.get("rs_stabilization_deadband_m", realsense_point_cloud_stabilization_deadband_m)))
+                    realsense_point_cloud_stabilization_hold_frames = max(0, int(cmd_json.get("rs_stabilization_hold_frames", realsense_point_cloud_stabilization_hold_frames)))
+                    if not realsense_point_cloud_enabled or not realsense_point_cloud_stabilization_enabled:
+                        point_cloud_stabilizer_state.pop("realsense", None)
                     if isinstance(cap, RealSenseCapture):
                         cap.apply_runtime_settings({
                             "depth_filters_enabled": bool(cmd_json.get("rs_depth_filters_enabled", cap.depth_filters_enabled)),
@@ -6267,6 +6370,7 @@ def main():
                         f"sync_to_slowest={'on' if point_cloud_sync_to_slowest else 'off'} "
                         f"packet_points={realsense_point_cloud_packet_points} "
                         f"transport={realsense_point_cloud_transport} "
+                        f"stabilize={'on' if realsense_point_cloud_stabilization_enabled else 'off'}:{realsense_point_cloud_stabilization_deadband_m:.3f}m hold={realsense_point_cloud_stabilization_hold_frames} "
                         f"shm_color={realsense_point_cloud_shm_color_format} <<<"
                     )
                 elif cmd_type == "oakd_point_cloud":
@@ -6277,6 +6381,12 @@ def main():
                     oakd_point_cloud_stride = max(1, int(cmd_json.get("stride", oakd_point_cloud_stride)))
                     oakd_point_cloud_min_depth = float(cmd_json.get("min_depth", oakd_point_cloud_min_depth))
                     oakd_point_cloud_max_depth = float(cmd_json.get("max_depth", oakd_point_cloud_max_depth))
+                    oakd_point_cloud_geometry_edge_guard_m = max(0.0, float(cmd_json.get("oakd_geometry_edge_guard_m", oakd_point_cloud_geometry_edge_guard_m)))
+                    oakd_point_cloud_stabilization_enabled = bool(cmd_json.get("oakd_stabilization_enabled", oakd_point_cloud_stabilization_enabled))
+                    oakd_point_cloud_stabilization_deadband_m = max(0.0, float(cmd_json.get("oakd_stabilization_deadband_m", oakd_point_cloud_stabilization_deadband_m)))
+                    oakd_point_cloud_stabilization_hold_frames = max(0, int(cmd_json.get("oakd_stabilization_hold_frames", oakd_point_cloud_stabilization_hold_frames)))
+                    if not oakd_point_cloud_enabled or not oakd_point_cloud_stabilization_enabled:
+                        point_cloud_stabilizer_state.pop("oakd", None)
                     oakd_point_cloud_shm_color_format = str(cmd_json.get("shm_color_format", oakd_point_cloud_shm_color_format)).strip().lower()
                     if oakd_point_cloud_shm_color_format not in ("rgba", "rgb", "bgr"):
                         oakd_point_cloud_shm_color_format = "rgba"
@@ -6340,6 +6450,8 @@ def main():
                         f"{'enabled' if oakd_point_cloud_enabled else 'disabled'} "
                         f"stride={oakd_point_cloud_stride} "
                         f"depth={oakd_point_cloud_min_depth:.2f}-{oakd_point_cloud_max_depth:.2f}m "
+                        f"edge_guard={oakd_point_cloud_geometry_edge_guard_m:.3f}m "
+                        f"stabilize={'on' if oakd_point_cloud_stabilization_enabled else 'off'}:{oakd_point_cloud_stabilization_deadband_m:.3f}m hold={oakd_point_cloud_stabilization_hold_frames} "
                         f"{oakd_point_cloud_settings['width']}x{oakd_point_cloud_settings['height']} "
                         f"{oakd_point_cloud_settings['fps']:.0f}fps "
                         f"mono={oakd_point_cloud_settings['mono_res']} "

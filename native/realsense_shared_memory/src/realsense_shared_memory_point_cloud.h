@@ -5,8 +5,10 @@
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
 #include <godot_cpp/classes/mesh_instance3d.hpp>
+#include <godot_cpp/classes/rendering_device.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
+#include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 
@@ -52,6 +54,10 @@ public:
     double get_mesh_max_depth_delta() const;
     void set_texture_map_mesh(bool p_enabled);
     bool get_texture_map_mesh() const;
+    void set_gpu_mesh_compute_indices(bool p_enabled);
+    bool get_gpu_mesh_compute_indices() const;
+    void set_gpu_mesh_static_shader(bool p_enabled);
+    bool get_gpu_mesh_static_shader() const;
     void set_mesh_min_triangle_area(double p_area);
     double get_mesh_min_triangle_area() const;
     void set_mesh_max_color_delta(double p_delta);
@@ -97,6 +103,8 @@ private:
     bool cpu_project_points = false;
     bool color_enabled = true;
     bool texture_map_mesh = false;
+    bool gpu_mesh_compute_indices = false;
+    bool gpu_mesh_static_shader = false;
     double mesh_max_edge = 0.08;
     double mesh_max_depth_delta = 0.08;
     double mesh_min_triangle_area = 0.0;
@@ -117,6 +125,7 @@ private:
     godot::Ref<godot::ShaderMaterial> material;
     bool material_gpu_mesh_mode = false;
     bool material_texture_map_mode = false;
+    bool material_static_shader_mesh_mode = false;
     godot::Ref<godot::ShaderMaterial> cpu_point_material;
     godot::Ref<godot::StandardMaterial3D> texture_material;
     godot::Ref<godot::StandardMaterial3D> vertex_color_material;
@@ -128,6 +137,16 @@ private:
     int gpu_mesh_cache_stride = 0;
     godot::PackedVector3Array gpu_mesh_vertices;
     godot::PackedVector2Array gpu_mesh_uvs;
+    godot::RenderingDevice *mesh_compute_rd = nullptr;
+    godot::RID mesh_compute_shader;
+    godot::RID mesh_compute_pipeline;
+    godot::RID mesh_compute_depth_buffer;
+    godot::RID mesh_compute_index_buffer;
+    godot::RID mesh_compute_counter_buffer;
+    godot::RID mesh_compute_uniform_set;
+    int mesh_compute_width = 0;
+    int mesh_compute_height = 0;
+    bool mesh_compute_failed = false;
     int frames = 0;
     double fps_accum = 0.0;
     double render_fps = 0.0;
@@ -159,6 +178,16 @@ private:
     double now_seconds() const;
     int rebuild_cpu_connected_mesh(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int rebuild_gpu_connected_mesh(const godot::Ref<godot::Image> &p_depth_image);
+    void release_gpu_mesh_compute_resources();
+    bool ensure_gpu_mesh_compute_resources(int p_width, int p_height);
+    bool rebuild_gpu_mesh_indices_compute(
+        const godot::PackedByteArray &p_depth_data,
+        int p_width,
+        int p_height,
+        int p_stride,
+        const godot::Vector4 &p_intrinsics,
+        godot::PackedInt32Array &r_indices
+    );
     int rebuild_cpu_point_cloud(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int rebuild_cpu_combined_mesh(const godot::Ref<godot::Image> &p_depth_image, const godot::Ref<godot::Image> &p_color_image);
     int append_cpu_grid_surface(
