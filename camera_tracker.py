@@ -88,6 +88,7 @@ CAMERA_KEY_RIGHT_EX = 2555904
 CAMERA_KEY_DOWN_EX = 2621440
 CAMERA_PICKER_KEY = ord('y')
 CAMERA_SOURCE_TOGGLE_KEY = ord('s')
+PREVIEW_MODE_TOGGLE_KEY = ord('p')
 CAMERA_INDEX_DEFAULT = 0
 CAMERA_INDEX_ENV = "CAMERA_INDEX"
 CAMERA_SOURCE_ENV = "TRACKER_CAMERA_SOURCE"
@@ -111,6 +112,9 @@ CAMERA_INDEX_AUTO_MAX = 6
 HEAD_TO_CAMERA_DEBUG_KEY = ord('f')
 ANCHOR_POSE_MODE_BUTTON_LABEL = "Anchor"
 ROOM_MAP_TOGGLE_BUTTON_LABEL = "3D View"
+PREVIEW_MODE_BUTTON_LABEL = "Preview"
+PREVIEW_MODE_ENV = "TRACKER_PREVIEW_MODE"
+PREVIEW_MODES = ["full", "black"]
 ANCHOR_POSE_MODES = ["smooth", "stable", "raw"]
 ANCHOR_POSE_MODE_LABELS = {
     "smooth": "Smooth",
@@ -4385,6 +4389,7 @@ def main():
     print("Press 'v' in the camera window to release/reacquire the webcam without stopping the tracker.")
     print("Press 'y' in the camera window to choose a webcam from the terminal picker.")
     print("Press 's' in the camera window to toggle webcam vs RealSense RGB+depth source.")
+    print("Press 'p' in the camera window to toggle full vs black preview.")
     print("Press 'r' in the camera window to reset the solved room/screen map.")
     print("Press 'q' in the camera window to quit.\n")
     os.environ.pop(CAMERA_INDEX_ENV, None)
@@ -4577,7 +4582,11 @@ def main():
     anchor_pose_mode_index = 0
     tracker_anchor_button_rect = None
     tracker_room_map_button_rect = None
+    tracker_preview_mode_button_rect = None
     room_map_visible = True
+    preview_mode = os.environ.get(PREVIEW_MODE_ENV, "full").strip().lower()
+    if preview_mode not in PREVIEW_MODES:
+        preview_mode = "full"
     measured_screen_sizes = {}
     measured_screen_size_last_write = {}
 
@@ -6203,6 +6212,43 @@ def main():
             thickness,
             cv2.LINE_AA,
         )
+        return x1
+
+    def draw_preview_mode_button(frame, right_edge):
+        nonlocal tracker_preview_mode_button_rect
+        label = f"{PREVIEW_MODE_BUTTON_LABEL}: {preview_mode.upper()}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.62
+        thickness = 2
+        text_size, _ = cv2.getTextSize(label, font, font_scale, thickness)
+        pad_x = 12
+        pad_y = 9
+        x2 = max(10, int(right_edge) - 10)
+        y1 = 18
+        x1 = max(10, x2 - text_size[0] - pad_x * 2)
+        y2 = y1 + text_size[1] + pad_y * 2
+        tracker_preview_mode_button_rect = (x1, y1, x2, y2)
+        color = (75, 55, 35) if preview_mode == "black" else (55, 55, 55)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, -1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (235, 235, 235), 1)
+        cv2.putText(
+            frame,
+            label,
+            (x1 + pad_x, y2 - pad_y - 1),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+        return x1
+
+    def cycle_preview_mode():
+        nonlocal preview_mode
+        mode_index = PREVIEW_MODES.index(preview_mode) if preview_mode in PREVIEW_MODES else 0
+        preview_mode = PREVIEW_MODES[(mode_index + 1) % len(PREVIEW_MODES)]
+        os.environ[PREVIEW_MODE_ENV] = preview_mode
+        print(f">>> Camera preview mode: {preview_mode.upper()} <<<")
 
     def set_room_map_visible(visible):
         nonlocal room_map_visible
@@ -6229,6 +6275,11 @@ def main():
             x1, y1, x2, y2 = tracker_room_map_button_rect
             if x1 <= x <= x2 and y1 <= y <= y2:
                 set_room_map_visible(not room_map_visible)
+                return
+        if tracker_preview_mode_button_rect is not None:
+            x1, y1, x2, y2 = tracker_preview_mode_button_rect
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                cycle_preview_mode()
                 return
 
     def room_map_window_is_open():
@@ -6970,6 +7021,8 @@ def main():
                 )
             elif isinstance(cap, RealSenseCapture):
                 detection_frame = frame.copy()
+                if preview_mode == "black":
+                    frame = np.zeros_like(frame)
                 latest_depth_head_position = cap.latest_head_point_m.copy() if cap.latest_head_point_m is not None else None
                 latest_depth_head_time = time.time() if latest_depth_head_position is not None else 0.0
                 if latest_depth_head_position is not None:
@@ -6978,6 +7031,8 @@ def main():
                 cap.draw_head_debug(frame)
             else:
                 detection_frame = frame.copy()
+                if preview_mode == "black":
+                    frame = np.zeros_like(frame)
             if realsense_point_cloud_enabled and not isinstance(cap, RealSenseCapture) and not realsense_point_cloud_waiting_warned:
                 print(">>> RealSense point cloud requested, but active camera source is not RealSense. Press 's' in the tracker window. <<<")
                 realsense_point_cloud_waiting_warned = True
@@ -8046,7 +8101,8 @@ def main():
                     thickness=1,
                 )
         anchor_left = draw_anchor_pose_mode_button(frame)
-        draw_room_map_toggle_button(frame, anchor_left)
+        room_map_left = draw_room_map_toggle_button(frame, anchor_left)
+        draw_preview_mode_button(frame, room_map_left)
         cv2.imshow(TRACKER_WINDOW_NAME, frame)
         if room_map_visible:
             ensure_room_map_window()
@@ -8063,6 +8119,8 @@ def main():
             open_camera_picker()
         elif key == CAMERA_SOURCE_TOGGLE_KEY:
             toggle_camera_source()
+        elif key == PREVIEW_MODE_TOGGLE_KEY:
+            cycle_preview_mode()
         elif key == REALSENSE_TRACKING_MODE_KEY:
             if isinstance(cap, RealSenseCapture):
                 active_realsense_tracking_mode = cap.cycle_tracking_mode()

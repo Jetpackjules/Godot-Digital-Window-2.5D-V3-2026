@@ -1,0 +1,49 @@
+2.5D Window / Multi-Screen Tracked Display
+
+What This Is
+[GIF: final effect with multiple screens or projector faces]
+This project is a web-based tracked display system. Each screen acts like a physical window into the same 3D scene. Instead of every device showing the same camera view, each display renders a perspective based on its real-world position, size, and angle. When the viewer moves their head, the perspective shifts so the scene appears to sit behind the physical screens.
+
+System Setup
+[GIF: laptop and extra display setup]
+The system runs from one host machine. The host runs the Python tracking and WebSocket bridge, then any device on the network can join through a browser. This makes it possible to add phones, laptops, tablets, external monitors, or projector clients without installing a custom app on each device. Each client registers itself, receives a marker slot from the server, and becomes part of the shared tracking setup.
+
+Web Client Flow
+[GIF: browser client opening and setup UI]
+Each display loads the Godot web build in a browser. On first setup, the client asks for the physical size of the lit screen area, not including bezels. That size is sent to the host and used later for the perspective math. After that, the screen can show calibration markers, receive tracking data, and render its own view of the shared 3D scene.
+
+ArUco Screen Calibration
+[GIF: calibration marker screen]
+During calibration, each screen shows a unique ArUco marker layout. The center marker identifies the screen slot, and the corner markers let the tracker solve the screen's position, rotation, and scale. The tracking camera watches all visible screens at once and builds a shared layout map from the detected markers.
+
+Tracked-Screen Detection Overlay
+[GIF: camera/tracker view with green overlay on detected screens]
+The tracker includes a live detection view. When a screen is identified, a green overlay appears on top of the detected screen region in the camera feed. This makes it clear which screens are currently being tracked, which marker IDs were recognized, and whether the camera has enough information to solve that display's pose.
+
+Live 3D Calibration View
+[GIF: 3D debug view showing screens, camera, and head position]
+The client includes a live 3D debug view for calibration and troubleshooting. It shows the solved screen planes in 3D space, the current tracking-camera pose, and the viewer/head position. This is useful for checking whether a screen was solved in the correct place, whether its rotation is flipped, and whether multiple screens are aligned into one shared coordinate system.
+
+Multi-Screen Tracking
+[GIF: several screens being scanned and solved together]
+The system supports multiple displays in the same room layout. Each device receives its own marker identity, reports its physical dimensions, and renders its own view after calibration. Because the clients are web-based, adding another screen mostly means opening the URL on another device and running the scan again. The current marker set has a practical slot limit, but the architecture is built around networked clients rather than a fixed local monitor setup.
+
+Head Tracking And Perspective
+[GIF: moving head and perspective changing]
+After the screen layout is locked, the system uses the viewer's tracked head position to compute an off-axis camera frustum for each screen. The screen is treated as the projection plane. If the viewer moves left, right, up, down, closer, or farther away, the rendered perspective changes according to that physical relationship. This is what creates the "window into a 3D space" effect.
+
+Runtime Rendering
+[GIF: final runtime with each face showing a unique view]
+At runtime, each solved screen has its own camera view. The client uses the screen's physical size, solved room transform, and the current viewer position to render the correct perspective for that display. Multiple devices can render different views of the same scene at the same time, so the setup behaves like several physical windows looking into one shared 3D space.
+
+Why Multiple Faces Matter
+[GIF: three-face box/cube effect]
+The effect is strongest when multiple displays or projected faces form connected sides of a shape, like three faces of a cube. A single screen gives one perspective window. Multiple angled faces give more spatial cues because the virtual scene can continue across real corners. This makes objects feel more physically present than they do on one flat monitor.
+
+Current Implementation
+[GIF: latest demo montage]
+The current version includes the web client, physical screen-size registration, ArUco marker generation, camera calibration, marker-based screen pose solving, shared layout broadcasting, live head tracking, off-axis projection, multi-screen rendering, and a 3D debug view. The main workflow is active: connect devices, enter screen dimensions, scan markers, lock the layout, and render tracked perspective views.
+
+Main Technical Pieces
+[GIF: optional workflow or code/system diagram]
+Godot 4 handles the client UI, 3D rendering, debug visualization, and off-axis camera math. Python and OpenCV handle camera calibration, ArUco detection, and screen pose solving. A WebSocket bridge connects the tracker, host state, and all browser clients. The system is designed so the tracking and layout solve happen once on the host, while each connected client renders its own correct view.

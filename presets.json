@@ -26,5 +26,17 @@
     "New Lenovo laptop": {
         "width": 11.1875,
         "height": 7.333
+    },
+    "Desktop 73.5x40.5": {
+        "width": 73.5,
+        "height": 40.5
+    },
+    "Projector": {
+        "width": 73.5,
+        "height": 40.5
+    },
+    "Daniels lptop": {
+        "width": 11.75,
+        "height": 7.5
     }
 }
