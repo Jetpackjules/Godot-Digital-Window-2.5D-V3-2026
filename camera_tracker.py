@@ -110,6 +110,7 @@ REALSENSE_HEAD_MODEL_DEFAULT = os.path.join(
 CAMERA_INDEX_AUTO_MAX = 6
 HEAD_TO_CAMERA_DEBUG_KEY = ord('f')
 ANCHOR_POSE_MODE_BUTTON_LABEL = "Anchor"
+ROOM_MAP_TOGGLE_BUTTON_LABEL = "3D View"
 ANCHOR_POSE_MODES = ["smooth", "stable", "raw"]
 ANCHOR_POSE_MODE_LABELS = {
     "smooth": "Smooth",
@@ -4575,6 +4576,8 @@ def main():
     show_head_to_camera_debug = False
     anchor_pose_mode_index = 0
     tracker_anchor_button_rect = None
+    tracker_room_map_button_rect = None
+    room_map_visible = True
     measured_screen_sizes = {}
     measured_screen_size_last_write = {}
 
@@ -6171,13 +6174,76 @@ def main():
             thickness,
             cv2.LINE_AA,
         )
+        return x1
+
+    def draw_room_map_toggle_button(frame, right_edge):
+        nonlocal tracker_room_map_button_rect
+        label = f"{ROOM_MAP_TOGGLE_BUTTON_LABEL}: {'ON' if room_map_visible else 'OFF'}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.62
+        thickness = 2
+        text_size, _ = cv2.getTextSize(label, font, font_scale, thickness)
+        pad_x = 12
+        pad_y = 9
+        x2 = max(10, int(right_edge) - 10)
+        y1 = 18
+        x1 = max(10, x2 - text_size[0] - pad_x * 2)
+        y2 = y1 + text_size[1] + pad_y * 2
+        tracker_room_map_button_rect = (x1, y1, x2, y2)
+        color = (35, 85, 65) if room_map_visible else (55, 55, 55)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, -1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (235, 235, 235), 1)
+        cv2.putText(
+            frame,
+            label,
+            (x1 + pad_x, y2 - pad_y - 1),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    def set_room_map_visible(visible):
+        nonlocal room_map_visible
+        visible = bool(visible)
+        if room_map_visible == visible:
+            return
+        room_map_visible = visible
+        if not room_map_visible:
+            try:
+                cv2.destroyWindow(ROOM_MAP_WINDOW_NAME)
+            except Exception:
+                pass
+        print(f">>> 3D room-map view {'ON' if room_map_visible else 'OFF'}. <<<")
 
     def tracker_mouse_callback(event, x, y, flags, param):
-        if event != cv2.EVENT_LBUTTONDOWN or tracker_anchor_button_rect is None:
+        if event != cv2.EVENT_LBUTTONDOWN:
             return
-        x1, y1, x2, y2 = tracker_anchor_button_rect
-        if x1 <= x <= x2 and y1 <= y <= y2:
-            cycle_anchor_pose_mode()
+        if tracker_anchor_button_rect is not None:
+            x1, y1, x2, y2 = tracker_anchor_button_rect
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                cycle_anchor_pose_mode()
+                return
+        if tracker_room_map_button_rect is not None:
+            x1, y1, x2, y2 = tracker_room_map_button_rect
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                set_room_map_visible(not room_map_visible)
+                return
+
+    def room_map_window_is_open():
+        try:
+            return cv2.getWindowProperty(ROOM_MAP_WINDOW_NAME, cv2.WND_PROP_VISIBLE) >= 1
+        except Exception:
+            return False
+
+    def ensure_room_map_window():
+        if room_map_window_is_open():
+            return
+        cv2.namedWindow(ROOM_MAP_WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(ROOM_MAP_WINDOW_NAME, ROOM_MAP_WINDOW_DEFAULT_WIDTH, ROOM_MAP_WINDOW_DEFAULT_HEIGHT)
+        cv2.moveWindow(ROOM_MAP_WINDOW_NAME, WINDOW_DEFAULT_X, WINDOW_DEFAULT_Y)
+        cv2.setMouseCallback(ROOM_MAP_WINDOW_NAME, mouse_callback)
 
     def configure_active_calibration():
         nonlocal camera_matrix, dist_coeffs, stored_calibration_size
@@ -7979,9 +8045,12 @@ def main():
                     color=(255, 255, 255),
                     thickness=1,
                 )
-        draw_anchor_pose_mode_button(frame)
+        anchor_left = draw_anchor_pose_mode_button(frame)
+        draw_room_map_toggle_button(frame, anchor_left)
         cv2.imshow(TRACKER_WINDOW_NAME, frame)
-        cv2.imshow(ROOM_MAP_WINDOW_NAME, room_map)
+        if room_map_visible:
+            ensure_room_map_window()
+            cv2.imshow(ROOM_MAP_WINDOW_NAME, room_map)
         
         key = cv2.waitKeyEx(1)
         if key == ord('c'):
