@@ -99,7 +99,7 @@ STEREO_SCREEN_SIZE_TOGGLE_KEY = ord('h')
 REALSENSE_TRACKING_MODE_ENV = "REALSENSE_TRACKING_MODE"
 REALSENSE_TRACKING_ENABLED_ENV = "REALSENSE_TRACKING_ENABLED"
 STEREO_SCREEN_SIZE_AUTO_ENV = "STEREO_SCREEN_SIZE_AUTO"
-REALSENSE_TRACKING_MODES = ["ml", "yolo"]
+REALSENSE_TRACKING_MODES = ["headlock", "ml", "yolo"]
 REALSENSE_HEAD_MODEL_ENV = "REALSENSE_HEAD_MODEL"
 REALSENSE_HEAD_MODEL_DEFAULT = os.path.join(
     "experiments",
@@ -147,13 +147,15 @@ TRACKING_DEFAULT_HEAD_DISTANCE = DEFAULT_VIEWER_DISTANCE_METERS * METERS_TO_WORL
 TRACKER_CAMERA_POSE_SEND_INTERVAL_SEC = 0.1
 RESOLVED_HEAD_POSE_SEND_INTERVAL_SEC = 1.0 / 60.0
 REALSENSE_TRACKING_SEND_INTERVAL_SEC = 1.0 / 60.0
+REALSENSE_CAPTURE_PROFILE = os.environ.get("REALSENSE_CAPTURE_PROFILE", "1").strip().lower() not in ("0", "false", "no", "off")
+REALSENSE_CAPTURE_PROFILE_INTERVAL_SEC = float(os.environ.get("REALSENSE_CAPTURE_PROFILE_INTERVAL_SEC", "2.0"))
 REALSENSE_POINT_CLOUD_SEND_INTERVAL_SEC = 1.0 / float(os.environ.get("REALSENSE_POINT_CLOUD_FPS", str(REALSENSE_CAMERA_FPS)))
 REALSENSE_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("REALSENSE_POINT_CLOUD_STRIDE", "1"))
 REALSENSE_POINT_CLOUD_MIN_DEPTH_M = float(os.environ.get("REALSENSE_POINT_CLOUD_MIN_DEPTH", "0.20"))
 REALSENSE_POINT_CLOUD_MAX_DEPTH_M = float(os.environ.get("REALSENSE_POINT_CLOUD_MAX_DEPTH", "4.50"))
 REALSENSE_POINT_CLOUD_MAX_POINTS = int(os.environ.get("REALSENSE_POINT_CLOUD_MAX_POINTS", "0"))
 REALSENSE_POINT_CLOUD_MESH_MAX_EDGE_M = float(os.environ.get("REALSENSE_POINT_CLOUD_MESH_MAX_EDGE", "0.08"))
-REALSENSE_DEPTH_FILTERS_ENABLED = os.environ.get("REALSENSE_DEPTH_FILTERS", "1").strip().lower() not in ("0", "false", "no", "off")
+REALSENSE_DEPTH_FILTERS_ENABLED = os.environ.get("REALSENSE_DEPTH_FILTERS", "0").strip().lower() not in ("0", "false", "no", "off")
 REALSENSE_DEPTH_SPATIAL_ALPHA = float(os.environ.get("REALSENSE_DEPTH_SPATIAL_ALPHA", "0.55"))
 REALSENSE_DEPTH_SPATIAL_DELTA = float(os.environ.get("REALSENSE_DEPTH_SPATIAL_DELTA", "18"))
 REALSENSE_DEPTH_TEMPORAL_ALPHA = float(os.environ.get("REALSENSE_DEPTH_TEMPORAL_ALPHA", "0.35"))
@@ -169,6 +171,7 @@ OAKD_POINT_CLOUD_DEFAULT_STRIDE = int(os.environ.get("OAKD_POINT_CLOUD_STRIDE", 
 OAKD_POINT_CLOUD_MIN_DEPTH_M = float(os.environ.get("OAKD_POINT_CLOUD_MIN_DEPTH", "0.20"))
 OAKD_POINT_CLOUD_MAX_DEPTH_M = float(os.environ.get("OAKD_POINT_CLOUD_MAX_DEPTH", "4.50"))
 OAKD_POINT_CLOUD_GEOMETRY_EDGE_GUARD_M = float(os.environ.get("OAKD_POINT_CLOUD_GEOMETRY_EDGE_GUARD_M", "0.06"))
+OAKD_POINT_CLOUD_BORDER_CROP_PX = int(os.environ.get("OAKD_POINT_CLOUD_BORDER_CROP_PX", "12"))
 OAKD_POINT_CLOUD_STABILIZATION = os.environ.get("OAKD_POINT_CLOUD_STABILIZATION", "1").strip().lower() not in ("0", "false", "no", "off")
 OAKD_POINT_CLOUD_STABILIZATION_DEADBAND_M = float(os.environ.get("OAKD_POINT_CLOUD_STABILIZATION_DEADBAND_M", "0.018"))
 OAKD_POINT_CLOUD_STABILIZATION_HOLD_FRAMES = int(os.environ.get("OAKD_POINT_CLOUD_STABILIZATION_HOLD_FRAMES", "1"))
@@ -1120,7 +1123,71 @@ def average_rigid_transforms(transforms):
     averaged[:3, 3] = np.mean(np.stack(translations, axis=0), axis=0)
     return averaged
 
-def depth_to_view_points(depth_m, intrinsics, min_depth, max_depth, stride=1, max_points=60000):
+def rotation_delta_degrees(rotation_a, rotation_b):
+    try:
+        delta = np.asarray(rotation_a, dtype=np.float64).T @ np.asarray(rotation_b, dtype=np.float64)
+        trace = float(np.trace(delta))
+        cos_angle = max(-1.0, min(1.0, (trace - 1.0) * 0.5))
+        return math.degrees(math.acos(cos_angle))
+    except Exception:
+        return 0.0
+
+def transform_delta(transform_a, transform_b):
+    a = np.asarray(transform_a, dtype=np.float64)
+    b = np.asarray(transform_b, dtype=np.float64)
+    translation_m = float(np.linalg.norm(a[:3, 3] - b[:3, 3]))
+    rotation_deg = float(rotation_delta_degrees(a[:3, :3], b[:3, :3]))
+    return translation_m, rotation_deg
+
+def robust_average_rigid_transforms(transforms):
+    if not transforms:
+        return None, [], []
+    if len(transforms) <= 2:
+        averaged = average_rigid_transforms(transforms)
+        residuals = []
+        for transform in transforms:
+            translation_m, rotation_deg = transform_delta(averaged, transform)
+            residuals.append({"translation_m": translation_m, "rotation_deg": rotation_deg, "score_m": translation_m + math.radians(rotation_deg) * 0.20})
+        return averaged, [True] * len(transforms), residuals
+
+    initial = average_rigid_transforms(transforms)
+    if initial is None:
+        return None, [], []
+
+    residuals = []
+    scores = []
+    for transform in transforms:
+        translation_m, rotation_deg = transform_delta(initial, transform)
+        score_m = translation_m + math.radians(rotation_deg) * 0.20
+        residuals.append({"translation_m": translation_m, "rotation_deg": rotation_deg, "score_m": score_m})
+        scores.append(score_m)
+
+    scores_np = np.asarray(scores, dtype=np.float64)
+    median = float(np.median(scores_np))
+    mad = float(np.median(np.abs(scores_np - median)))
+    robust_sigma = 1.4826 * mad
+    threshold = max(0.050, median + max(0.020, 4.0 * robust_sigma))
+    keep_mask = []
+    for residual in residuals:
+        keep = (
+            float(residual["score_m"]) <= threshold
+            and float(residual["translation_m"]) <= 0.150
+            and float(residual["rotation_deg"]) <= 20.0
+        )
+        keep_mask.append(bool(keep))
+
+    min_kept = min(3, len(transforms))
+    if sum(keep_mask) < min_kept:
+        keep_mask = [True] * len(transforms)
+
+    kept_transforms = [transform for transform, keep in zip(transforms, keep_mask) if keep]
+    averaged = average_rigid_transforms(kept_transforms)
+    if averaged is None:
+        averaged = initial
+        keep_mask = [True] * len(transforms)
+    return averaged, keep_mask, residuals
+
+def depth_to_view_points(depth_m, intrinsics, min_depth, max_depth, stride=1, max_points=60000, border_crop_px=0):
     if depth_m is None:
         return None
     stride = max(1, int(stride))
@@ -1128,6 +1195,11 @@ def depth_to_view_points(depth_m, intrinsics, min_depth, max_depth, stride=1, ma
     cols = np.arange(0, depth_m.shape[1], stride, dtype=np.int32)
     sampled_depth = depth_m[np.ix_(rows, cols)].astype(np.float32, copy=False)
     valid = np.isfinite(sampled_depth) & (sampled_depth >= float(min_depth)) & (sampled_depth <= float(max_depth))
+    border_crop_px = max(0, int(border_crop_px))
+    if border_crop_px > 0:
+        row_edge = (rows < border_crop_px) | (rows >= depth_m.shape[0] - border_crop_px)
+        col_edge = (cols < border_crop_px) | (cols >= depth_m.shape[1] - border_crop_px)
+        valid[row_edge[:, np.newaxis] | col_edge[np.newaxis, :]] = False
     if int(valid.sum()) <= 0:
         return None
     grid_x = cols[np.newaxis, :].astype(np.float32)
@@ -2321,11 +2393,13 @@ class OakDCapture:
         self.pipeline = None
         self.rgb_queue = None
         self.depth_queue = None
+        self.depth_queue_rgb_aligned = False
         self.left_queue = None
         self.right_queue = None
         self.config_queue = None
         self.host_stereo_matcher = None
         self.host_stereo_matcher_scale = None
+        self.host_stereo_matcher_profile = None
         self.fast_foundation_worker = None
         self.host_stereo_fx = 790.0
         self.host_stereo_baseline_m = float(os.environ.get("OAKD_HOST_STEREO_BASELINE_M", "0.075"))
@@ -2476,11 +2550,15 @@ class OakDCapture:
         if self.host_stereo_enabled:
             print(
                 ">>> OAK-D host stereo low-latency path: RGB depthAlign disabled; "
-                "host color projection handles RGB/mono alignment. <<<"
+                "host color projection handles RGB/mono alignment. "
+                "DepthAI depth remains available as mono-aligned fallback. <<<"
             )
+            stereo.setOutputSize(self.width, self.height)
+            self.depth_queue_rgb_aligned = False
         else:
             stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
             stereo.setOutputSize(self.width, self.height)
+            self.depth_queue_rgb_aligned = True
         stereo.setLeftRightCheck(self.lr_check)
         stereo.setSubpixel(self.subpixel)
         if self.subpixel and hasattr(stereo.initialConfig, "setSubpixelFractionalBits"):
@@ -2496,10 +2574,7 @@ class OakDCapture:
         self.rgb_queue = color.preview.createOutputQueue(maxSize=1, blocking=False)
         self.left_queue = stereo.rectifiedLeft.createOutputQueue(maxSize=1, blocking=False)
         self.right_queue = stereo.rectifiedRight.createOutputQueue(maxSize=1, blocking=False)
-        if self.host_stereo_enabled:
-            self.depth_queue = None
-        else:
-            self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
+        self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
         self.pipeline = pipeline
         self.pipeline.start()
         self._try_load_intrinsics()
@@ -2571,8 +2646,10 @@ class OakDCapture:
     def _select_active_intrinsics(self):
         if self.host_stereo_enabled and self.mono_intrinsics is not None:
             self.intrinsics = self.mono_intrinsics
-        elif not self.host_stereo_enabled and self.rgb_intrinsics is not None:
+        elif not self.host_stereo_enabled and self.depth_queue_rgb_aligned and self.rgb_intrinsics is not None:
             self.intrinsics = self.rgb_intrinsics
+        elif not self.host_stereo_enabled and self.mono_intrinsics is not None:
+            self.intrinsics = self.mono_intrinsics
         self.host_stereo_fx = float(self.intrinsics.fx)
 
     def set_depth_source(
@@ -2667,24 +2744,33 @@ class OakDCapture:
         match_width = max(160, int(round(self.width * scale)))
         max_disp = max(64, min(256, int(round(match_width / 4.0))))
         num_disparities = max(16, int(np.ceil(max_disp / 16.0)) * 16)
-        block_size = 5
+        block_size = int(os.environ.get("OAKD_HOST_SGBM_BLOCK_SIZE", "7"))
+        if block_size % 2 == 0:
+            block_size += 1
+        block_size = max(3, min(11, block_size))
+        uniqueness_ratio = int(os.environ.get("OAKD_HOST_SGBM_UNIQUENESS", "8"))
+        disp12_max_diff = int(os.environ.get("OAKD_HOST_SGBM_DISP12_MAX_DIFF", "1"))
+        speckle_window = int(os.environ.get("OAKD_HOST_SGBM_SPECKLE_WINDOW", "80"))
+        speckle_range = int(os.environ.get("OAKD_HOST_SGBM_SPECKLE_RANGE", "2"))
         self.host_stereo_matcher = cv2.StereoSGBM_create(
             minDisparity=0,
             numDisparities=num_disparities,
             blockSize=block_size,
             P1=8 * block_size * block_size,
             P2=32 * block_size * block_size,
-            disp12MaxDiff=2,
-            uniquenessRatio=4,
-            speckleWindowSize=0,
-            speckleRange=0,
+            disp12MaxDiff=disp12_max_diff,
+            uniquenessRatio=uniqueness_ratio,
+            speckleWindowSize=speckle_window,
+            speckleRange=speckle_range,
             preFilterCap=31,
             mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
         )
         self.host_stereo_matcher_scale = scale
+        self.host_stereo_matcher_profile = (num_disparities, block_size, uniqueness_ratio, disp12_max_diff, speckle_window, speckle_range)
         print(
             f">>> OAK-D host/local stereo active: OpenCV SGBM scale={scale:.2f} "
-            f"num_disparities={num_disparities} baseline={self.host_stereo_baseline_m:.3f}m. "
+            f"num_disparities={num_disparities} block={block_size} uniq={uniqueness_ratio} "
+            f"speckle={speckle_window}:{speckle_range} baseline={self.host_stereo_baseline_m:.3f}m. "
             "DepthAI on-device stereo remains available by turning off OAK-D Fast Stereo. <<<"
         )
 
@@ -2800,6 +2886,8 @@ class OakDCapture:
             right_gray = cv2.resize(right_gray, (self.width, self.height), interpolation=cv2.INTER_AREA)
 
         scale = max(0.25, min(1.0, float(self.fast_stereo_scale)))
+        left_gray = cv2.equalizeHist(left_gray)
+        right_gray = cv2.equalizeHist(right_gray)
         if scale < 0.999:
             small_size = (max(160, int(round(self.width * scale))), max(90, int(round(self.height * scale))))
             left_match = cv2.resize(left_gray, small_size, interpolation=cv2.INTER_AREA)
@@ -2813,6 +2901,9 @@ class OakDCapture:
         depth_m = np.zeros((self.height, self.width), dtype=np.float32)
         depth_m[valid] = (float(self.host_stereo_fx) * float(self.host_stereo_baseline_m)) / np.maximum(disparity[valid], 0.75)
         depth_m[(depth_m < 0.05) | (depth_m > 10.0)] = 0.0
+        if int(np.count_nonzero(depth_m)) > 0:
+            filtered = cv2.medianBlur(depth_m, 3)
+            depth_m = np.where(depth_m > 0.0, filtered, 0.0).astype(np.float32, copy=False)
         color = self._color_for_host_depth(left_gray, depth_m, color_img)
         return color, depth_m
 
@@ -2897,6 +2988,11 @@ class OakDCapture:
                 pending_color_timestamp = self._message_timestamp(rgb_msg)
                 pending_color_received_perf = time.perf_counter()
                 pending_color_serial += 1
+            if not self.host_stereo_enabled and not self.depth_queue_rgb_aligned and left_msg is not None:
+                pending_left = left_msg.getCvFrame()
+                pending_left_timestamp = self._message_timestamp(left_msg)
+                pending_left_received_perf = time.perf_counter()
+                pending_left_serial += 1
             if self.host_stereo_enabled:
                 if left_msg is not None:
                     pending_left = left_msg.getCvFrame()
@@ -2955,6 +3051,14 @@ class OakDCapture:
                 pending_depth_timestamp = self._message_timestamp(depth_msg)
                 pending_depth_received_perf = time.perf_counter()
                 pending_depth_serial += 1
+                if not self.depth_queue_rgb_aligned and pending_left is not None:
+                    if pending_left.ndim == 2:
+                        pending_color = cv2.cvtColor(pending_left, cv2.COLOR_GRAY2BGR)
+                    else:
+                        pending_color = pending_left.copy()
+                    pending_color_timestamp = pending_left_timestamp
+                    pending_color_received_perf = pending_left_received_perf
+                    pending_color_serial += 1
             latest_depth_serial = pending_stereo_serial if self.host_stereo_enabled else pending_depth_serial
             color_is_fresh = self.host_stereo_enabled or pending_color_serial != published_color_serial
             if (
@@ -3193,6 +3297,8 @@ class AsyncRealSenseHeadTracker:
         self.latest_label = ""
         self.latest_conf = 0.0
         self.inference_fps = 0.0
+        self.copy_ms = 0.0
+        self.process_ms = 0.0
         self._smoothed_point = None
         self._smoothed_pixel = None
         self._frame_id = 0
@@ -3219,10 +3325,12 @@ class AsyncRealSenseHeadTracker:
     def submit_frame(self, color, depth_m):
         if self.yolo is None:
             return
+        copy_start = time.perf_counter()
         with self.lock:
             self.pending_color = color.copy()
             self.pending_depth = depth_m.copy()
             self._frame_id += 1
+            self.copy_ms = (time.perf_counter() - copy_start) * 1000.0
         self.new_frame_event.set()
 
     def get_latest(self):
@@ -3240,6 +3348,8 @@ class AsyncRealSenseHeadTracker:
                 "debug_rect": self.latest_debug_rect,
                 "mask": None if self.latest_mask is None else self.latest_mask.copy(),
                 "fps": float(self.inference_fps),
+                "copy_ms": float(self.copy_ms),
+                "process_ms": float(self.process_ms),
                 "active": self.yolo is not None,
                 "mode": self.latest_mode,
                 "label": self.latest_label,
@@ -3261,7 +3371,10 @@ class AsyncRealSenseHeadTracker:
             color, depth_m = self._take_frame()
             if color is None or depth_m is None:
                 continue
+            process_start = time.perf_counter()
             self._process_frame(color, depth_m)
+            with self.lock:
+                self.process_ms = (time.perf_counter() - process_start) * 1000.0
 
     def _process_frame(self, color, depth_m):
         last_pixel = None
@@ -3410,17 +3523,20 @@ class AsyncRealSenseHeadTracker:
                 self._last_fps_time = now
 
 class DemoRealSenseHeadTrackerAdapter:
-    def __init__(self, intrinsics, head_model=""):
+    def __init__(self, intrinsics, mode="ml", head_model=""):
         if DemoRealSenseTrackerWorker is None:
             raise RuntimeError("Demo RealSense tracker worker is unavailable")
         args = type("Args", (), {})()
-        args.mode = "ml"
+        mode = str(mode or "ml").strip().lower()
+        if mode not in ("headlock", "body", "blob", "ml"):
+            mode = "ml"
+        args.mode = mode
         args.max_distance = float(os.environ.get("REALSENSE_MAX_DISTANCE", "7.0"))
         args.foreground_band = float(os.environ.get("REALSENSE_FOREGROUND_BAND", "0.75"))
         args.min_distance = float(os.environ.get("REALSENSE_MIN_DISTANCE", "0.25"))
         args.near_percentile = float(os.environ.get("REALSENSE_NEAR_PERCENTILE", "8.0"))
         args.smoothing = float(os.environ.get("REALSENSE_SMOOTHING", "0.72"))
-        # Match the demo default: MediaPipe/pose first, then depth/headlock.
+        # ML mode uses MediaPipe/pose first, then depth/headlock. Headlock skips ML.
         args.head_model = head_model
         args.yolo_conf = float(os.environ.get("REALSENSE_YOLO_CONF", "0.35"))
         args.yolo_imgsz = int(os.environ.get("REALSENSE_YOLO_IMGSZ", "416"))
@@ -3455,7 +3571,7 @@ class DemoRealSenseHeadTrackerAdapter:
                 "mask": None,
                 "fps": 0.0,
                 "active": True,
-                "mode": "demo-ml",
+                "mode": "demo-headlock",
                 "label": "",
                 "conf": 0.0,
             }
@@ -3466,6 +3582,8 @@ class DemoRealSenseHeadTrackerAdapter:
             "debug_rect": latest.get("debug_rect"),
             "mask": None if latest.get("blob_mask") is None else latest["blob_mask"].copy(),
             "fps": float(latest.get("inference_fps", 0.0)),
+            "copy_ms": float(latest.get("copy_ms", 0.0)),
+            "process_ms": float(latest.get("process_ms", 0.0)),
             "active": bool(latest.get("has_head")),
             "mode": str(latest.get("mode", "demo-ml")),
             "label": "demo",
@@ -3534,6 +3652,20 @@ class RealSenseCapture:
         self.capture_fps = 0.0
         self._capture_count = 0
         self._last_capture_fps_time = time.perf_counter()
+        self._profile_enabled = bool(REALSENSE_CAPTURE_PROFILE)
+        self._profile_last_print_time = time.perf_counter()
+        self._profile_count = 0
+        self._profile_times = {
+            "wait": 0.0,
+            "align": 0.0,
+            "depth_np": 0.0,
+            "filter": 0.0,
+            "color_np": 0.0,
+            "track_submit": 0.0,
+            "store": 0.0,
+            "read_copy": 0.0,
+            "read_fallback": 0.0,
+        }
         self._latest_frame_id = 0
         self._last_read_frame_id = -1
         self._latest_color_bgr = None
@@ -3709,8 +3841,8 @@ class RealSenseCapture:
                 return
 
             if DemoRealSenseTrackerWorker is not None:
-                self.head_tracker = DemoRealSenseHeadTrackerAdapter(self.intrinsics, head_model="")
-                print(">>> RealSense tracking mode: ML demo worker <<<")
+                self.head_tracker = DemoRealSenseHeadTrackerAdapter(self.intrinsics, mode=self.tracking_mode, head_model="")
+                print(f">>> RealSense tracking mode: {self.tracking_mode.upper()} demo worker <<<")
             else:
                 self.head_tracker = AsyncRealSenseHeadTracker(self.intrinsics)
                 self.tracking_mode = "yolo"
@@ -3772,6 +3904,48 @@ class RealSenseCapture:
             if self.head_tracker is None:
                 return {"active": False, "fps": 0.0, "mode": "none", "label": "", "conf": 0.0}
             return self.head_tracker.get_debug()
+
+    def _profile_add(self, key, seconds):
+        if not self._profile_enabled:
+            return
+        self._profile_times[key] = self._profile_times.get(key, 0.0) + max(0.0, float(seconds))
+
+    def _profile_capture_frame(self):
+        if not self._profile_enabled:
+            return
+        self._profile_count += 1
+        now = time.perf_counter()
+        elapsed = now - self._profile_last_print_time
+        if elapsed < max(0.25, REALSENSE_CAPTURE_PROFILE_INTERVAL_SEC):
+            return
+        count = max(1, self._profile_count)
+        avg_ms = {key: (value * 1000.0 / count) for key, value in self._profile_times.items()}
+        total_cpu_ms = (
+            avg_ms.get("align", 0.0)
+            + avg_ms.get("depth_np", 0.0)
+            + avg_ms.get("filter", 0.0)
+            + avg_ms.get("color_np", 0.0)
+            + avg_ms.get("track_submit", 0.0)
+            + avg_ms.get("store", 0.0)
+            + avg_ms.get("read_copy", 0.0)
+            + avg_ms.get("read_fallback", 0.0)
+        )
+        head_debug = self.get_head_debug()
+        print(
+            ">>> RealSense profile "
+            f"cap={self.capture_fps:.1f}fps tracking={'on' if self.tracking_enabled else 'off'}:{self.tracking_mode} "
+            f"track_fps={float(head_debug.get('fps', 0.0)):.1f} "
+            f"track_copy={float(head_debug.get('copy_ms', 0.0)):.2f}ms track_proc={float(head_debug.get('process_ms', 0.0)):.2f}ms "
+            f"wait={avg_ms.get('wait', 0.0):.2f}ms align={avg_ms.get('align', 0.0):.2f}ms "
+            f"depth_np={avg_ms.get('depth_np', 0.0):.2f}ms filter={avg_ms.get('filter', 0.0):.2f}ms "
+            f"color_np={avg_ms.get('color_np', 0.0):.2f}ms track={avg_ms.get('track_submit', 0.0):.2f}ms "
+            f"store={avg_ms.get('store', 0.0):.2f}ms read={avg_ms.get('read_copy', 0.0):.2f}ms "
+            f"fallback={avg_ms.get('read_fallback', 0.0):.2f}ms cpu_total={total_cpu_ms:.2f}ms <<<"
+        )
+        self._profile_count = 0
+        self._profile_last_print_time = now
+        for key in self._profile_times:
+            self._profile_times[key] = 0.0
 
     def _deproject_depth_pixel(self, pixel, radius_px=8):
         depth_m = self.latest_tracking_depth_m if self.latest_tracking_depth_m is not None else self.latest_depth_m
@@ -3869,21 +4043,30 @@ class RealSenseCapture:
 
     def _capture_loop(self):
         while not self._stop_event.is_set():
+            wait_start = time.perf_counter()
             try:
                 frames = self.pipeline.wait_for_frames()
+                wait_done = time.perf_counter()
                 color_frame_for_charuco = frames.get_color_frame()
                 frames = self.align_to_depth.process(frames)
+                align_done = time.perf_counter()
             except Exception as exc:
                 if not self._stop_event.is_set():
                     print(f">>> RealSense capture thread stopped: {exc} <<<")
                 break
+            self._profile_add("wait", wait_done - wait_start)
+            self._profile_add("align", align_done - wait_done)
 
             depth_frame = frames.get_depth_frame()
             color_frame = frames.get_color_frame()
             if not depth_frame or not color_frame or not color_frame_for_charuco:
                 continue
+            depth_np_start = time.perf_counter()
             raw_depth_m = np.asanyarray(depth_frame.get_data()).astype(np.float32) * self.depth_scale
             filtered_depth_frame = depth_frame
+            depth_np_done = time.perf_counter()
+            self._profile_add("depth_np", depth_np_done - depth_np_start)
+            filter_start = time.perf_counter()
             if self.depth_filters_enabled:
                 try:
                     if self.depth_to_disparity_filter is not None:
@@ -3899,7 +4082,10 @@ class RealSenseCapture:
                 except Exception as exc:
                     print(f">>> RealSense depth filter failed; using raw depth this frame: {exc} <<<")
                     filtered_depth_frame = depth_frame
+            filter_done = time.perf_counter()
+            self._profile_add("filter", filter_done - filter_start)
 
+            color_np_start = time.perf_counter()
             color = np.asanyarray(color_frame.get_data()).copy()
             charuco_color = np.asanyarray(color_frame_for_charuco.get_data()).copy()
             filtered_depth_m = np.asanyarray(filtered_depth_frame.get_data()).astype(np.float32) * self.depth_scale
@@ -3907,6 +4093,8 @@ class RealSenseCapture:
                 point_cloud_depth_m = self._guard_filtered_geometry_depth(raw_depth_m, filtered_depth_m)
             else:
                 point_cloud_depth_m = raw_depth_m
+            color_np_done = time.perf_counter()
+            self._profile_add("color_np", color_np_done - color_np_start)
             head_point = None
             head_pixel = None
             head_raw_pixel = None
@@ -3914,6 +4102,7 @@ class RealSenseCapture:
             head_debug_rect = None
             head_mask = None
 
+            track_submit_start = time.perf_counter()
             if self.tracking_enabled:
                 with self._tracker_lock:
                     tracker = self.head_tracker
@@ -3925,6 +4114,8 @@ class RealSenseCapture:
                         head_rect = debug.get("rect")
                         head_debug_rect = debug.get("debug_rect")
                         head_mask = debug.get("mask")
+            track_submit_done = time.perf_counter()
+            self._profile_add("track_submit", track_submit_done - track_submit_start)
 
             now = time.perf_counter()
             self._capture_count += 1
@@ -3933,6 +4124,7 @@ class RealSenseCapture:
                 self._capture_count = 0
                 self._last_capture_fps_time = now
 
+            store_start = time.perf_counter()
             with self._frame_lock:
                 self._latest_color_bgr = color
                 self._latest_charuco_color_bgr = charuco_color
@@ -3946,10 +4138,14 @@ class RealSenseCapture:
                 self._latest_head_mask = None if head_mask is None else head_mask.copy()
                 self._latest_frame_id += 1
             self._frame_event.set()
+            store_done = time.perf_counter()
+            self._profile_add("store", store_done - store_start)
+            self._profile_capture_frame()
 
     def read(self):
         if self._latest_color_bgr is None and self._latest_charuco_color_bgr is None:
             self._frame_event.wait(0.5)
+        read_copy_start = time.perf_counter()
         with self._frame_lock:
             if self._latest_color_bgr is None and self._latest_charuco_color_bgr is None:
                 return False, None
@@ -3965,13 +4161,18 @@ class RealSenseCapture:
             self.latest_head_debug_rect = self._latest_head_debug_rect
             self.latest_head_mask = None if self._latest_head_mask is None else self._latest_head_mask.copy()
             self._last_read_frame_id = self._latest_frame_id
+        read_copy_done = time.perf_counter()
+        self._profile_add("read_copy", read_copy_done - read_copy_start)
 
+        fallback_start = time.perf_counter()
         if self.tracking_enabled and self.latest_head_point_m is None:
             self.latest_head_point_m, self.latest_head_pixel = self.estimate_head()
             self.latest_head_raw_pixel = self.latest_head_pixel
             self.latest_head_rect = None
             self.latest_head_debug_rect = None
             self.latest_head_mask = None
+        fallback_done = time.perf_counter()
+        self._profile_add("read_fallback", fallback_done - fallback_start)
         if not self.tracking_enabled:
             self.latest_head_point_m = None
             self.latest_head_pixel = None
@@ -4292,6 +4493,7 @@ def main():
     oakd_point_cloud_min_depth = OAKD_POINT_CLOUD_MIN_DEPTH_M
     oakd_point_cloud_max_depth = OAKD_POINT_CLOUD_MAX_DEPTH_M
     oakd_point_cloud_geometry_edge_guard_m = max(0.0, OAKD_POINT_CLOUD_GEOMETRY_EDGE_GUARD_M)
+    oakd_point_cloud_border_crop_px = max(0, OAKD_POINT_CLOUD_BORDER_CROP_PX)
     oakd_point_cloud_stabilization_enabled = bool(OAKD_POINT_CLOUD_STABILIZATION)
     oakd_point_cloud_stabilization_deadband_m = max(0.0, OAKD_POINT_CLOUD_STABILIZATION_DEADBAND_M)
     oakd_point_cloud_stabilization_hold_frames = max(0, OAKD_POINT_CLOUD_STABILIZATION_HOLD_FRAMES)
@@ -4942,22 +5144,50 @@ def main():
             realsense_point_cloud_send_counter = 0
             realsense_point_cloud_last_fps_print_time = now
 
-    def _oakd_settings_signature():
+    def _oakd_settings_signature_for(settings):
         # Only include settings that require rebuilding the live DepthAI pipeline.
-        # Depth-source switches are handled inside OakDCapture when the running
-        # pipeline has the needed queues, so they should not force a full stack
-        # restart by themselves.
+        # Depth-source/profile switches are handled inside OakDCapture when the
+        # running pipeline has the needed queues, so they should not force a
+        # native DepthAI close/reopen while the process is live.
         return (
-            int(oakd_point_cloud_settings["width"]),
-            int(oakd_point_cloud_settings["height"]),
-            float(oakd_point_cloud_settings["fps"]),
-            str(oakd_point_cloud_settings["rgb_res"]).strip().lower(),
-            str(oakd_point_cloud_settings["mono_res"]).strip().lower(),
-            str(oakd_point_cloud_settings["preset"]).strip().lower(),
-            bool(oakd_point_cloud_settings["lr_check"]),
-            bool(oakd_point_cloud_settings["subpixel"]),
-            int(oakd_point_cloud_settings["subpixel_bits"]),
+            int(settings["width"]),
+            int(settings["height"]),
+            float(settings["fps"]),
+            str(settings["rgb_res"]).strip().lower(),
+            str(settings["mono_res"]).strip().lower(),
+            str(settings["preset"]).strip().lower(),
+            bool(settings["lr_check"]),
+            bool(settings["subpixel"]),
+            int(settings["subpixel_bits"]),
         )
+
+    def _oakd_settings_signature():
+        return _oakd_settings_signature_for(oakd_point_cloud_settings)
+
+    def _update_oakd_pipeline_stats(extra=None):
+        requested_signature = _oakd_settings_signature()
+        capture_signature = getattr(oakd_capture, "settings_signature", None) if oakd_capture is not None else None
+        active_source = getattr(oakd_capture, "depth_source", oakd_point_cloud_settings.get("depth_source", "depthai")) if oakd_capture is not None else "none"
+        values = {
+            "enabled": bool(oakd_point_cloud_enabled),
+            "source": str(oakd_point_cloud_settings.get("depth_source", "depthai")),
+            "active_source": str(active_source),
+            "restart_required": bool(oakd_capture is not None and capture_signature != requested_signature),
+            "restart_deferred": bool(oakd_capture is not None and capture_signature != requested_signature),
+            "requested_width": int(oakd_point_cloud_settings["width"]),
+            "requested_height": int(oakd_point_cloud_settings["height"]),
+            "requested_fps": float(oakd_point_cloud_settings["fps"]),
+            "requested_mono_res": str(oakd_point_cloud_settings["mono_res"]),
+            "requested_rgb_res": str(oakd_point_cloud_settings["rgb_res"]),
+            "active_width": int(getattr(oakd_capture, "width", 0) or 0),
+            "active_height": int(getattr(oakd_capture, "height", 0) or 0),
+            "active_fps": float(getattr(oakd_capture, "fps", 0.0) or 0.0),
+            "active_mono_res": str(getattr(oakd_capture, "mono_res", "")),
+            "active_rgb_res": str(getattr(oakd_capture, "rgb_res", "")),
+        }
+        if extra:
+            values.update(extra)
+        update_point_cloud_stats("oakd", **values)
 
     def _oakd_publisher_loop():
         while not oakd_publisher_stop_event.is_set():
@@ -5018,7 +5248,8 @@ def main():
         align_stride = max(1, int(stride))
         if align_stride == 1:
             align_stride = 2
-        oak_points = depth_to_view_points(oak_depth, oak_intrinsics, min_depth, max_depth, align_stride, max_points=90000)
+        border_crop_px = max(0, int(oakd_point_cloud_border_crop_px))
+        oak_points = depth_to_view_points(oak_depth, oak_intrinsics, min_depth, max_depth, align_stride, max_points=90000, border_crop_px=border_crop_px)
         rs_points = depth_to_view_points(rs_depth, rs_intrinsics, min_depth, max_depth, align_stride, max_points=90000)
         if oak_points is None or rs_points is None or oak_points.shape[0] < 800 or rs_points.shape[0] < 800:
             status = (
@@ -5064,6 +5295,7 @@ def main():
                 o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=60),
             )
         refined = np.asarray(icp.transformation, dtype=np.float64)
+        delta_translation_m, delta_rotation_deg = transform_delta(init, refined)
         details = {
             "depth_refine_fitness": float(icp.fitness),
             "depth_refine_rmse": float(icp.inlier_rmse),
@@ -5073,10 +5305,31 @@ def main():
             "depth_refine_rs_down": int(len(target_down.points)),
             "depth_refine_voxel_m": float(voxel),
             "depth_refine_max_corr_m": float(max_corr),
+            "depth_refine_oak_border_crop_px": int(border_crop_px),
+            "depth_refine_delta_translation_m": float(delta_translation_m),
+            "depth_refine_delta_rotation_deg": float(delta_rotation_deg),
         }
+        min_fitness = float(os.environ.get("OAKD_REALSENSE_ARUCO_REFINE_MIN_FITNESS", "0.08"))
+        max_rmse = float(os.environ.get("OAKD_REALSENSE_ARUCO_REFINE_MAX_RMSE_M", "0.080"))
+        max_delta_m = float(os.environ.get("OAKD_REALSENSE_ARUCO_REFINE_MAX_DELTA_M", "0.100"))
+        max_delta_deg = float(os.environ.get("OAKD_REALSENSE_ARUCO_REFINE_MAX_DELTA_DEG", "10.0"))
+        if (
+            float(icp.fitness) < min_fitness
+            or float(icp.inlier_rmse) > max_rmse
+            or delta_translation_m > max_delta_m
+            or delta_rotation_deg > max_delta_deg
+        ):
+            status = (
+                "depth refine rejected "
+                f"fitness={float(icp.fitness):.3f} rmse={float(icp.inlier_rmse):.4f} "
+                f"delta={delta_translation_m:.3f}m/{delta_rotation_deg:.1f}deg "
+                f"limits fit>={min_fitness:.2f} rmse<={max_rmse:.3f} delta<={max_delta_m:.3f}m/{max_delta_deg:.1f}deg"
+            )
+            return init, status, details
         status = (
             "depth refined "
             f"fitness={float(icp.fitness):.3f} rmse={float(icp.inlier_rmse):.4f} "
+            f"delta={delta_translation_m:.3f}m/{delta_rotation_deg:.1f}deg "
             f"pts OAK={oak_points.shape[0]} RS={rs_points.shape[0]} down OAK={len(source_down.points)} RS={len(target_down.points)}"
         )
         return refined, status, details
@@ -5145,13 +5398,25 @@ def main():
                         "rs_area_px": float(rs_poses[key]["area_px"]),
                     }
                 )
-            oakd_to_realsense = average_rigid_transforms(marker_transforms)
+            oakd_to_realsense, marker_keep_mask, marker_residuals = robust_average_rigid_transforms(marker_transforms)
             if oakd_to_realsense is None:
                 status = f"{alignment_label} failed: no usable shared marker transforms | {oak_status} | {rs_status}"
                 write_oakd_alignment_result(result_path, requested_method, False, status)
                 print(f">>> OAK-D/RealSense {status} <<<")
                 return
+            for idx, details in enumerate(marker_details):
+                residual = marker_residuals[idx] if idx < len(marker_residuals) else {}
+                details["used_for_alignment"] = bool(marker_keep_mask[idx]) if idx < len(marker_keep_mask) else True
+                details["transform_residual_m"] = float(residual.get("translation_m", 0.0))
+                details["transform_residual_deg"] = float(residual.get("rotation_deg", 0.0))
+                details["transform_residual_score_m"] = float(residual.get("score_m", 0.0))
+            used_marker_count = int(sum(1 for keep in marker_keep_mask if keep)) if marker_keep_mask else len(shared_keys)
             shared_text = ",".join(f"{key[0]}:{key[1]}" for key in shared_keys)
+            used_text = ",".join(
+                f"{key[0]}:{key[1]}"
+                for key, keep in zip(shared_keys, marker_keep_mask)
+                if keep
+            ) or shared_text
             depth_correction_status = "depth correction skipped"
             depth_correction_details = []
             depth_correction_scale = 1.0
@@ -5249,6 +5514,8 @@ def main():
                 "marker_id": int(marker_id),
                 "marker_ids": sorted(parse_marker_id_filter(marker_id, marker_ids) or []),
                 "shared_marker_count": int(len(shared_keys)),
+                "used_marker_count": int(used_marker_count),
+                "used_markers": used_text,
                 "shared_markers": marker_details,
                 "oak_depth_correction_scale": float(depth_correction_scale),
                 "oak_depth_correction_offset_m": float(depth_correction_offset_m),
@@ -5265,12 +5532,12 @@ def main():
                 result_path,
                 requested_method,
                 True,
-                f"big ArUco applied | shared={len(shared_keys)} [{shared_text}] | {depth_correction_status} | {refine_status} | OAK->RS view transform | {oak_status} | {rs_status}",
+                f"big ArUco applied | used={used_marker_count}/{len(shared_keys)} [{used_text}] shared=[{shared_text}] | {depth_correction_status} | {refine_status} | OAK->RS view transform | {oak_status} | {rs_status}",
                 oakd_to_realsense,
                 result_details,
             )
             print(
-                f">>> OAK-D/RealSense big ArUco alignment solved from {len(shared_keys)} shared marker(s) "
+                f">>> OAK-D/RealSense big ArUco alignment solved from {used_marker_count}/{len(shared_keys)} shared marker(s) "
                 f"and wrote {result_path or '<no result path>'}: {depth_correction_status} | {refine_status} | OAK->RS view transform | {oak_status} | {rs_status} <<<"
             )
         except Exception as exc:
@@ -5584,12 +5851,46 @@ def main():
             oakd_capture = capture
             oakd_next_start_time = 0.0
             _start_oakd_publisher_if_needed()
+            _update_oakd_pipeline_stats({"restart_status": "active"})
         except Exception as exc:
             oakd_capture = None
             oakd_next_start_time = time.time() + 5.0
+            _update_oakd_pipeline_stats({"restart_status": f"failed:{exc}"})
             print(f">>> OAK-D unavailable: {exc} <<<")
         finally:
             oakd_starting = False
+
+    def restart_oakd_capture(reason="manual"):
+        nonlocal oakd_capture, oakd_starting, oakd_next_start_time
+        nonlocal last_oakd_point_cloud_frame_serial
+        if oakd_starting:
+            print(">>> OAK-D restart requested but a start/restart is already in progress. <<<", flush=True)
+            _update_oakd_pipeline_stats({"restart_status": "already_in_progress"})
+            return
+
+        def _restart_worker():
+            nonlocal oakd_capture, oakd_starting, oakd_next_start_time
+            nonlocal last_oakd_point_cloud_frame_serial
+            oakd_starting = True
+            _update_oakd_pipeline_stats({"restart_status": f"restarting:{reason}"})
+            print(f">>> OAK-D capture restart requested from Godot ({reason}). Reopening OAK-D pipeline only. <<<", flush=True)
+            old_capture = oakd_capture
+            oakd_capture = None
+            last_oakd_point_cloud_frame_serial = 0
+            _stop_oakd_publisher()
+            if old_capture is not None:
+                try:
+                    old_capture.release()
+                    print(">>> OAK-D previous capture released. <<<", flush=True)
+                except Exception as exc:
+                    print(f">>> OAK-D previous capture release raised {exc}; continuing restart attempt. <<<", flush=True)
+            time.sleep(0.75)
+            oakd_next_start_time = 0.0
+            oakd_starting = False
+            ensure_oakd_capture(oakd_point_cloud_enabled)
+            _update_oakd_pipeline_stats({"restart_status": "started" if oakd_capture is not None else "pending"})
+
+        threading.Thread(target=_restart_worker, name="oakd-manual-restart", daemon=True).start()
 
     def ensure_oakd_capture(enabled):
         nonlocal oakd_capture, oakd_point_cloud_shared_memory
@@ -5607,6 +5908,7 @@ def main():
                 oakd_point_cloud_shared_memory.close()
                 oakd_point_cloud_shared_memory = None
             oakd_starting = False
+            _update_oakd_pipeline_stats({"restart_status": "disabled"})
             return
         if oakd_point_cloud_shared_memory is None:
             oakd_point_cloud_shared_memory = LatestGridSharedMemory(OAKD_POINT_CLOUD_SHM_NAME, label="OAK-D point cloud")
@@ -5633,6 +5935,7 @@ def main():
                 print(f">>> OAK-D live depth-source switch unavailable: {reason}. Restart the stack only if you need this source from a host-only pipeline. <<<")
             oakd_capture.apply_runtime_settings(oakd_point_cloud_settings)
             _start_oakd_publisher_if_needed()
+            _update_oakd_pipeline_stats({"restart_status": "active"})
             return
         if oakd_starting:
             return
@@ -5657,12 +5960,14 @@ def main():
                 if active_source != requested_source:
                     source_note = f" active_source={active_source}, requested_source={requested_source}."
                 print(
-                    ">>> OAK-D setting change received while capture is live; "
-                    "restart deferred to avoid DepthAI native close crash. "
-                    "Live-safe depth source/iters/scale/compile were still applied when possible. "
-                    "Restart the stack only to apply OAK-D width/fps/mono/preset/lr/subpixel changes."
-                    f"{source_note} <<<"
+                    ">>> OAK-D pipeline setting change received while capture is live; "
+                    "restart the tracker process to apply OAK-D width/fps/mono/preset/lr/subpixel changes. "
+                    "Skipping in-process DepthAI close because it can crash in native code. "
+                    "Live-safe depth source/profile/iters/scale were still applied when possible."
+                    f"{source_note} <<<",
+                    flush=True,
                 )
+                _update_oakd_pipeline_stats({"restart_status": "restart_required"})
             _start_oakd_publisher_if_needed()
             return
         settings = dict(oakd_point_cloud_settings)
@@ -5721,6 +6026,11 @@ def main():
             cols = np.arange(0, depth_m.shape[1], stride, dtype=np.int32)
             sampled_depth = depth_m[np.ix_(rows, cols)]
             valid = np.isfinite(sampled_depth) & (sampled_depth >= min_depth) & (sampled_depth <= max_depth)
+            border_crop_px = max(0, int(oakd_point_cloud_border_crop_px))
+            if border_crop_px > 0:
+                row_edge = (rows < border_crop_px) | (rows >= depth_m.shape[0] - border_crop_px)
+                col_edge = (cols < border_crop_px) | (cols >= depth_m.shape[1] - border_crop_px)
+                valid[row_edge[:, np.newaxis] | col_edge[np.newaxis, :]] = False
             sampled_depth, valid = stabilize_point_cloud_depth(
                 "oakd",
                 sampled_depth,
@@ -5779,26 +6089,23 @@ def main():
                 last_oakd_point_cloud_frame_serial = int(frame_serial)
                 oakd_point_cloud_send_counter += 1
                 valid_pct = 100.0 * float(valid_count) / max(1.0, float(valid.size))
-                update_point_cloud_stats(
-                    "oakd",
-                    enabled=True,
-                    publish_fps=float(publish_fps),
-                    capture_fps=float(getattr(oakd_capture, "capture_fps", 0.0)),
-                    points=int(valid_count),
-                    valid_pct=float(valid_pct),
-                    width=int(grid_w),
-                    height=int(grid_h),
-                    stride=int(stride),
-                    source=str(getattr(oakd_capture, "depth_source", oakd_point_cloud_settings.get("depth_source", "depthai"))),
-                    frame_age_ms=float((time.perf_counter() - frame_time) * 1000.0) if frame_time else 0.0,
-                    sensor_age_ms=float(sensor_age_ms),
-                    color_age_ms=float(color_age_ms),
-                    sensor_host_age_ms=float(sensor_host_age_ms),
-                    color_host_age_ms=float(color_host_age_ms),
-                    fast_backend=str(getattr(oakd_capture, "fast_stereo_backend", oakd_point_cloud_settings.get("fast_stereo_backend", ""))),
-                    fast_profile=str(getattr(oakd_capture, "fast_stereo_model_profile", oakd_point_cloud_settings.get("fast_stereo_model_profile", ""))),
-                    fast_timing_ms=dict(getattr(getattr(oakd_capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
-                )
+                _update_oakd_pipeline_stats({
+                    "publish_fps": float(publish_fps),
+                    "capture_fps": float(getattr(oakd_capture, "capture_fps", 0.0)),
+                    "points": int(valid_count),
+                    "valid_pct": float(valid_pct),
+                    "width": int(grid_w),
+                    "height": int(grid_h),
+                    "stride": int(stride),
+                    "frame_age_ms": float((time.perf_counter() - frame_time) * 1000.0) if frame_time else 0.0,
+                    "sensor_age_ms": float(sensor_age_ms),
+                    "color_age_ms": float(color_age_ms),
+                    "sensor_host_age_ms": float(sensor_host_age_ms),
+                    "color_host_age_ms": float(color_host_age_ms),
+                    "fast_backend": str(getattr(oakd_capture, "fast_stereo_backend", oakd_point_cloud_settings.get("fast_stereo_backend", ""))),
+                    "fast_profile": str(getattr(oakd_capture, "fast_stereo_model_profile", oakd_point_cloud_settings.get("fast_stereo_model_profile", ""))),
+                    "fast_timing_ms": dict(getattr(getattr(oakd_capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
+                })
                 if point_cloud_console_stats and now - oakd_point_cloud_last_fps_print_time >= 2.0:
                     elapsed = now - oakd_point_cloud_last_fps_print_time
                     print(
@@ -6388,6 +6695,7 @@ def main():
                     oakd_point_cloud_min_depth = float(cmd_json.get("min_depth", oakd_point_cloud_min_depth))
                     oakd_point_cloud_max_depth = float(cmd_json.get("max_depth", oakd_point_cloud_max_depth))
                     oakd_point_cloud_geometry_edge_guard_m = max(0.0, float(cmd_json.get("oakd_geometry_edge_guard_m", oakd_point_cloud_geometry_edge_guard_m)))
+                    oakd_point_cloud_border_crop_px = max(0, int(cmd_json.get("oakd_border_crop_px", oakd_point_cloud_border_crop_px)))
                     oakd_point_cloud_stabilization_enabled = bool(cmd_json.get("oakd_stabilization_enabled", oakd_point_cloud_stabilization_enabled))
                     oakd_point_cloud_stabilization_deadband_m = max(0.0, float(cmd_json.get("oakd_stabilization_deadband_m", oakd_point_cloud_stabilization_deadband_m)))
                     oakd_point_cloud_stabilization_hold_frames = max(0, int(cmd_json.get("oakd_stabilization_hold_frames", oakd_point_cloud_stabilization_hold_frames)))
@@ -6442,7 +6750,7 @@ def main():
                             "Using NVIDIA FastFoundationStereo GPU depth; live switch is attempted when the running OAK-D pipeline has rectified mono queues. <<<"
                         )
                     ensure_oakd_capture(oakd_point_cloud_enabled)
-                    update_point_cloud_stats("oakd", enabled=bool(oakd_point_cloud_enabled), source=str(oakd_point_cloud_settings["depth_source"]))
+                    _update_oakd_pipeline_stats()
                     if oakd_capture is not None and getattr(oakd_capture, "settings_signature", None) == _oakd_settings_signature():
                         oakd_capture.apply_runtime_settings(oakd_point_cloud_settings)
                     source_label = "depthai_on_device"
@@ -6457,6 +6765,7 @@ def main():
                         f"stride={oakd_point_cloud_stride} "
                         f"depth={oakd_point_cloud_min_depth:.2f}-{oakd_point_cloud_max_depth:.2f}m "
                         f"edge_guard={oakd_point_cloud_geometry_edge_guard_m:.3f}m "
+                        f"border={oakd_point_cloud_border_crop_px}px "
                         f"stabilize={'on' if oakd_point_cloud_stabilization_enabled else 'off'}:{oakd_point_cloud_stabilization_deadband_m:.3f}m hold={oakd_point_cloud_stabilization_hold_frames} "
                         f"{oakd_point_cloud_settings['width']}x{oakd_point_cloud_settings['height']} "
                         f"{oakd_point_cloud_settings['fps']:.0f}fps "
@@ -6474,6 +6783,46 @@ def main():
                         f"shm_color={oakd_point_cloud_shm_color_format} "
                         f"shm={OAKD_POINT_CLOUD_SHM_NAME} <<<"
                     )
+                elif cmd_type == "oakd_restart":
+                    point_cloud_stats_path = str(cmd_json.get("stats_path", point_cloud_stats_path)).strip()
+                    oakd_point_cloud_enabled = bool(cmd_json.get("enabled", oakd_point_cloud_enabled))
+                    oakd_point_cloud_settings.update({
+                        "width": max(160, int(cmd_json.get("oakd_width", oakd_point_cloud_settings["width"]))),
+                        "height": max(120, int(cmd_json.get("oakd_height", oakd_point_cloud_settings["height"]))),
+                        "fps": min(60.0, max(1.0, float(cmd_json.get("oakd_fps", oakd_point_cloud_settings["fps"])))),
+                        "rgb_res": str(cmd_json.get("oakd_rgb_res", oakd_point_cloud_settings["rgb_res"])).strip().lower(),
+                        "mono_res": str(cmd_json.get("oakd_mono_res", oakd_point_cloud_settings["mono_res"])).strip().lower(),
+                        "preset": str(cmd_json.get("oakd_stereo_preset", oakd_point_cloud_settings["preset"])).strip().lower(),
+                        "lr_check": bool(cmd_json.get("oakd_lr_check", oakd_point_cloud_settings["lr_check"])),
+                        "subpixel": bool(cmd_json.get("oakd_subpixel", oakd_point_cloud_settings["subpixel"])),
+                        "subpixel_bits": max(3, min(5, int(cmd_json.get("oakd_subpixel_bits", oakd_point_cloud_settings["subpixel_bits"])))),
+                        "confidence_threshold": max(0, min(255, int(cmd_json.get("oakd_confidence_threshold", oakd_point_cloud_settings["confidence_threshold"])))),
+                        "median_filter": str(cmd_json.get("oakd_median_filter", oakd_point_cloud_settings["median_filter"])).strip().lower(),
+                        "speckle_filter": bool(cmd_json.get("oakd_speckle_filter", oakd_point_cloud_settings["speckle_filter"])),
+                        "speckle_range": max(0, int(cmd_json.get("oakd_speckle_range", oakd_point_cloud_settings["speckle_range"]))),
+                        "depth_source": str(cmd_json.get("oakd_depth_source", oakd_point_cloud_settings.get("depth_source", "depthai"))).strip().lower(),
+                        "use_rgb_color_for_host_depth": bool(cmd_json.get("oakd_use_rgb_color_for_host_depth", oakd_point_cloud_settings.get("use_rgb_color_for_host_depth", True))),
+                        "host_depth_color_mode": str(cmd_json.get("oakd_host_depth_color_mode", oakd_point_cloud_settings.get("host_depth_color_mode", "rgb_projected_stable"))).strip().lower(),
+                        "fast_stereo_enabled": bool(cmd_json.get("oakd_fast_stereo_enabled", oakd_point_cloud_settings.get("fast_stereo_enabled", False))),
+                        "fast_stereo_iters": max(1, min(32, int(cmd_json.get("oakd_fast_stereo_iters", oakd_point_cloud_settings.get("fast_stereo_iters", 4))))),
+                        "fast_stereo_scale": max(0.25, min(1.0, float(cmd_json.get("oakd_fast_stereo_scale", oakd_point_cloud_settings.get("fast_stereo_scale", 1.0))))),
+                        "fast_stereo_torch_compile": bool(cmd_json.get("oakd_fast_stereo_torch_compile", oakd_point_cloud_settings.get("fast_stereo_torch_compile", False))),
+                        "fast_stereo_backend": str(cmd_json.get("oakd_fast_stereo_backend", oakd_point_cloud_settings.get("fast_stereo_backend", "pytorch"))).strip().lower(),
+                        "fast_stereo_model_profile": str(cmd_json.get("oakd_fast_stereo_model_profile", oakd_point_cloud_settings.get("fast_stereo_model_profile", "full_320x736_i4"))).strip().lower(),
+                    })
+                    if oakd_point_cloud_settings["depth_source"] not in ("depthai", "fast_foundation", "host_sgbm"):
+                        oakd_point_cloud_settings["depth_source"] = "depthai"
+                    if oakd_point_cloud_settings["fast_stereo_backend"] not in ("pytorch", "onnx_trt", "onnx_cuda", "trt_engine"):
+                        oakd_point_cloud_settings["fast_stereo_backend"] = "pytorch"
+                    if oakd_point_cloud_settings["fast_stereo_model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
+                        oakd_point_cloud_settings["fast_stereo_model_profile"] = "full_320x736_i4"
+                    if oakd_point_cloud_settings["host_depth_color_mode"] not in ("gray", "rgb_preview", "rgb_projected", "rgb_projected_stable"):
+                        oakd_point_cloud_settings["host_depth_color_mode"] = "rgb_projected_stable"
+                    if not oakd_point_cloud_settings.get("use_rgb_color_for_host_depth", True):
+                        oakd_point_cloud_settings["host_depth_color_mode"] = "gray"
+                    point_cloud_stabilizer_state.pop("oakd", None)
+                    _update_oakd_pipeline_stats({"restart_status": "requested"})
+                    restart_oakd_capture("manual")
                 elif cmd_type == "oakd_realsense_align":
                     method = str(cmd_json.get("method", "")).strip().lower()
                     result_path = str(cmd_json.get("result_path", "")).strip()

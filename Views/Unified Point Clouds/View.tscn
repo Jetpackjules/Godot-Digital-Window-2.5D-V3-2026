@@ -4,12 +4,15 @@
 
 [node name="Unified Point Clouds" type="Node3D" unique_id=267359055]
 script = ExtResource("1_unified")
+editor_stream_enabled = false
+render_mode = "shader_mesh"
+oakd_capture_preset = "30fps_low_latency"
+oakd_fast_profile = "rt_256x512_i2"
+oakd_fast_iters = 4
+calibration_status = "Big ArUco OK: 4 shared marker(s), depth rmse 0.021m"
+debug_text = "RealSense cap/pub/render 60.1/30.6/10.0, OAK-D cap/pub/render 30.0/29.0/10.0"
 
-[node name="CameraClouds" type="Node3D" parent="." unique_id=1373529331]
-
-[node name="RealSenseCloudAnchor" type="Node3D" parent="CameraClouds"]
-
-[node name="OAKDCloudAnchor" type="Node3D" parent="CameraClouds"]
+[node name="CameraClouds2" type="Node3D" parent="." unique_id=1373529331]
 
 [node name="DebugPanelAnchor" type="Node3D" parent="." unique_id=533157947]
 transform = Transform3D(1, 0, 0, 0, 0.906308, 0.422618, 0, -0.422618, 0.906308, -1.15, 0.95, -1.35)

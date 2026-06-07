@@ -181,25 +181,25 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		oakd_enabled = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and value)
 		_update_camera_renderers()
+## Reopens only the OAK-D capture pipeline using the current OAK-D settings. Use this after changing OAK-D preset/resolution/FPS/source settings.
+@export var restart_oakd_now: bool = false:
+	set(value):
+		restart_oakd_now = false
+		if value:
+			_request_oakd_restart()
+## Live OAK-D status from the tracker. If this says restart required, press Restart Oakd Now to apply deferred pipeline settings.
+@export_multiline var oakd_status: String = ""
 ## OAK-D grid sampling stride. 1 keeps maximum OAK-D detail; 2 halves each axis and is much faster. Performance impact: high.
 @export_range(1, 8, 1) var oakd_stride: int = 1:
 	set(value):
 		oakd_stride = maxi(1, value)
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
-## OAK-D processing width before stride. Performance impact: high; larger values increase depth/model work.
-@export_range(160, 1920, 16) var oakd_width: int = 640:
+## Fixed OAK-D capture preset. 30fps_low_latency is the normal low-delay 400p stereo path; 60fps_stable is available for experiments.
+@export_enum("30fps_low_latency", "60fps_stable", "30fps_quality") var oakd_capture_preset: String = "30fps_low_latency":
 	set(value):
-		oakd_width = maxi(160, value)
-		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
-## OAK-D processing height before stride. Performance impact: high; larger values increase depth/model work.
-@export_range(120, 1080, 16) var oakd_height: int = 360:
-	set(value):
-		oakd_height = maxi(120, value)
-		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
-## Requested OAK-D camera FPS. Performance impact: moderate to high; model depth may still be the bottleneck.
-@export_range(1.0, 60.0, 1.0) var oakd_fps: float = 30.0:
-	set(value):
-		oakd_fps = clampf(value, 1.0, 60.0)
+		if value not in ["30fps_low_latency", "60fps_stable", "30fps_quality"]:
+			value = "30fps_low_latency"
+		oakd_capture_preset = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
 ## OAK-D depth source. FastFoundation is best-looking but GPU-heavy; DepthAI is device-side and simpler. Performance impact: high.
 @export_enum("depthai", "fast_foundation", "host_sgbm") var oakd_depth_source: String = "fast_foundation":
@@ -231,6 +231,11 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		oakd_geometry_edge_guard_m = maxf(0.0, value)
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
+## Drops a small raw-pixel border from the OAK-D depth image before publishing. Removes sensor-edge strips across every render mode.
+@export_range(0, 64, 1, "suffix:px") var oakd_border_crop_px: int = 12:
+	set(value):
+		oakd_border_crop_px = maxi(0, value)
+		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
 ## Freezes tiny OAK-D depth changes in the published grid. Performance impact: low; reduces floor shimmer without changing depth source quality.
 @export var oakd_stabilization_enabled: bool = true:
 	set(value):
@@ -254,7 +259,7 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		oakd_fast_backend = value
 		_send_camera_stream_command(CAMERA_OAKD, editor_stream_enabled and oakd_enabled)
 ## FastFoundation model profile. Realtime is fastest; full profile is slower and can look better. Performance impact: high.
-@export_enum("full_320x736_i4", "rt_256x512_i2", "fast_192x384_i2") var oakd_fast_profile: String = "rt_256x512_i2":
+@export_enum("rt_256x512_i2", "fast_192x384_i2", "full_320x736_i4") var oakd_fast_profile: String = "rt_256x512_i2":
 	set(value):
 		if value not in ["full_320x736_i4", "rt_256x512_i2", "fast_192x384_i2"]:
 			value = "rt_256x512_i2"
@@ -367,11 +372,13 @@ func _apply_clean_defaults() -> void:
 	realsense_stabilization_enabled = true
 	realsense_stabilization_deadband_m = 0.012
 	realsense_stabilization_hold_frames = 1
+	oakd_capture_preset = "30fps_low_latency"
 	oakd_depth_source = "fast_foundation"
 	oakd_color_enabled = false
 	oakd_color_mode = "rgb_projected_stable"
 	oakd_render_depth_bias_m = 0.004
 	oakd_geometry_edge_guard_m = 0.06
+	oakd_border_crop_px = 12
 	oakd_stabilization_enabled = true
 	oakd_stabilization_deadband_m = 0.018
 	oakd_stabilization_hold_frames = 1
@@ -458,6 +465,31 @@ func _tracker_mesh_mode() -> String:
 func _effective_oakd_color_mode() -> String:
 	return oakd_color_mode if oakd_color_enabled else "gray"
 
+func _oakd_capture_settings() -> Dictionary:
+	if oakd_capture_preset == "60fps_stable":
+		return {
+			"width": 640,
+			"height": 400,
+			"fps": 60.0,
+			"rgb_res": "720p",
+			"mono_res": "400p",
+		}
+	if oakd_capture_preset == "30fps_quality":
+		return {
+			"width": 1280,
+			"height": 800,
+			"fps": 30.0,
+			"rgb_res": "1080p",
+			"mono_res": "800p",
+		}
+	return {
+		"width": 640,
+		"height": 360,
+		"fps": 30.0,
+		"rgb_res": "1080p",
+		"mono_res": "400p",
+	}
+
 func _effective_point_pixel_size() -> float:
 	return point_pixel_size * 3.0 if render_mode == "point_splats" else point_pixel_size
 
@@ -508,13 +540,14 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 			"rs_stabilization_hold_frames": realsense_stabilization_hold_frames,
 		}, true)
 	elif camera_id == CAMERA_OAKD:
+		var oakd_capture := _oakd_capture_settings()
 		payload.merge({
 			"type": "oakd_point_cloud",
-			"oakd_width": oakd_width,
-			"oakd_height": oakd_height,
-			"oakd_fps": oakd_fps,
-			"oakd_rgb_res": "1080p",
-			"oakd_mono_res": "400p",
+			"oakd_width": int(oakd_capture["width"]),
+			"oakd_height": int(oakd_capture["height"]),
+			"oakd_fps": float(oakd_capture["fps"]),
+			"oakd_rgb_res": str(oakd_capture["rgb_res"]),
+			"oakd_mono_res": str(oakd_capture["mono_res"]),
 			"oakd_stereo_preset": "fast_density",
 			"oakd_lr_check": true,
 			"oakd_subpixel": false,
@@ -527,6 +560,7 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 			"oakd_use_rgb_color_for_host_depth": oakd_color_enabled,
 			"oakd_host_depth_color_mode": _effective_oakd_color_mode(),
 			"oakd_geometry_edge_guard_m": oakd_geometry_edge_guard_m,
+			"oakd_border_crop_px": oakd_border_crop_px,
 			"oakd_stabilization_enabled": oakd_stabilization_enabled,
 			"oakd_stabilization_deadband_m": oakd_stabilization_deadband_m,
 			"oakd_stabilization_hold_frames": oakd_stabilization_hold_frames,
@@ -539,6 +573,40 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 		}, true)
 	else:
 		return
+	_send_udp(payload)
+
+func _request_oakd_restart() -> void:
+	if _point_cloud_stats_path.is_empty():
+		_point_cloud_stats_path = ProjectSettings.globalize_path("user://point_cloud_stream_stats.json")
+	var oakd_capture := _oakd_capture_settings()
+	var payload := {
+		"type": "oakd_restart",
+		"enabled": editor_stream_enabled and oakd_enabled,
+		"stats_path": _point_cloud_stats_path,
+		"oakd_width": int(oakd_capture["width"]),
+		"oakd_height": int(oakd_capture["height"]),
+		"oakd_fps": float(oakd_capture["fps"]),
+		"oakd_rgb_res": str(oakd_capture["rgb_res"]),
+		"oakd_mono_res": str(oakd_capture["mono_res"]),
+		"oakd_stereo_preset": "fast_density",
+		"oakd_lr_check": true,
+		"oakd_subpixel": false,
+		"oakd_subpixel_bits": 3,
+		"oakd_confidence_threshold": 160,
+		"oakd_median_filter": "off",
+		"oakd_speckle_filter": false,
+		"oakd_speckle_range": 0,
+		"oakd_depth_source": oakd_depth_source,
+		"oakd_use_rgb_color_for_host_depth": oakd_color_enabled,
+		"oakd_host_depth_color_mode": _effective_oakd_color_mode(),
+		"oakd_fast_stereo_enabled": oakd_depth_source == "fast_foundation",
+		"oakd_fast_stereo_backend": oakd_fast_backend,
+		"oakd_fast_stereo_model_profile": oakd_fast_profile,
+		"oakd_fast_stereo_iters": oakd_fast_iters,
+		"oakd_fast_stereo_scale": oakd_fast_scale,
+		"oakd_fast_stereo_torch_compile": false,
+	}
+	oakd_status = "OAK-D restart requested..."
 	_send_udp(payload)
 
 func _ensure_scene_anchors() -> void:
@@ -740,6 +808,34 @@ func _poll_point_cloud_stats() -> void:
 	var parsed = JSON.parse_string(text)
 	if typeof(parsed) == TYPE_DICTIONARY:
 		_point_cloud_stats = parsed
+		_update_oakd_status_from_stats()
+
+func _update_oakd_status_from_stats() -> void:
+	var stats: Dictionary = _point_cloud_stats.get(CAMERA_OAKD, {})
+	if stats.is_empty():
+		oakd_status = "OAK-D status unavailable"
+		return
+	var source := str(stats.get("source", "unknown"))
+	var active_source := str(stats.get("active_source", source))
+	var restart_required := bool(stats.get("restart_required", false))
+	var active_size := "%dx%d@%.0f" % [
+		int(stats.get("active_width", stats.get("width", 0))),
+		int(stats.get("active_height", stats.get("height", 0))),
+		float(stats.get("active_fps", 0.0)),
+	]
+	var requested_size := "%dx%d@%.0f" % [
+		int(stats.get("requested_width", 0)),
+		int(stats.get("requested_height", 0)),
+		float(stats.get("requested_fps", 0.0)),
+	]
+	var status := "OAK-D active %s %s" % [active_source, active_size]
+	if source != active_source:
+		status += " | requested source %s" % source
+	if requested_size != "0x0@0" and requested_size != active_size:
+		status += " | requested %s" % requested_size
+	if restart_required:
+		status += "\nRestart required for deferred pipeline settings. Press Restart Oakd Now."
+	oakd_status = status
 
 func _native_stat(camera_id: String, method: String) -> float:
 	var node := _camera_nodes.get(camera_id) as Object

@@ -1,0 +1,48 @@
+[gd_scene format=3 uid="uid://ryjpivba3a2e"]
+
+[ext_resource type="Script" uid="uid://ba0mpmcv6etbl" path="res://Views/RealSense Point Cloud/realsense_point_cloud_live.gd" id="1_rspc"]
+
+[node name="RealSense Point Cloud" type="Node3D" unique_id=504602133]
+transform = Transform3D(0.32, 0, 0, 0, 0.32, 0, 0, 0, 0.32, 0, 0, 0)
+script = ExtResource("1_rspc")
+stream_transport = "shm"
+use_native_shm_renderer = true
+oakd_fusion_enabled = true
+oakd_position = Vector3(0.7025253, 0.5163273, -0.32165146)
+oakd_rotation_degrees = Vector3(-32.21381, 69.103966, 44.268932)
+oakd_width = 640
+oakd_height = 360
+oakd_mono_res = "400p"
+oakd_subpixel = false
+oakd_confidence_threshold = 160
+oakd_median_filter = "off"
+oakd_speckle_filter = false
+oakd_speckle_range = 0
+oakd_depth_source = "fast_foundation"
+oakd_fast_stereo_enabled = true
+oakd_fast_stereo_iters = 2
+oakd_fast_stereo_scale = 0.5
+oakd_fast_stereo_backend = "onnx_trt"
+oakd_fast_stereo_model_profile = "rt_256x512_i2"
+editor_debug_text = "Point Cloud Streams
+RealSense on | cap 61.7 pub 34.2 render 0.0 | pts 242550/0 valid 79% | 640x480 | tris 0
+OAK-D on | cap 27.1 pub 29.1 render 0.0 | pts 230400/0 valid 100% | 640x360 | tris 0
+OAK source=fast_foundation backend=onnx_trt profile=rt_256x512_i2 iters=2
+Depth 0.20-4.50m stride=2 sync=off delay=off rs/oak=0/0ms mesh=off/stereo_cpu combined=separate_meshes
+Align buttons: Open3D, ChArUco, big ArUco size=0.1500m dict=4x4_50 id=-1 ids=45,46,47,48,49 refine=on
+OAK manual correction pos=(0.000, 0.000, 0.000)m rot=(0.00, 0.00, 0.00)deg"
+editor_stream_enabled = false
+stream_stride = 2
+point_size = 0.015
+near_point_size_boost = 3.0
+max_render_points = 60000
+live_mesh_mode = "stereo_cpu"
+mesh_max_edge_m = 0.05
+mesh_max_depth_delta_m = 0.05
+texture_map_mesh = true
+render_benchmark_sample_seconds = 2.0
+render_benchmark_settle_seconds = 0.75
+render_benchmark_summary = "Point cloud render benchmark complete: C:/Users/jetpa/AppData/Roaming/Godot/app_userdata/2.5D window V3/point_cloud_render_benchmark.json"
+filters_for_point_cloud_geometry = true
+filter_geometry_edge_guard_m = 0.0
+hole_filling = 0
