@@ -69,10 +69,13 @@ REALSENSE_POINT_CLOUD_SHM_MAX_BYTES = int(os.environ.get("REALSENSE_POINT_CLOUD_
 REALSENSE_POINT_CLOUD_DEFAULT_PACKET_POINTS = int(os.environ.get("REALSENSE_POINT_CLOUD_PACKET_POINTS", "90"))
 TRACKER_WINDOW_NAME = "Multi-Monitor ArUco Constellation Tracker"
 ROOM_MAP_WINDOW_NAME = "3D Room Spatial Map"
+TIMING_WINDOW_NAME = "Tracker Timing"
 TRACKER_WINDOW_DEFAULT_WIDTH = 640
 TRACKER_WINDOW_DEFAULT_HEIGHT = 360
 ROOM_MAP_WINDOW_DEFAULT_WIDTH = 400
 ROOM_MAP_WINDOW_DEFAULT_HEIGHT = 320
+TIMING_WINDOW_DEFAULT_WIDTH = 520
+TIMING_WINDOW_DEFAULT_HEIGHT = 360
 WINDOW_DEFAULT_X = 60
 WINDOW_DEFAULT_Y = 60
 WINDOW_DEFAULT_GAP = 16
@@ -89,6 +92,7 @@ CAMERA_KEY_DOWN_EX = 2621440
 CAMERA_PICKER_KEY = ord('y')
 CAMERA_SOURCE_TOGGLE_KEY = ord('s')
 PREVIEW_MODE_TOGGLE_KEY = ord('p')
+TIMING_PANEL_TOGGLE_KEY = ord('t')
 CAMERA_INDEX_DEFAULT = 0
 CAMERA_INDEX_ENV = "CAMERA_INDEX"
 CAMERA_SOURCE_ENV = "TRACKER_CAMERA_SOURCE"
@@ -96,11 +100,16 @@ CAMERA_SOURCE_WEBCAM = "webcam"
 CAMERA_SOURCE_REALSENSE = "realsense"
 REALSENSE_TRACKING_MODE_KEY = ord('m')
 REALSENSE_TRACKING_ENABLE_KEY = ord('n')
+REALSENSE_TRACKING_SMOOTHING_KEY = ord('u')
 STEREO_SCREEN_SIZE_TOGGLE_KEY = ord('h')
 REALSENSE_TRACKING_MODE_ENV = "REALSENSE_TRACKING_MODE"
 REALSENSE_TRACKING_ENABLED_ENV = "REALSENSE_TRACKING_ENABLED"
+REALSENSE_SMOOTHING_ENV = "REALSENSE_SMOOTHING"
+REALSENSE_SMOOTHING_DEFAULT = float(os.environ.get(REALSENSE_SMOOTHING_ENV, "0.72"))
+REALSENSE_FAST_ML_SCALE_ENV = "REALSENSE_FAST_ML_SCALE"
+REALSENSE_FAST_ML_SCALE = float(os.environ.get(REALSENSE_FAST_ML_SCALE_ENV, "0.5"))
 STEREO_SCREEN_SIZE_AUTO_ENV = "STEREO_SCREEN_SIZE_AUTO"
-REALSENSE_TRACKING_MODES = ["headlock", "ml", "yolo"]
+REALSENSE_TRACKING_MODES = ["headlock", "ml", "ml_fast", "ml_body_fast", "yolo"]
 REALSENSE_HEAD_MODEL_ENV = "REALSENSE_HEAD_MODEL"
 REALSENSE_HEAD_MODEL_DEFAULT = os.path.join(
     "experiments",
@@ -113,8 +122,14 @@ HEAD_TO_CAMERA_DEBUG_KEY = ord('f')
 ANCHOR_POSE_MODE_BUTTON_LABEL = "Anchor"
 ROOM_MAP_TOGGLE_BUTTON_LABEL = "3D View"
 PREVIEW_MODE_BUTTON_LABEL = "Preview"
+TIMING_PANEL_BUTTON_LABEL = "Timing"
 PREVIEW_MODE_ENV = "TRACKER_PREVIEW_MODE"
 PREVIEW_MODES = ["full", "black"]
+TRACKER_PREVIEW_MAX_FPS = float(os.environ.get("TRACKER_PREVIEW_MAX_FPS", "15"))
+TRACKER_TIMING_PANEL_DEFAULT = os.environ.get("TRACKER_TIMING_PANEL", "0").strip().lower() in ("1", "true", "yes", "on")
+TRACKER_TIMING_PANEL_FPS = float(os.environ.get("TRACKER_TIMING_PANEL_FPS", "8"))
+TRACKER_TIMING_LOG_PATH = os.environ.get("TRACKER_TIMING_LOG_PATH", os.path.join("logs", "tracker_timing_profile.json"))
+TRACKER_TIMING_LOG_MAX_SAMPLES = int(os.environ.get("TRACKER_TIMING_LOG_MAX_SAMPLES", "240"))
 ANCHOR_POSE_MODES = ["smooth", "stable", "raw"]
 ANCHOR_POSE_MODE_LABELS = {
     "smooth": "Smooth",
@@ -1613,6 +1628,114 @@ def draw_outlined_text(frame, text, origin, scale=0.62, color=(255, 255, 255), t
         thickness,
         cv2.LINE_AA,
     )
+
+def draw_timing_panel(bucket_ms, capture_loop_fps, preview_fps, room_map_fps, tracking_text):
+    width = TIMING_WINDOW_DEFAULT_WIDTH
+    height = TIMING_WINDOW_DEFAULT_HEIGHT
+    panel = np.zeros((height, width, 3), dtype=np.uint8)
+    panel[:] = (18, 18, 18)
+
+    title = f"Loop {capture_loop_fps:5.1f} fps | Preview {preview_fps:4.1f} | 3D {room_map_fps:4.1f}"
+    cv2.putText(panel, title, (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (230, 230, 230), 2, cv2.LINE_AA)
+    cv2.putText(panel, tracking_text, (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (180, 210, 255), 1, cv2.LINE_AA)
+
+    rows = [
+        ("loop", "Total loop"),
+        ("commands", "Commands"),
+        ("capture", "Capture/read"),
+        ("pc_publish", "Point cloud"),
+        ("layout_scan", "Marker scan"),
+        ("pose_solve", "Pose/map solve"),
+        ("room_map_draw", "3D draw"),
+        ("preview_draw", "Preview draw"),
+        ("imshow", "imshow"),
+        ("waitkey", "waitKey"),
+    ]
+    max_ms = max([16.7] + [float(bucket_ms.get(key, 0.0)) for key, _label in rows])
+    x0 = 18
+    bar_x = 170
+    bar_w = width - bar_x - 24
+    y = 94
+    for key, label in rows:
+        ms = float(bucket_ms.get(key, 0.0))
+        if ms < 2.0:
+            color = (70, 210, 90)
+        elif ms < 6.0:
+            color = (70, 190, 230)
+        elif ms < 12.0:
+            color = (60, 170, 255)
+        else:
+            color = (60, 80, 255)
+        cv2.putText(panel, label, (x0, y + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1, cv2.LINE_AA)
+        cv2.putText(panel, f"{ms:6.2f} ms", (96, y + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
+        cv2.rectangle(panel, (bar_x, y), (bar_x + bar_w, y + 16), (42, 42, 42), -1)
+        fill = int(min(bar_w, round((ms / max_ms) * bar_w)))
+        if fill > 0:
+            cv2.rectangle(panel, (bar_x, y), (bar_x + fill, y + 16), color, -1)
+        y += 27
+
+    return panel
+
+def write_timing_profile_log(path, samples, latest_sample):
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        bucket_names = [
+            "loop",
+            "commands",
+            "capture",
+            "pc_publish",
+            "layout_scan",
+            "pose_solve",
+            "room_map_draw",
+            "preview_draw",
+            "imshow",
+            "waitkey",
+        ]
+        summary = {}
+        for name in bucket_names:
+            values = [float(sample.get("buckets_ms", {}).get(name, 0.0)) for sample in samples]
+            if values:
+                summary[name] = {
+                    "avg_ms": sum(values) / len(values),
+                    "min_ms": min(values),
+                    "max_ms": max(values),
+                }
+            else:
+                summary[name] = {"avg_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0}
+        godot_pose_summary = {}
+        for name in [
+            "render_fps",
+            "frame_ms",
+            "tracking_rx_hz",
+            "ws_packets_drained",
+            "ws_pose_packets_coalesced",
+            "pose_transport_age_ms",
+            "resolved_head_age_ms",
+            "age_ms",
+        ]:
+            values = [
+                float(sample.get("godot_pose", {}).get(name, -1.0))
+                for sample in samples
+                if float(sample.get("godot_pose", {}).get(name, -1.0)) >= 0.0
+            ]
+            if values:
+                godot_pose_summary[name] = {
+                    "avg": sum(values) / len(values),
+                    "min": min(values),
+                    "max": max(values),
+                }
+        payload = {
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "sample_count": len(samples),
+            "latest": latest_sample,
+            "summary": summary,
+            "godot_pose_summary": godot_pose_summary,
+            "samples": samples,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as exc:
+        print(f">>> Failed to write tracker timing log {path}: {exc} <<<")
 
 def get_capture_dimensions(capture):
     width = int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
@@ -3359,7 +3482,16 @@ class AsyncRealSenseHeadTracker:
                 "mode": self.latest_mode,
                 "label": self.latest_label,
                 "conf": float(self.latest_conf),
+                "smoothing": float(self.smoothing),
+                "scale": 1.0,
             }
+
+    def set_smoothing(self, value):
+        value = float(np.clip(value, 0.0, 0.98))
+        with self.lock:
+            self.smoothing = value
+            self._smoothed_point = None
+            self._smoothed_pixel = None
 
     def _take_frame(self):
         with self.lock:
@@ -3527,20 +3659,66 @@ class AsyncRealSenseHeadTracker:
                 self._inference_count = 0
                 self._last_fps_time = now
 
+def scaled_realsense_intrinsics(intrinsics, scale):
+    scale = float(np.clip(scale, 0.1, 1.0))
+    if rs is None or scale >= 0.999:
+        return intrinsics
+    scaled = rs.intrinsics()
+    scaled.width = max(1, int(round(float(getattr(intrinsics, "width", 0)) * scale)))
+    scaled.height = max(1, int(round(float(getattr(intrinsics, "height", 0)) * scale)))
+    scaled.ppx = float(intrinsics.ppx) * scale
+    scaled.ppy = float(intrinsics.ppy) * scale
+    scaled.fx = float(intrinsics.fx) * scale
+    scaled.fy = float(intrinsics.fy) * scale
+    scaled.model = intrinsics.model
+    scaled.coeffs = intrinsics.coeffs
+    return scaled
+
+def scale_head_debug(debug, inv_scale, full_shape):
+    if inv_scale == 1.0:
+        return debug
+    scaled = dict(debug)
+    h, w = full_shape[:2]
+    for key in ("pixel", "raw_pixel"):
+        value = scaled.get(key)
+        if value is not None:
+            scaled[key] = np.asarray(value, dtype=np.float32) * inv_scale
+    for key in ("rect", "debug_rect"):
+        rect = scaled.get(key)
+        if rect is not None:
+            x, y, rw, rh = rect
+            scaled[key] = (
+                int(round(float(x) * inv_scale)),
+                int(round(float(y) * inv_scale)),
+                int(round(float(rw) * inv_scale)),
+                int(round(float(rh) * inv_scale)),
+            )
+    mask = scaled.get("mask")
+    if mask is not None:
+        scaled["mask"] = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+    return scaled
+
 class DemoRealSenseHeadTrackerAdapter:
-    def __init__(self, intrinsics, mode="ml", head_model=""):
+    def __init__(self, intrinsics, mode="ml", head_model="", smoothing=None, fast_scale=1.0):
         if DemoRealSenseTrackerWorker is None:
             raise RuntimeError("Demo RealSense tracker worker is unavailable")
         args = type("Args", (), {})()
         mode = str(mode or "ml").strip().lower()
-        if mode not in ("headlock", "body", "blob", "ml"):
+        if mode == "ml_fast":
             mode = "ml"
+        elif mode == "ml_body_fast":
+            mode = "ml_body"
+        if mode not in ("headlock", "body", "blob", "ml", "ml_body"):
+            mode = "ml"
+        self.fast_scale = float(np.clip(fast_scale, 0.1, 1.0))
+        self.inv_fast_scale = 1.0 / self.fast_scale if self.fast_scale < 0.999 else 1.0
+        self.full_shape = None
         args.mode = mode
         args.max_distance = float(os.environ.get("REALSENSE_MAX_DISTANCE", "7.0"))
         args.foreground_band = float(os.environ.get("REALSENSE_FOREGROUND_BAND", "0.75"))
         args.min_distance = float(os.environ.get("REALSENSE_MIN_DISTANCE", "0.25"))
         args.near_percentile = float(os.environ.get("REALSENSE_NEAR_PERCENTILE", "8.0"))
-        args.smoothing = float(os.environ.get("REALSENSE_SMOOTHING", "0.72"))
+        args.smoothing = float(REALSENSE_SMOOTHING_DEFAULT if smoothing is None else smoothing)
         # ML mode uses MediaPipe/pose first, then depth/headlock. Headlock skips ML.
         args.head_model = head_model
         args.yolo_conf = float(os.environ.get("REALSENSE_YOLO_CONF", "0.35"))
@@ -3549,14 +3727,22 @@ class DemoRealSenseHeadTrackerAdapter:
         print(
             ">>> RealSense demo-style ML tracker active: "
             f"mode={args.mode} head_model={'none' if not args.head_model else args.head_model} "
-            f"pose_model={args.pose_model} <<<"
+            f"pose_model={args.pose_model} smoothing={args.smoothing:.2f} scale={self.fast_scale:.2f} <<<"
         )
-        self.worker = DemoRealSenseTrackerWorker(args, intrinsics)
+        self.worker = DemoRealSenseTrackerWorker(args, scaled_realsense_intrinsics(intrinsics, self.fast_scale))
 
     def close(self):
         self.worker.close()
 
     def submit_frame(self, color, depth_m):
+        self.full_shape = color.shape
+        if self.fast_scale < 0.999:
+            target_size = (
+                max(1, int(round(color.shape[1] * self.fast_scale))),
+                max(1, int(round(color.shape[0] * self.fast_scale))),
+            )
+            color = cv2.resize(color, target_size, interpolation=cv2.INTER_AREA)
+            depth_m = cv2.resize(depth_m, target_size, interpolation=cv2.INTER_NEAREST)
         self.worker.submit_frame(color, depth_m)
 
     def get_latest(self):
@@ -3579,8 +3765,10 @@ class DemoRealSenseHeadTrackerAdapter:
                 "mode": "demo-headlock",
                 "label": "",
                 "conf": 0.0,
+                "smoothing": float(getattr(self.worker, "temporal_alpha", 0.0)),
+                "scale": float(self.fast_scale),
             }
-        return {
+        debug = {
             "pixel": None if latest.get("pixel") is None else latest["pixel"].copy(),
             "raw_pixel": None if latest.get("raw_pixel") is None else latest["raw_pixel"].copy(),
             "rect": latest.get("rect"),
@@ -3593,7 +3781,19 @@ class DemoRealSenseHeadTrackerAdapter:
             "mode": str(latest.get("mode", "demo-ml")),
             "label": "demo",
             "conf": 0.0,
+            "smoothing": float(getattr(self.worker, "temporal_alpha", 0.0)),
+            "scale": float(self.fast_scale),
         }
+        if self.full_shape is not None:
+            debug = scale_head_debug(debug, self.inv_fast_scale, self.full_shape)
+        return debug
+
+    def set_smoothing(self, value):
+        value = float(np.clip(value, 0.0, 0.98))
+        with self.worker.lock:
+            self.worker.temporal_alpha = value
+            self.worker.smoothed_point = None
+            self.worker.smoothed_pixel = None
 
 class RealSenseCapture:
     def __init__(self, width=640, height=480, fps=30, tracking_mode=None, tracking_enabled=True, color_width=None, color_height=None, color_fps=None):
@@ -3690,6 +3890,8 @@ class RealSenseCapture:
         requested_mode = (tracking_mode or os.environ.get(REALSENSE_TRACKING_MODE_ENV, "ml")).lower()
         self.tracking_mode = requested_mode if requested_mode in REALSENSE_TRACKING_MODES else "ml"
         self.tracking_enabled = bool(tracking_enabled)
+        self.tracking_smoothing_default = float(np.clip(REALSENSE_SMOOTHING_DEFAULT, 0.0, 0.98))
+        self.tracking_smoothing = self.tracking_smoothing_default
         self.head_tracker = None
         self._create_head_tracker()
         self._capture_thread = threading.Thread(target=self._capture_loop, name="realsense-capture", daemon=True)
@@ -3846,7 +4048,14 @@ class RealSenseCapture:
                 return
 
             if DemoRealSenseTrackerWorker is not None:
-                self.head_tracker = DemoRealSenseHeadTrackerAdapter(self.intrinsics, mode=self.tracking_mode, head_model="")
+                fast_scale = REALSENSE_FAST_ML_SCALE if self.tracking_mode in ("ml_fast", "ml_body_fast") else 1.0
+                self.head_tracker = DemoRealSenseHeadTrackerAdapter(
+                    self.intrinsics,
+                    mode=self.tracking_mode,
+                    head_model="",
+                    smoothing=self.tracking_smoothing,
+                    fast_scale=fast_scale,
+                )
                 print(f">>> RealSense tracking mode: {self.tracking_mode.upper()} demo worker <<<")
             else:
                 self.head_tracker = AsyncRealSenseHeadTracker(self.intrinsics)
@@ -3871,9 +4080,24 @@ class RealSenseCapture:
             return self.tracking_mode
         mode_index = REALSENSE_TRACKING_MODES.index(self.tracking_mode) if self.tracking_mode in REALSENSE_TRACKING_MODES else 0
         self.tracking_mode = REALSENSE_TRACKING_MODES[(mode_index + 1) % len(REALSENSE_TRACKING_MODES)]
+        os.environ[REALSENSE_TRACKING_MODE_ENV] = self.tracking_mode
         self._create_head_tracker()
         print(f">>> RealSense tracking mode switched to: {self.tracking_mode.upper()} <<<")
         return self.tracking_mode
+
+    def set_tracking_smoothing(self, smoothing):
+        self.tracking_smoothing = float(np.clip(float(smoothing), 0.0, 0.98))
+        os.environ[REALSENSE_SMOOTHING_ENV] = f"{self.tracking_smoothing:.3f}"
+        with self._tracker_lock:
+            if self.head_tracker is not None and hasattr(self.head_tracker, "set_smoothing"):
+                self.head_tracker.set_smoothing(self.tracking_smoothing)
+        print(f">>> RealSense tracking smoothing set to {self.tracking_smoothing:.2f} <<<")
+        return self.tracking_smoothing
+
+    def toggle_tracking_smoothing(self):
+        if self.tracking_smoothing > 0.001:
+            return self.set_tracking_smoothing(0.0)
+        return self.set_tracking_smoothing(self.tracking_smoothing_default)
 
     def release(self):
         self._stop_event.set()
@@ -4390,6 +4614,8 @@ def main():
     print("Press 'y' in the camera window to choose a webcam from the terminal picker.")
     print("Press 's' in the camera window to toggle webcam vs RealSense RGB+depth source.")
     print("Press 'p' in the camera window to toggle full vs black preview.")
+    print("Press 't' in the camera window to toggle the timing profiler panel.")
+    print("Press 'u' in the camera window to toggle RealSense tracking smoothing.")
     print("Press 'r' in the camera window to reset the solved room/screen map.")
     print("Press 'q' in the camera window to quit.\n")
     os.environ.pop(CAMERA_INDEX_ENV, None)
@@ -4474,6 +4700,8 @@ def main():
     last_tracker_pose_send_time = 0.0
     last_resolved_head_pose_send_time = 0.0
     last_realsense_tracking_send_time = 0.0
+    resolved_head_pose_sequence = 0
+    realsense_tracking_sequence = 0
     last_realsense_point_cloud_send_time = 0.0
     realsense_point_cloud_enabled = False
     realsense_point_cloud_stride = max(1, REALSENSE_POINT_CLOUD_DEFAULT_STRIDE)
@@ -4578,15 +4806,53 @@ def main():
     latest_live_tracking_time = 0.0
     latest_depth_head_position = None
     latest_depth_head_time = 0.0
+    latest_godot_pose_diagnostics = {}
+    latest_godot_pose_diagnostics_time = 0.0
     show_head_to_camera_debug = False
     anchor_pose_mode_index = 0
     tracker_anchor_button_rect = None
     tracker_room_map_button_rect = None
     tracker_preview_mode_button_rect = None
+    tracker_timing_panel_button_rect = None
     room_map_visible = True
+    timing_panel_visible = TRACKER_TIMING_PANEL_DEFAULT
     preview_mode = os.environ.get(PREVIEW_MODE_ENV, "full").strip().lower()
     if preview_mode not in PREVIEW_MODES:
         preview_mode = "full"
+    timing_buckets = {
+        "loop": 0.0,
+        "commands": 0.0,
+        "capture": 0.0,
+        "pc_publish": 0.0,
+        "layout_scan": 0.0,
+        "pose_solve": 0.0,
+        "room_map_draw": 0.0,
+        "preview_draw": 0.0,
+        "imshow": 0.0,
+        "waitkey": 0.0,
+    }
+    last_preview_display_time = 0.0
+    preview_display_frame_count = 0
+    preview_display_fps = 0.0
+    preview_display_fps_time = time.perf_counter()
+    last_room_map_display_time = 0.0
+    room_map_display_frame_count = 0
+    room_map_display_fps = 0.0
+    room_map_display_fps_time = time.perf_counter()
+    last_timing_panel_display_time = 0.0
+    timing_log_samples = []
+    timing_log_started_at = None
+    if timing_panel_visible:
+        timing_log_started_at = time.time()
+        write_timing_profile_log(
+            TRACKER_TIMING_LOG_PATH,
+            timing_log_samples,
+            {
+                "event": "started",
+                "timestamp": timing_log_started_at,
+                "note": "Timing panel started open; samples will overwrite this single file while visible.",
+            },
+        )
     measured_screen_sizes = {}
     measured_screen_size_last_write = {}
 
@@ -4771,13 +5037,17 @@ def main():
         last_tracker_pose_send_time = time.time()
 
     def broadcast_resolved_head_pose(camera_transform, head_position):
-        nonlocal last_resolved_head_pose_send_time
+        nonlocal last_resolved_head_pose_send_time, resolved_head_pose_sequence
         if global_origin_id is None or camera_transform is None or head_position is None:
             return
+        now = time.time()
+        resolved_head_pose_sequence += 1
         payload_camera_transform = canonicalize_y_up_transform(camera_transform) if CANONICAL_Y_UP_PAYLOADS else camera_transform
         payload_head_position = canonicalize_y_up_position(head_position) if CANONICAL_Y_UP_PAYLOADS else np.asarray(head_position, dtype=np.float32)
         payload = {
             "type": "resolved_head_pose",
+            "seq": resolved_head_pose_sequence,
+            "sent_unix_ms": int(now * 1000.0),
             "origin_screen": int(global_origin_id),
             "camera_R": payload_camera_transform[:3, :3].tolist(),
             "camera_T": payload_camera_transform[:3, 3].tolist(),
@@ -4786,19 +5056,22 @@ def main():
         if CANONICAL_Y_UP_PAYLOADS:
             payload["canonical_y_up"] = True
         send_udp_json(payload)
-        last_resolved_head_pose_send_time = time.time()
+        last_resolved_head_pose_send_time = now
 
     def broadcast_realsense_tracking_pose(head_position_m):
-        nonlocal last_realsense_tracking_send_time
+        nonlocal last_realsense_tracking_send_time, realsense_tracking_sequence
         if head_position_m is None:
             return
         now = time.time()
         if now - last_realsense_tracking_send_time <= REALSENSE_TRACKING_SEND_INTERVAL_SEC:
             return
+        realsense_tracking_sequence += 1
         head_position_m = np.asarray(head_position_m, dtype=np.float32)
         payload = {
             "type": "tracking",
             "source": "realsense_depth",
+            "seq": realsense_tracking_sequence,
+            "sent_unix_ms": int(now * 1000.0),
             "active": True,
             # Match the existing WebSocket tracking packet convention: raw
             # position values are centimeters, then Godot applies its normal
@@ -6243,12 +6516,71 @@ def main():
         )
         return x1
 
+    def draw_timing_panel_button(frame, right_edge):
+        nonlocal tracker_timing_panel_button_rect
+        label = f"{TIMING_PANEL_BUTTON_LABEL}: {'ON' if timing_panel_visible else 'OFF'}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.62
+        thickness = 2
+        text_size, _ = cv2.getTextSize(label, font, font_scale, thickness)
+        pad_x = 12
+        pad_y = 9
+        x2 = max(10, int(right_edge) - 10)
+        y1 = 18
+        x1 = max(10, x2 - text_size[0] - pad_x * 2)
+        y2 = y1 + text_size[1] + pad_y * 2
+        tracker_timing_panel_button_rect = (x1, y1, x2, y2)
+        color = (35, 65, 95) if timing_panel_visible else (55, 55, 55)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, -1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (235, 235, 235), 1)
+        cv2.putText(
+            frame,
+            label,
+            (x1 + pad_x, y2 - pad_y - 1),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+        return x1
+
     def cycle_preview_mode():
         nonlocal preview_mode
         mode_index = PREVIEW_MODES.index(preview_mode) if preview_mode in PREVIEW_MODES else 0
         preview_mode = PREVIEW_MODES[(mode_index + 1) % len(PREVIEW_MODES)]
         os.environ[PREVIEW_MODE_ENV] = preview_mode
         print(f">>> Camera preview mode: {preview_mode.upper()} <<<")
+
+    def set_timing_panel_visible(visible):
+        nonlocal timing_panel_visible, timing_log_samples, timing_log_started_at, last_timing_panel_display_time
+        visible = bool(visible)
+        if timing_panel_visible == visible:
+            return
+        timing_panel_visible = visible
+        os.environ["TRACKER_TIMING_PANEL"] = "1" if timing_panel_visible else "0"
+        if timing_panel_visible:
+            timing_log_samples = []
+            timing_log_started_at = time.time()
+            last_timing_panel_display_time = 0.0
+            write_timing_profile_log(
+                TRACKER_TIMING_LOG_PATH,
+                timing_log_samples,
+                {
+                    "event": "started",
+                    "timestamp": timing_log_started_at,
+                    "note": "Timing panel opened; samples will overwrite this single file while visible.",
+                },
+            )
+            print(f">>> Tracker timing log writing to {TRACKER_TIMING_LOG_PATH} <<<")
+        if not timing_panel_visible:
+            try:
+                cv2.destroyWindow(TIMING_WINDOW_NAME)
+            except Exception:
+                pass
+            timing_log_started_at = None
+            last_timing_panel_display_time = 0.0
+        print(f">>> Tracker timing panel {'ON' if timing_panel_visible else 'OFF'}. <<<")
 
     def set_room_map_visible(visible):
         nonlocal room_map_visible
@@ -6281,10 +6613,21 @@ def main():
             if x1 <= x <= x2 and y1 <= y <= y2:
                 cycle_preview_mode()
                 return
+        if tracker_timing_panel_button_rect is not None:
+            x1, y1, x2, y2 = tracker_timing_panel_button_rect
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                set_timing_panel_visible(not timing_panel_visible)
+                return
 
     def room_map_window_is_open():
         try:
             return cv2.getWindowProperty(ROOM_MAP_WINDOW_NAME, cv2.WND_PROP_VISIBLE) >= 1
+        except Exception:
+            return False
+
+    def timing_window_is_open():
+        try:
+            return cv2.getWindowProperty(TIMING_WINDOW_NAME, cv2.WND_PROP_VISIBLE) >= 1
         except Exception:
             return False
 
@@ -6683,6 +7026,9 @@ def main():
     camera_paused = cap is None
 
     while True:
+        loop_start = time.perf_counter()
+        for bucket_name in timing_buckets.keys():
+            timing_buckets[bucket_name] = 0.0
         capture_loop_frame_count += 1
         now_for_capture_fps = time.perf_counter()
         if now_for_capture_fps - capture_loop_last_fps_time >= 0.5:
@@ -6690,6 +7036,7 @@ def main():
             capture_loop_frame_count = 0
             capture_loop_last_fps_time = now_for_capture_fps
 
+        commands_start = time.perf_counter()
         try:
             while True:
                 cmd_data, _ = command_sock.recvfrom(65535)
@@ -6741,6 +7088,22 @@ def main():
                     else:
                         latest_live_tracking_pose = None
                         latest_live_tracking_time = 0.0
+                elif cmd_type == "pose_diagnostics":
+                    latest_godot_pose_diagnostics = {
+                        "received_unix_ms": int(time.time() * 1000.0),
+                        "device_id": cmd_json.get("device_id", None),
+                        "timestamp_unix_ms": int(cmd_json.get("timestamp_unix_ms", 0) or 0),
+                        "render_fps": float(cmd_json.get("render_fps", 0.0)),
+                        "frame_ms": float(cmd_json.get("frame_ms", 0.0)),
+                        "tracking_rx_hz": float(cmd_json.get("tracking_rx_hz", 0.0)),
+                        "ws_packets_drained": int(cmd_json.get("ws_packets_drained", 0)),
+                        "ws_pose_packets_coalesced": int(cmd_json.get("ws_pose_packets_coalesced", 0)),
+                        "pose_transport_age_ms": float(cmd_json.get("pose_transport_age_ms", -1.0)),
+                        "resolved_head_age_ms": float(cmd_json.get("resolved_head_age_ms", -1.0)),
+                        "resolved_head_active": bool(cmd_json.get("resolved_head_active", False)),
+                        "resolved_head_matches_origin": bool(cmd_json.get("resolved_head_matches_origin", False)),
+                    }
+                    latest_godot_pose_diagnostics_time = time.time()
                 elif cmd_type == "realsense_point_cloud":
                     point_cloud_stats_path = str(cmd_json.get("stats_path", point_cloud_stats_path)).strip()
                     point_cloud_console_stats = bool(cmd_json.get("console_stats", point_cloud_console_stats))
@@ -6971,7 +7334,18 @@ def main():
                 elif cmd_type == "realsense_tracking":
                     active_realsense_tracking_enabled = bool(cmd_json.get("enabled", active_realsense_tracking_enabled))
                     os.environ[REALSENSE_TRACKING_ENABLED_ENV] = "1" if active_realsense_tracking_enabled else "0"
+                    requested_tracking_mode = str(cmd_json.get("tracking_mode", active_realsense_tracking_mode)).strip().lower()
+                    if requested_tracking_mode in REALSENSE_TRACKING_MODES:
+                        active_realsense_tracking_mode = requested_tracking_mode
+                        os.environ[REALSENSE_TRACKING_MODE_ENV] = active_realsense_tracking_mode
+                    requested_smoothing = cmd_json.get("smoothing", None)
                     if isinstance(cap, RealSenseCapture):
+                        if requested_tracking_mode in REALSENSE_TRACKING_MODES and cap.tracking_mode != requested_tracking_mode:
+                            cap.tracking_mode = requested_tracking_mode
+                            cap._create_head_tracker()
+                            print(f">>> RealSense tracking mode set to: {cap.tracking_mode.upper()} <<<")
+                        if requested_smoothing is not None:
+                            cap.set_tracking_smoothing(float(requested_smoothing))
                         cap.set_tracking_enabled(active_realsense_tracking_enabled)
                     else:
                         print(f">>> RealSense head tracking set to {'ON' if active_realsense_tracking_enabled else 'OFF'} for the next RealSense capture. <<<")
@@ -6985,6 +7359,7 @@ def main():
             pass
         except Exception as exc:
             print(f"[tracker] Failed to process control command: {exc}")
+        timing_buckets["commands"] = (time.perf_counter() - commands_start) * 1000.0
 
         current_frame_screens = []
         current_frame_anchors = []
@@ -6992,6 +7367,7 @@ def main():
         frame = None
         detection_frame = None
 
+        capture_start = time.perf_counter()
         if camera_paused or cap is None:
             frame = build_status_frame(
                 "WEBCAM RELEASED",
@@ -7027,7 +7403,9 @@ def main():
                 latest_depth_head_time = time.time() if latest_depth_head_position is not None else 0.0
                 if latest_depth_head_position is not None:
                     broadcast_realsense_tracking_pose(latest_depth_head_position)
+                pc_publish_start = time.perf_counter()
                 broadcast_realsense_point_cloud(cap)
+                timing_buckets["pc_publish"] += (time.perf_counter() - pc_publish_start) * 1000.0
                 cap.draw_head_debug(frame)
             else:
                 detection_frame = frame.copy()
@@ -7038,6 +7416,7 @@ def main():
                 realsense_point_cloud_waiting_warned = True
         if oakd_capture is None and not oakd_starting:
             ensure_oakd_capture(oakd_point_cloud_enabled)
+        timing_buckets["capture"] = (time.perf_counter() - capture_start) * 1000.0
              
         should_scan_layout_markers = (
             layout_calibration_active
@@ -7046,6 +7425,7 @@ def main():
             and cap is not None
         )
 
+        layout_scan_start = time.perf_counter()
         if not camera_paused and cap is not None:
             # Continuous ChArUco Auto-Calibration
             if CAMERA_AUTO_CALIBRATE_INTRINSICS and camera_matrix is None:
@@ -7481,9 +7861,12 @@ def main():
                         "tvec": tvec,
                     })
 
+        timing_buckets["layout_scan"] = (time.perf_counter() - layout_scan_start) * 1000.0
+
         # ---------------------------------------------------------
         # SPATIAL GRAPH MAPPING (SLAM)
         # ---------------------------------------------------------
+        pose_solve_start = time.perf_counter()
         T_origin_to_cam = None
         
         if current_frame_screens:
@@ -7595,6 +7978,8 @@ def main():
                         "transform": T_origin_to_anchor,
                         "size": a["size"],
                     }
+
+        timing_buckets["pose_solve"] = (time.perf_counter() - pose_solve_start) * 1000.0
 
         # ---------------------------------------------------------
         # 3D ROOM LAYOUT VISUALIZER (INTERACTIVE 3D PERSPECTIVE)
@@ -7740,6 +8125,7 @@ def main():
         ):
             broadcast_resolved_head_pose(tracker_camera_debug_transform, debug_head_position)
 
+        room_map_draw_start = time.perf_counter()
         room_map = np.zeros((800, 800, 3), dtype=np.uint8)
         
         cx, cy = 400, 400
@@ -8066,49 +8452,120 @@ def main():
                 cv2.LINE_AA,
             )
 
+        timing_buckets["room_map_draw"] = (time.perf_counter() - room_map_draw_start) * 1000.0
+
         # Output the live webcam feeds
-        if active_capture_width > 0 and active_capture_height > 0:
-            source_label = active_camera_source
-            index_label = f"idx {active_camera_index}" if active_camera_index is not None else "depth"
-            line_y = max(28, frame.shape[0] - 20)
-            line_step = 27
-            draw_outlined_text(
-                frame,
-                f"Capture: {source_label} {active_capture_width}x{active_capture_height} ({index_label})",
-                (24, line_y),
-                scale=0.62,
-                color=(255, 255, 255),
-                thickness=1,
-            )
-            if isinstance(cap, RealSenseCapture):
-                head_debug = cap.get_head_debug()
-                yolo_fps = head_debug.get("fps", 0.0)
-                tracking_label = "ON" if cap.tracking_enabled else "OFF"
+        display_now = time.perf_counter()
+        preview_interval = 0.0 if TRACKER_PREVIEW_MAX_FPS <= 0.0 else 1.0 / max(1.0, TRACKER_PREVIEW_MAX_FPS)
+        preview_display_due = display_now - last_preview_display_time >= preview_interval
+        if preview_display_due and frame is not None:
+            preview_draw_start = time.perf_counter()
+            if active_capture_width > 0 and active_capture_height > 0:
+                source_label = active_camera_source
+                index_label = f"idx {active_camera_index}" if active_camera_index is not None else "depth"
+                line_y = max(28, frame.shape[0] - 20)
+                line_step = 27
                 draw_outlined_text(
                     frame,
-                    f"Loop: {capture_loop_fps:.1f}fps | Cam: {cap.capture_fps:.1f}fps | Head: {tracking_label} {cap.tracking_mode.upper()} {yolo_fps:.1f}fps",
-                    (24, max(28, line_y - line_step)),
+                    f"Capture: {source_label} {active_capture_width}x{active_capture_height} ({index_label})",
+                    (24, line_y),
                     scale=0.62,
                     color=(255, 255, 255),
                     thickness=1,
                 )
-                draw_outlined_text(
-                    frame,
-                    f"Stereo Size: {'AUTO' if stereo_screen_size_auto else 'MANUAL'} | H toggles",
-                    (24, max(28, line_y - line_step * 2)),
-                    scale=0.62,
-                    color=(255, 255, 255),
-                    thickness=1,
-                )
-        anchor_left = draw_anchor_pose_mode_button(frame)
-        room_map_left = draw_room_map_toggle_button(frame, anchor_left)
-        draw_preview_mode_button(frame, room_map_left)
-        cv2.imshow(TRACKER_WINDOW_NAME, frame)
+                if isinstance(cap, RealSenseCapture):
+                    head_debug = cap.get_head_debug()
+                    yolo_fps = head_debug.get("fps", 0.0)
+                    tracking_label = "ON" if cap.tracking_enabled else "OFF"
+                    smoothing_label = f"sm={float(head_debug.get('smoothing', cap.tracking_smoothing)):.2f}"
+                    scale_label = f"scale={float(head_debug.get('scale', 1.0)):.2f}"
+                    draw_outlined_text(
+                        frame,
+                        f"Loop: {capture_loop_fps:.1f}fps | Cam: {cap.capture_fps:.1f}fps | Head: {tracking_label} {cap.tracking_mode.upper()} {yolo_fps:.1f}fps {smoothing_label} {scale_label}",
+                        (24, max(28, line_y - line_step)),
+                        scale=0.62,
+                        color=(255, 255, 255),
+                        thickness=1,
+                    )
+                    draw_outlined_text(
+                        frame,
+                        f"Stereo Size: {'AUTO' if stereo_screen_size_auto else 'MANUAL'} | H toggles",
+                        (24, max(28, line_y - line_step * 2)),
+                        scale=0.62,
+                        color=(255, 255, 255),
+                        thickness=1,
+                    )
+            anchor_left = draw_anchor_pose_mode_button(frame)
+            room_map_left = draw_room_map_toggle_button(frame, anchor_left)
+            preview_left = draw_preview_mode_button(frame, room_map_left)
+            draw_timing_panel_button(frame, preview_left)
+            timing_buckets["preview_draw"] = (time.perf_counter() - preview_draw_start) * 1000.0
+
+            imshow_start = time.perf_counter()
+            cv2.imshow(TRACKER_WINDOW_NAME, frame)
+            last_preview_display_time = display_now
+            preview_display_frame_count += 1
+            if display_now - preview_display_fps_time >= 0.5:
+                preview_display_fps = preview_display_frame_count / (display_now - preview_display_fps_time)
+                preview_display_frame_count = 0
+                preview_display_fps_time = display_now
+            timing_buckets["imshow"] += (time.perf_counter() - imshow_start) * 1000.0
         if room_map_visible:
             ensure_room_map_window()
+            room_imshow_start = time.perf_counter()
             cv2.imshow(ROOM_MAP_WINDOW_NAME, room_map)
+            last_room_map_display_time = display_now
+            room_map_display_frame_count += 1
+            if display_now - room_map_display_fps_time >= 0.5:
+                room_map_display_fps = room_map_display_frame_count / (display_now - room_map_display_fps_time)
+                room_map_display_frame_count = 0
+                room_map_display_fps_time = display_now
+            timing_buckets["imshow"] += (time.perf_counter() - room_imshow_start) * 1000.0
+        if timing_panel_visible and last_timing_panel_display_time > 0.0 and not timing_window_is_open():
+            set_timing_panel_visible(False)
+
+        if timing_panel_visible and display_now - last_timing_panel_display_time >= 1.0 / max(1.0, TRACKER_TIMING_PANEL_FPS):
+            timing_buckets["loop"] = (time.perf_counter() - loop_start) * 1000.0
+            timing_text = ""
+            if isinstance(cap, RealSenseCapture):
+                head_debug = cap.get_head_debug()
+                smoothing_label = f"sm={float(head_debug.get('smoothing', cap.tracking_smoothing)):.2f}"
+                scale_label = f"scale={float(head_debug.get('scale', 1.0)):.2f}"
+                timing_text = f"RealSense {cap.tracking_mode.upper()} head={float(head_debug.get('fps', 0.0)):.1f}fps cam={cap.capture_fps:.1f}fps {smoothing_label} {scale_label} preview={preview_mode}"
+            else:
+                timing_text = f"{active_camera_source} preview={preview_mode}"
+            timing_panel = draw_timing_panel(timing_buckets, capture_loop_fps, preview_display_fps, room_map_display_fps, timing_text)
+            timing_imshow_start = time.perf_counter()
+            cv2.imshow(TIMING_WINDOW_NAME, timing_panel)
+            last_timing_panel_display_time = display_now
+            timing_buckets["imshow"] += (time.perf_counter() - timing_imshow_start) * 1000.0
+            latest_timing_sample = {
+                "t_sec": 0.0 if timing_log_started_at is None else time.time() - timing_log_started_at,
+                "loop_fps": float(capture_loop_fps),
+                "preview_fps": float(preview_display_fps),
+                "room_map_fps": float(room_map_display_fps),
+                "tracking": timing_text,
+                "preview_mode": preview_mode,
+                "room_map_visible": bool(room_map_visible),
+                "buckets_ms": {key: float(value) for key, value in timing_buckets.items()},
+                "godot_pose": {
+                    **latest_godot_pose_diagnostics,
+                    "age_ms": (
+                        (time.time() - latest_godot_pose_diagnostics_time) * 1000.0
+                        if latest_godot_pose_diagnostics_time > 0.0
+                        else -1.0
+                    ),
+                },
+            }
+            timing_log_samples.append(latest_timing_sample)
+            if len(timing_log_samples) > TRACKER_TIMING_LOG_MAX_SAMPLES:
+                timing_log_samples = timing_log_samples[-TRACKER_TIMING_LOG_MAX_SAMPLES:]
+            write_timing_profile_log(TRACKER_TIMING_LOG_PATH, timing_log_samples, latest_timing_sample)
         
+        waitkey_start = time.perf_counter()
         key = cv2.waitKeyEx(1)
+        timing_buckets["waitkey"] = (time.perf_counter() - waitkey_start) * 1000.0
+        timing_buckets["loop"] = (time.perf_counter() - loop_start) * 1000.0
         if key == ord('c'):
             print(">>> COMPILING AND BROADCASTING LAYOUT MAP <<<")
             broadcast_layout()
@@ -8121,6 +8578,8 @@ def main():
             toggle_camera_source()
         elif key == PREVIEW_MODE_TOGGLE_KEY:
             cycle_preview_mode()
+        elif key == TIMING_PANEL_TOGGLE_KEY:
+            set_timing_panel_visible(not timing_panel_visible)
         elif key == REALSENSE_TRACKING_MODE_KEY:
             if isinstance(cap, RealSenseCapture):
                 active_realsense_tracking_mode = cap.cycle_tracking_mode()
@@ -8134,6 +8593,14 @@ def main():
                 active_realsense_tracking_enabled = not active_realsense_tracking_enabled
                 os.environ[REALSENSE_TRACKING_ENABLED_ENV] = "1" if active_realsense_tracking_enabled else "0"
                 print(f">>> RealSense head tracking default set to {'ON' if active_realsense_tracking_enabled else 'OFF'} for the next RealSense capture. <<<")
+        elif key == REALSENSE_TRACKING_SMOOTHING_KEY:
+            if isinstance(cap, RealSenseCapture):
+                cap.toggle_tracking_smoothing()
+            else:
+                current = float(os.environ.get(REALSENSE_SMOOTHING_ENV, REALSENSE_SMOOTHING_DEFAULT))
+                next_value = 0.0 if current > 0.001 else REALSENSE_SMOOTHING_DEFAULT
+                os.environ[REALSENSE_SMOOTHING_ENV] = f"{next_value:.3f}"
+                print(f">>> RealSense tracking smoothing default set to {next_value:.2f} for the next RealSense capture. <<<")
         elif key == STEREO_SCREEN_SIZE_TOGGLE_KEY:
             stereo_screen_size_auto = not stereo_screen_size_auto
             os.environ[STEREO_SCREEN_SIZE_AUTO_ENV] = "1" if stereo_screen_size_auto else "0"

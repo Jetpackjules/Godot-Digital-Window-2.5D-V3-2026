@@ -1,0 +1,87 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://Perspective_Cam.gd" id="1_pcam"]
+[ext_resource type="Script" path="res://monitor_frame_outline.gd" id="2_frame"]
+[ext_resource type="Script" path="res://screen_scaling.gd" id="3_scale"]
+[ext_resource type="Script" path="res://view_switcher.gd" id="4_view"]
+[ext_resource type="Script" path="res://ios/ios_arkit_head_pose_provider.gd" id="5_pose"]
+[ext_resource type="Script" path="res://ios/iphone_window_runtime.gd" id="6_runtime"]
+
+[sub_resource type="Environment" id="Environment_iphone"]
+background_mode = 1
+ambient_light_source = 1
+reflected_light_source = 1
+
+[node name="IPhoneWindow" type="Node3D"]
+
+[node name="Player" type="Node3D" parent="."]
+
+[node name="Head_Cam" type="Camera3D" parent="Player"]
+near = 0.01
+far = 10.0
+projection = 2
+current = true
+script = ExtResource("1_pcam")
+window_center_path = NodePath("../MonitorFrame")
+screen_scaling_path = NodePath("../../ScreenScaling")
+minimum_window_distance_meters = 0.03
+
+[node name="MonitorFrame" type="Node3D" parent="Player"]
+
+[node name="Red_Border" type="Node3D" parent="Player/MonitorFrame"]
+script = ExtResource("2_frame")
+border_thickness_meters = 0.004
+border_depth_offset_meters = 0.0
+
+[node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border"]
+
+[node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border"]
+
+[node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border"]
+
+[node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border"]
+
+[node name="ScreenScaling" type="Node" parent="."]
+script = ExtResource("3_scale")
+aspect_ratio_width = 9.0
+aspect_ratio_height = 19.5
+screen_diagonal_inches = 6.1
+physical_width_meters = 0.06489370804619879
+physical_height_meters = 0.14060203410009738
+virtual_window_height = 0.14060203410009738
+
+[node name="View" type="Node3D" parent="."]
+script = ExtResource("4_view")
+screen_scaling_path = NodePath("../ScreenScaling")
+current_view_name = "test_box.tscn"
+
+[node name="IPhonePoseProvider" type="Node" parent="."]
+script = ExtResource("5_pose")
+
+[node name="IPhoneWindowRuntime" type="Node" parent="."]
+script = ExtResource("6_runtime")
+camera_node_path = NodePath("../Player/Head_Cam")
+window_center_path = NodePath("../Player/MonitorFrame")
+screen_scaling_path = NodePath("../ScreenScaling")
+pose_provider_path = NodePath("../IPhonePoseProvider")
+status_label_path = NodePath("../UI/StatusPanel/StatusLabel")
+
+[node name="Light" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.871214, 0.320867, -0.371245, -0.100983, 0.897212, 0.42983, 0.480356, -0.337157, 0.809689, 0, 0.6, 1.2)
+light_energy = 0.65
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_iphone")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="StatusPanel" type="PanelContainer" parent="UI"]
+offset_left = 10.0
+offset_top = 10.0
+offset_right = 310.0
+offset_bottom = 44.0
+
+[node name="StatusLabel" type="Label" parent="UI/StatusPanel"]
+layout_mode = 2
+text = "iPhone window | waiting"
+horizontal_alignment = 1

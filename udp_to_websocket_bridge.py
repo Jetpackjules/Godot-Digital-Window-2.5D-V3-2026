@@ -6,7 +6,7 @@ import asyncio
 import websockets
 import logging
 import time
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 # Configuration
 UDP_IP = "127.0.0.1"
@@ -51,11 +51,50 @@ TRACKING_ACTIVE_POSITION_EPS_CM = 0.05
 TRACKING_ACTIVE_ROTATION_EPS_DEG = 0.05
 latest_logged_scan_status = ""
 latest_logged_scan_status_time = 0.0
+POSE_BROADCAST_MAX_FPS = 90.0
+latest_pose_broadcast_payloads: Dict[str, str] = {}
+pose_broadcast_event: Optional[asyncio.Event] = None
 
 
 def broadcast_json(payload: dict) -> None:
     if connected_clients:
         websockets.broadcast(connected_clients, json.dumps(payload))
+
+
+def queue_pose_broadcast(msg_type: str, payload: str) -> None:
+    latest_pose_broadcast_payloads[msg_type] = payload
+    if pose_broadcast_event is not None:
+        pose_broadcast_event.set()
+
+
+async def _send_pose_payload(websocket, payload: str) -> None:
+    try:
+        await websocket.send(payload)
+    except Exception as exc:
+        logger.debug("Skipping pose send to a closed/slow WebSocket client: %s", exc)
+
+
+async def pose_broadcast_task() -> None:
+    min_interval_sec = 1.0 / max(1.0, POSE_BROADCAST_MAX_FPS)
+    while True:
+        if pose_broadcast_event is None:
+            await asyncio.sleep(min_interval_sec)
+            continue
+        await pose_broadcast_event.wait()
+        pose_broadcast_event.clear()
+        payloads = list(latest_pose_broadcast_payloads.values())
+        latest_pose_broadcast_payloads.clear()
+        if payloads and connected_clients:
+            clients = list(connected_clients)
+            await asyncio.gather(
+                *[
+                    _send_pose_payload(client, payload)
+                    for payload in payloads
+                    for client in clients
+                ],
+                return_exceptions=True,
+            )
+        await asyncio.sleep(min_interval_sec)
 
 
 def get_registered_screen_ids() -> Set[str]:
@@ -334,6 +373,24 @@ async def handle_client(websocket, path=None):
                         "basis": data.get("basis", []),
                     }
                     broadcast_json(payload)
+
+                elif action == "pose_diagnostics":
+                    send_tracker_command(
+                        {
+                            "type": "pose_diagnostics",
+                            "device_id": data.get("device_id", client_id),
+                            "timestamp_unix_ms": data.get("timestamp_unix_ms", int(time.time() * 1000.0)),
+                            "render_fps": data.get("render_fps", 0.0),
+                            "frame_ms": data.get("frame_ms", 0.0),
+                            "tracking_rx_hz": data.get("tracking_rx_hz", 0.0),
+                            "ws_packets_drained": data.get("ws_packets_drained", 0),
+                            "ws_pose_packets_coalesced": data.get("ws_pose_packets_coalesced", 0),
+                            "pose_transport_age_ms": data.get("pose_transport_age_ms", -1.0),
+                            "resolved_head_age_ms": data.get("resolved_head_age_ms", -1.0),
+                            "resolved_head_active": data.get("resolved_head_active", False),
+                            "resolved_head_matches_origin": data.get("resolved_head_matches_origin", False),
+                        }
+                    )
                         
                 elif action == "save_preset":
                     name = str(data.get("name", "Unknown Preset"))
@@ -433,7 +490,12 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
                                 }
                             )
                     if connected_clients and msg_type != "tracker_camera_pose":
-                        websockets.broadcast(connected_clients, decoded)
+                        if msg_type in ("tracking", "resolved_head_pose"):
+                            if "sent_unix_ms" not in json_data:
+                                json_data["sent_unix_ms"] = int(time.time() * 1000.0)
+                            queue_pose_broadcast(msg_type, json.dumps(json_data))
+                        else:
+                            websockets.broadcast(connected_clients, decoded)
                     if msg_type == "layout_map":
                         maybe_auto_lock_from_layout(set(json_data.get("screens", {}).keys()))
                     return
@@ -468,18 +530,22 @@ class OpenTrackUDPProtocol(asyncio.DatagramProtocol):
             if connected_clients:
                 tracking_payload = json.dumps({
                     "type": "tracking",
+                    "sent_unix_ms": int(time.time() * 1000.0),
                     "active": tracking_active,
                     "x": unpacked_data[0],
                     "y": unpacked_data[1],
                     "z": unpacked_data[2],
                 })
-                websockets.broadcast(connected_clients, tracking_payload)
+                queue_pose_broadcast("tracking", tracking_payload)
 
 async def main():
+    global pose_broadcast_event
     logger.info("Starting up OpenTrack Multi-Device Sync Server...")
+    pose_broadcast_event = asyncio.Event()
     
     # 1. Start the UDP Listener task in the background
     asyncio.create_task(udp_listener_task())
+    asyncio.create_task(pose_broadcast_task())
     
     # 2. Start the WebSocket Broadcast Server
     # Note: Binding to 0.0.0.0 is crucial so phones/laptops can connect over Wi-Fi

@@ -366,13 +366,13 @@ class MlHeadDetector:
         if self.pose is not None:
             self.pose.close()
 
-    def estimate(self, color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel=None):
+    def estimate(self, color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel=None, pose_strategy="face"):
         if self.yolo is not None:
             result = self._estimate_yolo(color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel)
             if result is not None:
                 return result
         if self.pose is not None:
-            result = self._estimate_pose(color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel)
+            result = self._estimate_pose(color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel, pose_strategy)
             if result is not None:
                 return result
         return None
@@ -426,7 +426,7 @@ class MlHeadDetector:
             return None
         return best[1:]
 
-    def _estimate_pose(self, color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel=None):
+    def _estimate_pose(self, color_bgr, depth_m, intrinsics, min_depth, max_depth, last_pixel=None, pose_strategy="face"):
         rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
         if hasattr(self.pose, "detect_for_video"):
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -443,38 +443,59 @@ class MlHeadDetector:
         image_h, image_w = depth_m.shape
         landmarks = pose_landmarks
 
-        # BlazePose landmark indexes: nose, eyes, ears, shoulders. Use indexes
-        # directly so both legacy mp.solutions and new Tasks results work.
-        candidate_landmarks = [0, 2, 5, 7, 8]
-        visible = []
-        for landmark_id in candidate_landmarks:
+        def visible_landmark(landmark_id, threshold):
             landmark = landmarks[landmark_id]
             visibility = float(getattr(landmark, "visibility", 1.0))
             presence = float(getattr(landmark, "presence", 1.0))
             confidence = min(visibility, presence)
-            if confidence >= 0.25:
-                visible.append((landmark.x * image_w, landmark.y * image_h, confidence))
+            if confidence < threshold:
+                return None
+            return (landmark.x * image_w, landmark.y * image_h, confidence)
 
-        if visible:
-            total = sum(item[2] for item in visible)
-            px = sum(item[0] * item[2] for item in visible) / max(1e-6, total)
-            py = sum(item[1] * item[2] for item in visible) / max(1e-6, total)
-        else:
-            shoulder_ids = [11, 12]
+        def estimate_from_shoulders():
             shoulders = []
-            for landmark_id in shoulder_ids:
-                landmark = landmarks[landmark_id]
-                visibility = float(getattr(landmark, "visibility", 1.0))
-                presence = float(getattr(landmark, "presence", 1.0))
-                if min(visibility, presence) >= 0.35:
-                    shoulders.append((landmark.x * image_w, landmark.y * image_h))
+            for landmark_id in (11, 12):
+                item = visible_landmark(landmark_id, 0.25)
+                if item is not None:
+                    shoulders.append(item)
             if len(shoulders) < 2:
                 return None
             shoulder_mid_x = (shoulders[0][0] + shoulders[1][0]) * 0.5
             shoulder_mid_y = (shoulders[0][1] + shoulders[1][1]) * 0.5
             shoulder_width = math.hypot(shoulders[0][0] - shoulders[1][0], shoulders[0][1] - shoulders[1][1])
-            px = shoulder_mid_x
-            py = shoulder_mid_y - shoulder_width * 0.55
+            if shoulder_width < 8.0:
+                return None
+            return (shoulder_mid_x, shoulder_mid_y - shoulder_width * 0.62)
+
+        def estimate_from_face_landmarks():
+            # BlazePose landmark indexes: nose, eyes, ears. Use indexes directly
+            # so both legacy mp.solutions and new Tasks results work.
+            visible = []
+            for landmark_id in (0, 2, 5, 7, 8):
+                item = visible_landmark(landmark_id, 0.25)
+                if item is not None:
+                    visible.append(item)
+            if not visible:
+                return None
+            total = sum(item[2] for item in visible)
+            px = sum(item[0] * item[2] for item in visible) / max(1e-6, total)
+            py = sum(item[1] * item[2] for item in visible) / max(1e-6, total)
+            return (px, py)
+
+        pose_strategy = str(pose_strategy or "face").strip().lower()
+        estimate_order = (
+            (estimate_from_shoulders, estimate_from_face_landmarks)
+            if pose_strategy in ("body", "shoulders", "upper_body")
+            else (estimate_from_face_landmarks, estimate_from_shoulders)
+        )
+        point_2d = None
+        for estimate_fn in estimate_order:
+            point_2d = estimate_fn()
+            if point_2d is not None:
+                break
+        if point_2d is None:
+            return None
+        px, py = point_2d
 
         radius = 18
         depth = robust_depth_in_roi(depth_m, px, py, radius, min_depth, max_depth)
@@ -605,8 +626,9 @@ class AsyncTrackerWorker:
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
             contour = None
-            if mode == "ml":
-                head_result = self.detector.estimate(color, depth_m, self.intrinsics, self.min_distance, max_distance, last_pixel)
+            if mode in ("ml", "ml_body"):
+                pose_strategy = "body" if mode == "ml_body" else "face"
+                head_result = self.detector.estimate(color, depth_m, self.intrinsics, self.min_distance, max_distance, last_pixel, pose_strategy)
                 if head_result is None:
                     head_result = estimate_headlock_pixel(mask, depth_m, self.min_distance, max_distance, self.intrinsics, last_pixel)
             elif mode == "headlock":
@@ -1041,7 +1063,7 @@ def run(args):
             if key == ord("r") and tracker is not None:
                 tracker.reset()
             elif key == ord("m") and tracker is not None:
-                modes = ["ml", "headlock", "body", "nearest"]
+                modes = ["ml", "ml_body", "headlock", "body", "nearest"]
                 tracking_mode = modes[(modes.index(tracking_mode) + 1) % len(modes)]
                 tracker.set_mode(tracking_mode)
             elif key == ord("[") and tracker is not None:
@@ -1077,7 +1099,7 @@ def parse_args():
     parser.add_argument("--foreground-band", type=float, default=0.75)
     parser.add_argument("--near-percentile", type=float, default=8.0)
     parser.add_argument("--smoothing", type=float, default=0.72)
-    parser.add_argument("--mode", choices=["ml", "headlock", "body", "nearest"], default="ml")
+    parser.add_argument("--mode", choices=["ml", "ml_body", "headlock", "body", "nearest"], default="ml")
     parser.add_argument("--head-model", default="", help="Optional YOLO head/person model path. If omitted, MediaPipe Pose is used as the ML source.")
     parser.add_argument("--pose-model", default=DEFAULT_POSE_MODEL_PATH, help="MediaPipe Tasks pose landmarker .task model path.")
     parser.add_argument("--yolo-conf", type=float, default=0.35)

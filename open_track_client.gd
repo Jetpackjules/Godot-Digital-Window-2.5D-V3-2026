@@ -147,6 +147,7 @@ const PROJECTOR_WARP_SHADER_CODE := "shader_type canvas_item;\nuniform mat3 homo
 const WS_RETRY_INTERVAL_SEC := 2.0
 const WS_CONNECT_TIMEOUT_SEC := 4.0
 const VIEWER_POSE_SEND_INTERVAL_SEC := 1.0 / 90.0
+const POSE_DIAGNOSTICS_SEND_INTERVAL_SEC := 1.0 / 8.0
 const VIEWER_POSE_POSITION_EPSILON := 0.0002
 const VIEWER_POSE_BASIS_EPSILON := 0.0002
 const VIEWER_POSE_INTERPOLATION_RATE := 28.0
@@ -227,6 +228,7 @@ var _active_screen_preset_name: String = ""
 var _status_panel_hidden_by_user: bool = false
 var _show_connect_debug_details: bool = true
 var _next_viewer_pose_send_msec: int = 0
+var _next_pose_diagnostics_send_msec: int = 0
 var _last_broadcast_player_position: Vector3 = Vector3.INF
 var _last_broadcast_player_basis: Basis = Basis.IDENTITY
 var _remote_viewer_pose_active: bool = false
@@ -266,6 +268,9 @@ var _debug_viewer_pose_rx_hz: float = 0.0
 var _debug_viewer_pose_tx_hz: float = 0.0
 var _debug_viewer_pose_apply_hz: float = 0.0
 var _debug_tracking_rx_hz: float = 0.0
+var _debug_ws_packets_drained: int = 0
+var _debug_ws_pose_packets_coalesced: int = 0
+var _debug_pose_transport_age_msec: float = -1.0
 var _debug_preview_look_yaw_degrees: float = 0.0
 var _debug_preview_look_pitch_degrees: float = 0.0
 var _last_viewer_pose_rx_msec: int = 0
@@ -2818,6 +2823,31 @@ func _set_resolved_head_pose_from_payload(payload: Dictionary) -> void:
 		})
 	_last_resolved_head_pose_msec = Time.get_ticks_msec()
 
+func _apply_tracking_payload(payload: Dictionary) -> bool:
+	var tracking_active := bool(payload.get("active", true))
+	if tracking_active:
+		_raw_x = payload.get("x", 0.0)
+		_raw_y = payload.get("y", 0.0)
+		_raw_z = payload.get("z", 0.0)
+		_has_live_tracking_data = true
+	else:
+		_raw_x = 0.0
+		_raw_y = 0.0
+		_raw_z = 0.0
+		_has_live_tracking_data = false
+	_tracking_rx_counter += 1
+	_record_pose_transport_age(payload)
+	return true
+
+func _record_pose_transport_age(payload: Dictionary) -> void:
+	if not payload.has("sent_unix_ms"):
+		return
+	var sent_unix_ms := float(payload.get("sent_unix_ms", 0.0))
+	if sent_unix_ms <= 0.0:
+		return
+	var now_unix_ms := Time.get_unix_time_from_system() * 1000.0
+	_debug_pose_transport_age_msec = maxf(0.0, now_unix_ms - sent_unix_ms)
+
 func _build_projector_diagnostics_text() -> String:
 	if not _projector_mode_enabled:
 		return "off"
@@ -2891,6 +2921,13 @@ func _build_diagnostics_text() -> String:
 	var projector_diag = _build_projector_diagnostics_text()
 	var viewer_packet_age_msec = float(now_msec - _last_remote_viewer_packet_msec) if _last_remote_viewer_packet_msec > 0 else -1.0
 	var viewer_packet_age_text = "n/a"
+	var resolved_head_age_msec = float(now_msec - _last_resolved_head_pose_msec) if _last_resolved_head_pose_msec > 0 else -1.0
+	var resolved_head_age_text = "n/a"
+	if _resolved_head_pose_active and resolved_head_age_msec >= 0.0:
+		resolved_head_age_text = "%.0f ms" % resolved_head_age_msec
+	elif _last_resolved_head_pose_msec > 0:
+		resolved_head_age_text = "stale"
+	var pose_transport_age_text = "n/a" if _debug_pose_transport_age_msec < 0.0 else "%.0f ms" % _debug_pose_transport_age_msec
 	if _remote_viewer_pose_active and viewer_packet_age_msec >= 0.0:
 		viewer_packet_age_text = "%.0f ms" % viewer_packet_age_msec
 	elif _last_remote_viewer_packet_msec > 0:
@@ -2923,6 +2960,7 @@ Remote Viewer: Active %s | Slot %s | Age %s
 Viewer Sync: RX %.1f/s | Apply %.1f/s | TX %.1f/s
 Viewer Packet: Gap %.1f ms | Jitter %.1f ms
 Tracking RX: %.1f/s
+Pose Queue: Drained %d | Coalesced %d | Transport Age %s | Resolved Age %s
 Scale: %.3f x | Tracking Base: %s
 Window Dist: %.3f m (%.1f cm) | V-FOV: %.1f deg
 Player: X %.2f | Y %.2f | Z %.2f
@@ -2953,6 +2991,7 @@ Projector Faces:
 		_debug_viewer_pose_rx_hz, _debug_viewer_pose_apply_hz, _debug_viewer_pose_tx_hz,
 		_viewer_pose_rx_interval_average_msec, _viewer_pose_rx_jitter_average_msec,
 		_debug_tracking_rx_hz,
+		_debug_ws_packets_drained, _debug_ws_pose_packets_coalesced, pose_transport_age_text, resolved_head_age_text,
 		scale_mult,
 		base_distance_text,
 		distance_to_window, distance_to_window * 100.0,
@@ -3576,6 +3615,34 @@ func _maybe_broadcast_viewer_pose() -> void:
 	ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
 	_viewer_pose_tx_counter += 1
 
+func _maybe_send_pose_diagnostics() -> void:
+	if not use_websocket:
+		return
+	if ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	var now := Time.get_ticks_msec()
+	if now < _next_pose_diagnostics_send_msec:
+		return
+	_next_pose_diagnostics_send_msec = now + int(POSE_DIAGNOSTICS_SEND_INTERVAL_SEC * 1000.0)
+	var resolved_head_age_msec := -1.0
+	if _last_resolved_head_pose_msec > 0:
+		resolved_head_age_msec = float(now - _last_resolved_head_pose_msec)
+	var msg = {
+		"action": "pose_diagnostics",
+		"device_id": _current_marker_slot(),
+		"timestamp_unix_ms": int(Time.get_unix_time_from_system() * 1000.0),
+		"render_fps": float(Engine.get_frames_per_second()),
+		"frame_ms": _debug_average_frame_time_msec,
+		"tracking_rx_hz": _debug_tracking_rx_hz,
+		"ws_packets_drained": _debug_ws_packets_drained,
+		"ws_pose_packets_coalesced": _debug_ws_pose_packets_coalesced,
+		"pose_transport_age_ms": _debug_pose_transport_age_msec,
+		"resolved_head_age_ms": resolved_head_age_msec,
+		"resolved_head_active": _resolved_head_pose_active,
+		"resolved_head_matches_origin": _resolved_head_pose_matches_origin(),
+	}
+	ws.put_packet(JSON.stringify(msg).to_utf8_buffer())
+
 func _request_finish_scan() -> void:
 	if not use_websocket or ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
@@ -3972,8 +4039,16 @@ func _process(_delta):
 			if not _was_ws_connected:
 				print("SUCCESS: WebGL connected to Python WebSocket!")
 				_was_ws_connected = true
-				
+
+			var latest_tracking_payload: Dictionary = {}
+			var has_latest_tracking_payload := false
+			var latest_resolved_head_payload: Dictionary = {}
+			var has_latest_resolved_head_payload := false
+			var pose_packets_seen := 0
+			var packets_drained := 0
+
 			while ws.get_available_packet_count() > 0:
+				packets_drained += 1
 				var packet = ws.get_packet()
 				var json_str = packet.get_string_from_utf8()
 				var json = JSON.new()
@@ -4030,25 +4105,17 @@ func _process(_delta):
 						_handle_scan_status(data)
 
 					elif msg_type == "resolved_head_pose":
-						_set_resolved_head_pose_from_payload(data)
+						latest_resolved_head_payload = data
+						has_latest_resolved_head_payload = true
+						pose_packets_seen += 1
 
 					elif msg_type == "viewer_pose":
 						_handle_viewer_pose(data)
 						
 					elif msg_type == "tracking":
-						var tracking_active := bool(data.get("active", true))
-						if tracking_active:
-							_raw_x = data.get("x", 0.0)
-							_raw_y = data.get("y", 0.0)
-							_raw_z = data.get("z", 0.0)
-							_has_live_tracking_data = true
-						else:
-							_raw_x = 0.0
-							_raw_y = 0.0
-							_raw_z = 0.0
-							_has_live_tracking_data = false
-						_tracking_rx_counter += 1
-						has_new_data = true
+						latest_tracking_payload = data
+						has_latest_tracking_payload = true
+						pose_packets_seen += 1
 						
 					elif msg_type == "layout_map":
 						var screens = data.get("screens", {})
@@ -4183,12 +4250,23 @@ func _process(_delta):
 						
 					# Legacy UDP format fallback just in case
 					elif data.has("x"):
-						_raw_x = data.get("x", 0.0)
-						_raw_y = data.get("y", 0.0)
-						_raw_z = data.get("z", 0.0)
-						_has_live_tracking_data = true
-						_tracking_rx_counter += 1
-						has_new_data = true
+						latest_tracking_payload = data
+						has_latest_tracking_payload = true
+						pose_packets_seen += 1
+
+			_debug_ws_packets_drained = packets_drained
+			var retained_pose_packets := 0
+			if has_latest_tracking_payload:
+				retained_pose_packets += 1
+			if has_latest_resolved_head_payload:
+				retained_pose_packets += 1
+			_debug_ws_pose_packets_coalesced = max(0, pose_packets_seen - retained_pose_packets)
+			if has_latest_tracking_payload:
+				has_new_data = _apply_tracking_payload(latest_tracking_payload) or has_new_data
+			if has_latest_resolved_head_payload:
+				_set_resolved_head_pose_from_payload(latest_resolved_head_payload)
+				_record_pose_transport_age(latest_resolved_head_payload)
+				has_new_data = true
 						
 		elif state == WebSocketPeer.STATE_CLOSED and _was_ws_connected:
 			print("WebSocket Connection Closed.")
@@ -4220,6 +4298,7 @@ func _process(_delta):
 		_apply_tracking_data()
 
 	_maybe_broadcast_viewer_pose()
+	_maybe_send_pose_diagnostics()
 
 	var status_diagnostics_visible = (
 		setup_overlay

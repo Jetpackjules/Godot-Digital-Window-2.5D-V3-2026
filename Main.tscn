@@ -129,7 +129,7 @@ camera_node = NodePath("../Player/Head_Cam")
 player_node = NodePath("../Player")
 window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
-websocket_url = "ws://10.20.211.209:8080"
+websocket_url = "ws://127.0.0.1:8080"
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
 script = ExtResource("8_trn2v")
@@ -142,8 +142,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
 current_view_name = "test_box.tscn"
 
-[node name="Box" type="MeshInstance3D" parent="View" unique_id=666923875 instance=ExtResource("9_j4qnp")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.164)
+[node name="Box" parent="View" unique_id=666923875 instance=ExtResource("9_j4qnp")]
 mesh = SubResource("BoxMesh_rjuhk")
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]
