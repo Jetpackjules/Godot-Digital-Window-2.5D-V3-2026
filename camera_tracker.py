@@ -101,6 +101,7 @@ CAMERA_SOURCE_REALSENSE = "realsense"
 REALSENSE_TRACKING_MODE_KEY = ord('m')
 REALSENSE_TRACKING_ENABLE_KEY = ord('n')
 REALSENSE_TRACKING_SMOOTHING_KEY = ord('u')
+REALSENSE_IMU_TRANSLATION_TOGGLE_KEY = ord('i')
 STEREO_SCREEN_SIZE_TOGGLE_KEY = ord('h')
 REALSENSE_TRACKING_MODE_ENV = "REALSENSE_TRACKING_MODE"
 REALSENSE_TRACKING_ENABLED_ENV = "REALSENSE_TRACKING_ENABLED"
@@ -108,6 +109,12 @@ REALSENSE_SMOOTHING_ENV = "REALSENSE_SMOOTHING"
 REALSENSE_SMOOTHING_DEFAULT = float(os.environ.get(REALSENSE_SMOOTHING_ENV, "0.72"))
 REALSENSE_FAST_ML_SCALE_ENV = "REALSENSE_FAST_ML_SCALE"
 REALSENSE_FAST_ML_SCALE = float(os.environ.get(REALSENSE_FAST_ML_SCALE_ENV, "0.5"))
+REALSENSE_IMU_FALLBACK_ENABLED = os.environ.get("REALSENSE_IMU_FALLBACK", "1").strip().lower() not in ("0", "false", "no", "off")
+REALSENSE_IMU_FALLBACK_MAX_AGE_SEC = float(os.environ.get("REALSENSE_IMU_FALLBACK_MAX_AGE_SEC", "8.0"))
+REALSENSE_IMU_FALLBACK_TRANSLATION = os.environ.get("REALSENSE_IMU_FALLBACK_TRANSLATION", "1").strip().lower() in ("1", "true", "yes", "on")
+REALSENSE_IMU_ACCEL_DEADBAND_MPS2 = float(os.environ.get("REALSENSE_IMU_ACCEL_DEADBAND_MPS2", "0.35"))
+REALSENSE_IMU_MAX_TRANSLATION_SPEED_MPS = float(os.environ.get("REALSENSE_IMU_MAX_TRANSLATION_SPEED_MPS", "0.35"))
+REALSENSE_IMU_VELOCITY_DECAY = float(os.environ.get("REALSENSE_IMU_VELOCITY_DECAY", "0.985"))
 STEREO_SCREEN_SIZE_AUTO_ENV = "STEREO_SCREEN_SIZE_AUTO"
 REALSENSE_TRACKING_MODES = ["headlock", "ml", "ml_fast", "ml_body_fast", "yolo"]
 REALSENSE_HEAD_MODEL_ENV = "REALSENSE_HEAD_MODEL"
@@ -3809,7 +3816,33 @@ class RealSenseCapture:
         self.config = rs.config()
         self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
         self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
-        self.profile = self.pipeline.start(self.config)
+        self.imu_enabled = bool(REALSENSE_IMU_FALLBACK_ENABLED)
+        self.imu_available = False
+        self.imu_translation_enabled = os.environ.get(
+            "REALSENSE_IMU_FALLBACK_TRANSLATION",
+            "1" if REALSENSE_IMU_FALLBACK_TRANSLATION else "0",
+        ).strip().lower() in ("1", "true", "yes", "on")
+        if self.imu_enabled:
+            try:
+                self.config.enable_stream(rs.stream.gyro)
+                self.config.enable_stream(rs.stream.accel)
+            except Exception as exc:
+                self.imu_enabled = False
+                print(f">>> RealSense IMU stream setup unavailable: {exc} <<<")
+        try:
+            self.profile = self.pipeline.start(self.config)
+            self.imu_available = bool(self.imu_enabled)
+        except Exception as exc:
+            if not self.imu_enabled:
+                raise
+            print(f">>> RealSense IMU streams failed; retrying depth/color only: {exc} <<<")
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
+            self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
+            self.profile = self.pipeline.start(self.config)
+            self.imu_enabled = False
+            self.imu_available = False
         self.device = self.profile.get_device()
         if REALSENSE_APPLY_DEFAULT_SETTINGS:
             self._apply_advanced_settings_json(REALSENSE_DEFAULT_SETTINGS_JSON)
@@ -3854,6 +3887,7 @@ class RealSenseCapture:
         self.latest_head_rect = None
         self.latest_head_debug_rect = None
         self.latest_head_mask = None
+        self.latest_imu_debug = {"available": self.imu_available, "active": False}
         self.capture_fps = 0.0
         self._capture_count = 0
         self._last_capture_fps_time = time.perf_counter()
@@ -3883,6 +3917,19 @@ class RealSenseCapture:
         self._latest_head_rect = None
         self._latest_head_debug_rect = None
         self._latest_head_mask = None
+        self._latest_imu_debug = {"available": self.imu_available, "active": False}
+        self._imu_lock = threading.Lock()
+        self._imu_delta_R = np.eye(3, dtype=np.float32)
+        self._imu_delta_position_m = np.zeros(3, dtype=np.float32)
+        self._imu_velocity_mps = np.zeros(3, dtype=np.float32)
+        self._imu_gravity_reference_mps2 = None
+        self._imu_latest_accel_mps2 = None
+        self._imu_last_gyro_ts_sec = None
+        self._imu_last_accel_ts_sec = None
+        self._imu_last_update_time = 0.0
+        self._imu_visual_reset_time = 0.0
+        self._imu_gyro_samples = 0
+        self._imu_accel_samples = 0
         self._frame_lock = threading.Lock()
         self._tracker_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -4270,12 +4317,134 @@ class RealSenseCapture:
         guarded[(~raw_valid) & filtered_valid & raw_edge] = 0.0
         return guarded
 
+    def reset_imu_fallback_reference(self):
+        if not self.imu_available:
+            return
+        with self._imu_lock:
+            self._imu_delta_R = np.eye(3, dtype=np.float32)
+            self._imu_delta_position_m = np.zeros(3, dtype=np.float32)
+            self._imu_velocity_mps = np.zeros(3, dtype=np.float32)
+            self._imu_gravity_reference_mps2 = None if self._imu_latest_accel_mps2 is None else self._imu_latest_accel_mps2.copy()
+            self._imu_last_gyro_ts_sec = None
+            self._imu_last_accel_ts_sec = None
+            self._imu_visual_reset_time = time.time()
+
+    def get_imu_fallback_delta(self):
+        if not self.imu_available:
+            return None
+        with self._imu_lock:
+            age = time.time() - float(self._imu_last_update_time or 0.0)
+            if self._imu_last_update_time <= 0.0 or age > REALSENSE_IMU_FALLBACK_MAX_AGE_SEC:
+                return None
+            return {
+                "delta_R": self._imu_delta_R.copy(),
+                "delta_position_m": self._imu_delta_position_m.copy(),
+                "age_sec": age,
+                "gyro_samples": int(self._imu_gyro_samples),
+                "accel_samples": int(self._imu_accel_samples),
+                "translation_enabled": bool(self.imu_translation_enabled),
+            }
+
+    def get_imu_debug(self):
+        with self._imu_lock:
+            return {
+                "available": bool(self.imu_available),
+                "active": self._imu_last_update_time > 0.0,
+                "age_sec": time.time() - float(self._imu_last_update_time or 0.0) if self._imu_last_update_time > 0.0 else -1.0,
+                "gyro_samples": int(self._imu_gyro_samples),
+                "accel_samples": int(self._imu_accel_samples),
+                "translation_enabled": bool(self.imu_translation_enabled),
+            }
+
+    def set_imu_translation_enabled(self, enabled):
+        self.imu_translation_enabled = bool(enabled)
+        if not self.imu_translation_enabled:
+            with self._imu_lock:
+                self._imu_delta_position_m = np.zeros(3, dtype=np.float32)
+                self._imu_velocity_mps = np.zeros(3, dtype=np.float32)
+                self._imu_last_accel_ts_sec = None
+        print(f">>> RealSense IMU translation fallback {'ON' if self.imu_translation_enabled else 'OFF'} <<<")
+        return self.imu_translation_enabled
+
+    def toggle_imu_translation_enabled(self):
+        return self.set_imu_translation_enabled(not self.imu_translation_enabled)
+
+    def _motion_vector(self, frame):
+        try:
+            data = frame.as_motion_frame().get_motion_data()
+            return np.array([float(data.x), float(data.y), float(data.z)], dtype=np.float32)
+        except Exception:
+            return None
+
+    def _motion_timestamp_sec(self, frame):
+        try:
+            return float(frame.get_timestamp()) * 0.001
+        except Exception:
+            return time.perf_counter()
+
+    def _process_motion_frame(self, frame):
+        if not self.imu_available or frame is None:
+            return
+        try:
+            stream_type = frame.get_profile().stream_type()
+        except Exception:
+            return
+        motion = self._motion_vector(frame)
+        if motion is None:
+            return
+        timestamp_sec = self._motion_timestamp_sec(frame)
+        now = time.time()
+        with self._imu_lock:
+            if stream_type == rs.stream.gyro:
+                if self._imu_last_gyro_ts_sec is not None:
+                    dt = float(np.clip(timestamp_sec - self._imu_last_gyro_ts_sec, 0.0, 0.05))
+                    if dt > 0.0:
+                        angle_axis = motion.astype(np.float64) * dt
+                        angle = float(np.linalg.norm(angle_axis))
+                        if angle > 1e-8:
+                            delta_R, _ = cv2.Rodrigues(angle_axis.reshape(3, 1))
+                            self._imu_delta_R = (self._imu_delta_R @ delta_R.astype(np.float32)).astype(np.float32)
+                self._imu_last_gyro_ts_sec = timestamp_sec
+                self._imu_last_update_time = now
+                self._imu_gyro_samples += 1
+            elif stream_type == rs.stream.accel:
+                self._imu_latest_accel_mps2 = motion.copy()
+                if self._imu_gravity_reference_mps2 is None:
+                    self._imu_gravity_reference_mps2 = motion.copy()
+                if self.imu_translation_enabled and self._imu_last_accel_ts_sec is not None:
+                    dt = float(np.clip(timestamp_sec - self._imu_last_accel_ts_sec, 0.0, 0.05))
+                    if dt > 0.0:
+                        linear_accel = motion - self._imu_gravity_reference_mps2
+                        if float(np.linalg.norm(linear_accel)) < REALSENSE_IMU_ACCEL_DEADBAND_MPS2:
+                            linear_accel = np.zeros(3, dtype=np.float32)
+                        self._imu_velocity_mps = (self._imu_velocity_mps + (linear_accel * dt)) * REALSENSE_IMU_VELOCITY_DECAY
+                        speed = float(np.linalg.norm(self._imu_velocity_mps))
+                        max_speed = max(0.01, REALSENSE_IMU_MAX_TRANSLATION_SPEED_MPS)
+                        if speed > max_speed:
+                            self._imu_velocity_mps *= max_speed / speed
+                        self._imu_delta_position_m += self._imu_velocity_mps * dt
+                self._imu_last_accel_ts_sec = timestamp_sec
+                self._imu_last_update_time = now
+                self._imu_accel_samples += 1
+
+    def _process_imu_frames(self, frames):
+        if not self.imu_available:
+            return
+        for stream_type in (rs.stream.gyro, rs.stream.accel):
+            motion_frame = None
+            try:
+                motion_frame = frames.first_or_default(stream_type)
+            except Exception:
+                motion_frame = None
+            self._process_motion_frame(motion_frame)
+
     def _capture_loop(self):
         while not self._stop_event.is_set():
             wait_start = time.perf_counter()
             try:
                 frames = self.pipeline.wait_for_frames()
                 wait_done = time.perf_counter()
+                self._process_imu_frames(frames)
                 color_frame_for_charuco = frames.get_color_frame()
                 frames = self.align_to_depth.process(frames)
                 align_done = time.perf_counter()
@@ -4389,6 +4558,7 @@ class RealSenseCapture:
             self.latest_head_rect = self._latest_head_rect
             self.latest_head_debug_rect = self._latest_head_debug_rect
             self.latest_head_mask = None if self._latest_head_mask is None else self._latest_head_mask.copy()
+            self.latest_imu_debug = self.get_imu_debug()
             self._last_read_frame_id = self._latest_frame_id
         read_copy_done = time.perf_counter()
         self._profile_add("read_copy", read_copy_done - read_copy_start)
@@ -4616,6 +4786,7 @@ def main():
     print("Press 'p' in the camera window to toggle full vs black preview.")
     print("Press 't' in the camera window to toggle the timing profiler panel.")
     print("Press 'u' in the camera window to toggle RealSense tracking smoothing.")
+    print("Press 'i' in the camera window to toggle RealSense IMU translation fallback.")
     print("Press 'r' in the camera window to reset the solved room/screen map.")
     print("Press 'q' in the camera window to quit.\n")
     os.environ.pop(CAMERA_INDEX_ENV, None)
@@ -4673,6 +4844,10 @@ def main():
     
     # Temporal Smoothing
     smoothed_T_cam = None
+    last_visual_T_origin_to_cam = None
+    last_visual_camera_pose_time = 0.0
+    imu_fallback_active = False
+    imu_fallback_last_log_time = 0.0
 
     view_pitch = 45.0
     view_yaw = -45.0
@@ -5020,13 +5195,14 @@ def main():
         send_udp_json(layout_payload)
         last_layout_send_time = time.time()
 
-    def broadcast_tracker_camera_pose(T_origin_to_cam):
+    def broadcast_tracker_camera_pose(T_origin_to_cam, source="visual"):
         nonlocal last_tracker_pose_send_time
         if global_origin_id is None or T_origin_to_cam is None:
             return
         payload_transform = canonicalize_y_up_transform(T_origin_to_cam) if CANONICAL_Y_UP_PAYLOADS else T_origin_to_cam
         payload = {
             "type": "tracker_camera_pose",
+            "source": source,
             "origin_screen": int(global_origin_id),
             "R": payload_transform[:3, :3].tolist(),
             "T": payload_transform[:3, 3].tolist(),
@@ -6405,7 +6581,7 @@ def main():
             oakd_publish_lock.release()
 
     def reset_spatial_map():
-        nonlocal global_origin_id, smoothed_T_cam
+        nonlocal global_origin_id, smoothed_T_cam, last_visual_T_origin_to_cam, last_visual_camera_pose_time, imu_fallback_active
         print(">>> WIPING SPATIAL MAP RE-INITIALIZING <<<")
         global_transforms.clear()
         global_anchor_transforms.clear()
@@ -6414,6 +6590,9 @@ def main():
         screen_trackers.clear()
         anchor_trackers.clear()
         smoothed_T_cam = None
+        last_visual_T_origin_to_cam = None
+        last_visual_camera_pose_time = 0.0
+        imu_fallback_active = False
 
     def active_anchor_pose_mode():
         return ANCHOR_POSE_MODES[anchor_pose_mode_index]
@@ -7104,6 +7283,13 @@ def main():
                         "resolved_head_matches_origin": bool(cmd_json.get("resolved_head_matches_origin", False)),
                     }
                     latest_godot_pose_diagnostics_time = time.time()
+                elif cmd_type == "realsense_imu_translation":
+                    requested = bool(cmd_json.get("enabled", True))
+                    os.environ["REALSENSE_IMU_FALLBACK_TRANSLATION"] = "1" if requested else "0"
+                    if isinstance(cap, RealSenseCapture):
+                        cap.set_imu_translation_enabled(requested)
+                    else:
+                        print(f">>> RealSense IMU translation fallback default set to {'ON' if requested else 'OFF'} for the next RealSense capture. <<<")
                 elif cmd_type == "realsense_point_cloud":
                     point_cloud_stats_path = str(cmd_json.get("stats_path", point_cloud_stats_path)).strip()
                     point_cloud_console_stats = bool(cmd_json.get("console_stats", point_cloud_console_stats))
@@ -7935,6 +8121,13 @@ def main():
                 smoothed_T_cam[:3, :3] = U @ Vt
 
             T_origin_to_cam = smoothed_T_cam
+            last_visual_T_origin_to_cam = T_origin_to_cam.copy()
+            last_visual_camera_pose_time = time.time()
+            if active_camera_source == CAMERA_SOURCE_REALSENSE and hasattr(cap, "reset_imu_fallback_reference"):
+                cap.reset_imu_fallback_reference()
+            if imu_fallback_active:
+                print(">>> RealSense IMU fallback re-anchored by visual screen/anchor solve. <<<")
+                imu_fallback_active = False
 
             # Discovery & Continuous Updating: Map newly seen screens into the Graph, and update existing ones!
             for s in current_frame_screens:
@@ -7979,6 +8172,40 @@ def main():
                         "size": a["size"],
                     }
 
+        if (
+            T_origin_to_cam is None
+            and REALSENSE_IMU_FALLBACK_ENABLED
+            and active_camera_source == CAMERA_SOURCE_REALSENSE
+            and global_origin_id is not None
+            and last_visual_T_origin_to_cam is not None
+            and cap is not None
+            and hasattr(cap, "get_imu_fallback_delta")
+        ):
+            imu_delta = cap.get_imu_fallback_delta()
+            visual_age = time.time() - last_visual_camera_pose_time
+            if imu_delta is not None and visual_age <= REALSENSE_IMU_FALLBACK_MAX_AGE_SEC:
+                predicted_T_cam = last_visual_T_origin_to_cam.copy()
+                predicted_T_cam[:3, :3] = (
+                    last_visual_T_origin_to_cam[:3, :3] @ imu_delta["delta_R"]
+                ).astype(np.float32)
+                if bool(imu_delta.get("translation_enabled", False)):
+                    delta_position_world = (
+                        last_visual_T_origin_to_cam[:3, :3]
+                        @ (imu_delta["delta_position_m"] * METERS_TO_WORLD_UNITS)
+                    )
+                    predicted_T_cam[:3, 3] = last_visual_T_origin_to_cam[:3, 3] + delta_position_world
+                T_origin_to_cam = predicted_T_cam
+                if not imu_fallback_active or time.time() - imu_fallback_last_log_time > 2.0:
+                    print(
+                        ">>> RealSense IMU fallback camera pose active "
+                        f"(visual_age={visual_age:.2f}s, imu_age={float(imu_delta.get('age_sec', -1.0)):.2f}s, "
+                        f"translation={'on' if bool(imu_delta.get('translation_enabled', False)) else 'held'}) <<<"
+                    )
+                    imu_fallback_last_log_time = time.time()
+                imu_fallback_active = True
+            else:
+                imu_fallback_active = False
+
         timing_buckets["pose_solve"] = (time.perf_counter() - pose_solve_start) * 1000.0
 
         # ---------------------------------------------------------
@@ -7991,7 +8218,7 @@ def main():
             T_origin_to_cam is not None
             and time.time() - last_tracker_pose_send_time > TRACKER_CAMERA_POSE_SEND_INTERVAL_SEC
         ):
-            broadcast_tracker_camera_pose(T_origin_to_cam)
+            broadcast_tracker_camera_pose(T_origin_to_cam, "realsense_imu_fallback" if imu_fallback_active else "visual")
 
         if camera_paused or cap is None:
             send_scan_status(
@@ -8011,7 +8238,14 @@ def main():
                 )
             elif not visible_ids:
                 mapped_ids = sorted(int(sid) for sid in global_transforms.keys())
-                if scan_locked_state and mapped_ids:
+                if imu_fallback_active and mapped_ids:
+                    send_scan_status(
+                        "imu_fallback",
+                        "Markers are not visible. Holding the mapped layout and predicting tracker camera pose from RealSense IMU.",
+                        visible_screens=[],
+                        mapped_screens=mapped_ids
+                    )
+                elif scan_locked_state and mapped_ids:
                     send_scan_status(
                         "layout_ready",
                         "Layout is locked. Markers are not currently visible.",
@@ -8529,9 +8763,11 @@ def main():
             timing_text = ""
             if isinstance(cap, RealSenseCapture):
                 head_debug = cap.get_head_debug()
+                imu_debug = cap.get_imu_debug()
                 smoothing_label = f"sm={float(head_debug.get('smoothing', cap.tracking_smoothing)):.2f}"
                 scale_label = f"scale={float(head_debug.get('scale', 1.0)):.2f}"
-                timing_text = f"RealSense {cap.tracking_mode.upper()} head={float(head_debug.get('fps', 0.0)):.1f}fps cam={cap.capture_fps:.1f}fps {smoothing_label} {scale_label} preview={preview_mode}"
+                imu_label = "imuT=on" if bool(imu_debug.get("translation_enabled", False)) else "imuT=off"
+                timing_text = f"RealSense {cap.tracking_mode.upper()} head={float(head_debug.get('fps', 0.0)):.1f}fps cam={cap.capture_fps:.1f}fps {smoothing_label} {scale_label} {imu_label} preview={preview_mode}"
             else:
                 timing_text = f"{active_camera_source} preview={preview_mode}"
             timing_panel = draw_timing_panel(timing_buckets, capture_loop_fps, preview_display_fps, room_map_display_fps, timing_text)
@@ -8601,6 +8837,15 @@ def main():
                 next_value = 0.0 if current > 0.001 else REALSENSE_SMOOTHING_DEFAULT
                 os.environ[REALSENSE_SMOOTHING_ENV] = f"{next_value:.3f}"
                 print(f">>> RealSense tracking smoothing default set to {next_value:.2f} for the next RealSense capture. <<<")
+        elif key == REALSENSE_IMU_TRANSLATION_TOGGLE_KEY:
+            if isinstance(cap, RealSenseCapture):
+                enabled = cap.toggle_imu_translation_enabled()
+                os.environ["REALSENSE_IMU_FALLBACK_TRANSLATION"] = "1" if enabled else "0"
+            else:
+                current = os.environ.get("REALSENSE_IMU_FALLBACK_TRANSLATION", "1").strip().lower() in ("1", "true", "yes", "on")
+                next_value = not current
+                os.environ["REALSENSE_IMU_FALLBACK_TRANSLATION"] = "1" if next_value else "0"
+                print(f">>> RealSense IMU translation fallback default set to {'ON' if next_value else 'OFF'} for the next RealSense capture. <<<")
         elif key == STEREO_SCREEN_SIZE_TOGGLE_KEY:
             stereo_screen_size_auto = not stereo_screen_size_auto
             os.environ[STEREO_SCREEN_SIZE_AUTO_ENV] = "1" if stereo_screen_size_auto else "0"
