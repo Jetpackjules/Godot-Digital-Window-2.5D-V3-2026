@@ -29,11 +29,29 @@ class_name IPhoneWindowRuntime
 @export var tap_to_cycle_views: bool = true
 @export var desktop_debug_cycle_views: bool = true
 
+@export_group("Island / Notch")
+@export_enum("Off", "Crop Top", "Top Wall") var island_adjustment_mode: int = 0 :
+	set(value):
+		island_adjustment_mode = clampi(value, ISLAND_MODE_OFF, ISLAND_MODE_TOP_WALL)
+		_apply_island_adjustment()
+@export_range(0.0, 0.04, 0.0005) var island_height_meters: float = 0.011 :
+	set(value):
+		island_height_meters = value
+		_apply_island_adjustment()
+@export_range(0.0, 0.02, 0.0005) var island_wall_depth_meters: float = 0.004 :
+	set(value):
+		island_wall_depth_meters = value
+		_sync_island_wall()
+
 const FRONT_CAMERA_EDGE_AUTO := 0
 const FRONT_CAMERA_EDGE_TOP := 1
 const FRONT_CAMERA_EDGE_RIGHT := 2
 const FRONT_CAMERA_EDGE_BOTTOM := 3
 const FRONT_CAMERA_EDGE_LEFT := 4
+const ISLAND_MODE_OFF := 0
+const ISLAND_MODE_CROP_TOP := 1
+const ISLAND_MODE_TOP_WALL := 2
+const ISLAND_MODE_NAMES := ["Off", "Crop Top", "Top Wall"]
 const SETTINGS_TOGGLE_COOLDOWN_MSEC := 450
 const TAP_MAX_DURATION_MSEC := 450
 const TAP_MAX_MOVE_PIXELS := 32.0
@@ -57,6 +75,7 @@ var _settings_offset_y_slider: HSlider
 var _settings_scale_mode_option: OptionButton
 var _settings_black_fill_check: CheckBox
 var _settings_screen_reference_option: OptionButton
+var _settings_island_mode_option: OptionButton
 var _active_touches: Dictionary = {}
 var _last_settings_toggle_msec: int = -10000
 var _tap_start_index: int = -1
@@ -70,6 +89,12 @@ var _multi_touch_moved_too_far: bool = false
 var _has_initialized_camera_pose: bool = false
 var _screen_profile_name: String = ""
 var _runtime_screen_size: Vector2i = Vector2i.ZERO
+var _base_physical_width_meters: float = 0.0
+var _base_physical_height_meters: float = 0.0
+var _base_virtual_window_height_meters: float = 0.0
+var _is_applying_island_adjustment: bool = false
+var _island_wall: MeshInstance3D
+var _island_wall_material: StandardMaterial3D
 
 func _ready() -> void:
 	_resolve_nodes()
@@ -129,6 +154,8 @@ func _apply_initial_screen_defaults() -> void:
 	if auto_configure_ios_screen_size:
 		_apply_ios_screen_profile()
 	_screen_scaler.refresh_from_diagonal()
+	_capture_base_screen_size()
+	_apply_island_adjustment()
 
 func _apply_ios_screen_profile() -> void:
 	if not OS.has_feature("ios"):
@@ -148,6 +175,38 @@ func _apply_ios_screen_profile() -> void:
 		_screen_profile_name = str(profile.get("name", "iOS screen"))
 	else:
 		_screen_profile_name = "iOS screen %.0fx%.0f" % [float(runtime_size.x), float(runtime_size.y)]
+
+func _capture_base_screen_size() -> void:
+	if _screen_scaler == null:
+		return
+	if _screen_scaler.physical_width_meters <= 0.0 or _screen_scaler.physical_height_meters <= 0.0:
+		return
+	_base_physical_width_meters = _screen_scaler.physical_width_meters
+	_base_physical_height_meters = _screen_scaler.physical_height_meters
+	_base_virtual_window_height_meters = _screen_scaler.virtual_window_height
+
+func _apply_island_adjustment() -> void:
+	if _is_applying_island_adjustment or _screen_scaler == null:
+		return
+	if _base_physical_width_meters <= 0.0 or _base_physical_height_meters <= 0.0:
+		_capture_base_screen_size()
+	if _base_physical_width_meters <= 0.0 or _base_physical_height_meters <= 0.0:
+		_sync_island_wall()
+		return
+
+	_is_applying_island_adjustment = true
+	var adjusted_height := _base_physical_height_meters
+	if island_adjustment_mode == ISLAND_MODE_CROP_TOP:
+		adjusted_height = maxf(0.01, _base_physical_height_meters - island_height_meters)
+
+	_screen_scaler.physical_width_meters = _base_physical_width_meters
+	_screen_scaler.physical_height_meters = adjusted_height
+	if _screen_scaler.match_virtual_window_to_physical_height:
+		_screen_scaler.virtual_window_height = adjusted_height
+	else:
+		_screen_scaler.virtual_window_height = minf(_base_virtual_window_height_meters, adjusted_height)
+	_is_applying_island_adjustment = false
+	_sync_island_wall()
 
 func _apply_desktop_debug_window_aspect() -> void:
 	if not match_desktop_debug_window_to_screen_aspect or OS.has_feature("ios"):
@@ -376,6 +435,45 @@ func _set_view_bounds_preview_visible(visible: bool) -> void:
 	else:
 		_view_switcher.set("view_bounds_preview_enabled", visible)
 
+func _sync_island_wall() -> void:
+	if _window_center == null or _screen_scaler == null:
+		return
+	if island_adjustment_mode != ISLAND_MODE_TOP_WALL or island_height_meters <= 0.0:
+		if _island_wall != null:
+			_island_wall.visible = false
+		return
+
+	if _island_wall == null or not is_instance_valid(_island_wall):
+		_island_wall = MeshInstance3D.new()
+		_island_wall.name = "IslandTopWall"
+		_island_wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_window_center.add_child(_island_wall)
+
+	var width := _screen_scaler.physical_width_meters
+	var height := _screen_scaler.physical_height_meters
+	if _base_physical_width_meters > 0.0:
+		width = _base_physical_width_meters
+	if _base_physical_height_meters > 0.0:
+		height = _base_physical_height_meters
+	if width <= 0.0 or height <= 0.0:
+		_island_wall.visible = false
+		return
+
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(width, island_height_meters, maxf(0.0005, island_wall_depth_meters))
+	_island_wall.mesh = mesh
+	_island_wall.material_override = _get_island_wall_material()
+	_island_wall.position = Vector3(0.0, height * 0.5 - island_height_meters * 0.5, maxf(0.00025, island_wall_depth_meters * 0.5))
+	_island_wall.visible = true
+
+func _get_island_wall_material() -> StandardMaterial3D:
+	if _island_wall_material == null:
+		_island_wall_material = StandardMaterial3D.new()
+		_island_wall_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_island_wall_material.albedo_color = Color.BLACK
+		_island_wall_material.roughness = 1.0
+	return _island_wall_material
+
 func _build_settings_panel() -> void:
 	var parent := get_node_or_null("../UI") as Node
 	if parent == null:
@@ -392,7 +490,7 @@ func _build_settings_panel() -> void:
 	panel.offset_left = 18.0
 	panel.offset_top = 60.0
 	panel.offset_right = 500.0
-	panel.offset_bottom = 390.0
+	panel.offset_bottom = 460.0
 	parent.add_child(panel)
 	_settings_panel = panel
 
@@ -441,6 +539,15 @@ func _build_settings_panel() -> void:
 	_settings_black_fill_check.text = "Blackfill"
 	_settings_black_fill_check.toggled.connect(_on_black_fill_toggled)
 	column.add_child(_settings_black_fill_check)
+
+	var island_label := Label.new()
+	island_label.text = "Island / Notch"
+	column.add_child(island_label)
+
+	_settings_island_mode_option = OptionButton.new()
+	_populate_island_mode_options()
+	_settings_island_mode_option.item_selected.connect(_on_island_mode_selected)
+	column.add_child(_settings_island_mode_option)
 
 	var screen_reference_label := Label.new()
 	screen_reference_label.text = "Screen Reference"
@@ -520,6 +627,13 @@ func _populate_screen_reference_options() -> void:
 		var mode_name := _get_screen_reference_mode_name(index)
 		_settings_screen_reference_option.add_item(mode_name, index)
 
+func _populate_island_mode_options() -> void:
+	if _settings_island_mode_option == null:
+		return
+	_settings_island_mode_option.clear()
+	for index in range(ISLAND_MODE_NAMES.size()):
+		_settings_island_mode_option.add_item(ISLAND_MODE_NAMES[index], index)
+
 func _get_screen_reference_mode_name(mode: int) -> String:
 	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_name"):
 		return str(_view_switcher.call("get_screen_plane_reference_mode_name", mode))
@@ -575,6 +689,9 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 		if _settings_screen_reference_option.selected != reference_mode:
 			_settings_screen_reference_option.select(reference_mode)
 
+	if _settings_island_mode_option != null and _settings_island_mode_option.selected != island_adjustment_mode:
+		_settings_island_mode_option.select(island_adjustment_mode)
+
 func _on_offset_slider_changed(value: float, axis: String) -> void:
 	match axis:
 		"x":
@@ -606,6 +723,11 @@ func _on_screen_reference_mode_selected(index: int) -> void:
 		_view_switcher.call("set_screen_plane_reference_mode", index)
 	else:
 		_view_switcher.set("screen_plane_reference_mode", index)
+
+func _on_island_mode_selected(index: int) -> void:
+	island_adjustment_mode = clampi(index, ISLAND_MODE_OFF, ISLAND_MODE_TOP_WALL)
+	_apply_island_adjustment()
+	_sync_settings_values_from_runtime(true)
 
 func _on_zero_manual_offset_pressed() -> void:
 	manual_front_camera_origin_offset_meters = Vector3.ZERO
@@ -738,13 +860,14 @@ func _get_screen_status_text() -> String:
 	if profile_name == "":
 		profile_name = "screen"
 
-	return "%s %dx%d %.0fx%.0fmm %.1fin" % [
+	return "%s %dx%d %.0fx%.0fmm %.1fin island:%s" % [
 		profile_name,
 		runtime_size.x,
 		runtime_size.y,
 		_screen_scaler.physical_width_meters * 1000.0,
 		_screen_scaler.physical_height_meters * 1000.0,
 		_screen_scaler.screen_diagonal_inches,
+		ISLAND_MODE_NAMES[island_adjustment_mode],
 	]
 
 func _get_view_status_text() -> String:

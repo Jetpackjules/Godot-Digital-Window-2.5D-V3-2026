@@ -32,7 +32,7 @@ extends Node3D
 	set(value):
 		ball_radius_ratio_of_bounds_height = value
 		_rebuild_if_ready(true)
-@export_range(0.01, 1.0, 0.005) var maximum_ball_radius_meters: float = 0.18 :
+@export_range(0.01, 1.0, 0.005) var maximum_ball_radius_meters: float = 0.6 :
 	set(value):
 		maximum_ball_radius_meters = value
 		_rebuild_if_ready(true)
@@ -56,8 +56,9 @@ extends Node3D
 @export var invert_tilt_y: bool = true
 @export_range(0.0, 2.0, 0.01) var ball_linear_damp: float = 0.18
 @export_range(0.0, 2.0, 0.01) var ball_angular_damp: float = 0.08
-@export_range(0.0, 1.0, 0.01) var ball_surface_friction: float = 0.08
+@export_range(0.0, 1.0, 0.01) var ball_surface_friction: float = 0.52
 @export_range(0.0, 1.0, 0.01) var ball_bounce: float = 0.08
+@export_range(0.0, 4.0, 0.05) var visual_roll_torque_multiplier: float = 1.6
 @export var desktop_debug_arrow_keys: bool = true
 
 const GRAVITY_METERS_PER_SECOND_SQUARED := 9.80665
@@ -70,6 +71,8 @@ var _balls: Array[RigidBody3D] = []
 var _last_bounds_size: Vector2 = Vector2.ZERO
 var _wall_material: StandardMaterial3D
 var _back_material: StandardMaterial3D
+var _wall_texture: Texture2D
+var _back_texture: Texture2D
 var _ball_materials: Array[StandardMaterial3D] = []
 var _ball_textures: Array[Texture2D] = []
 var _smoothed_tilt: Vector2 = Vector2.ZERO
@@ -98,7 +101,9 @@ func _physics_process(_delta: float) -> void:
 	for ball in _balls:
 		if ball == null or not is_instance_valid(ball):
 			continue
-		ball.apply_central_force(force_direction * tilt_gravity_multiplier * ball.mass)
+		var force := force_direction * tilt_gravity_multiplier * ball.mass
+		ball.apply_central_force(force)
+		_apply_visual_roll_torque(ball, force)
 
 func _rebuild_if_ready(force: bool) -> void:
 	if not is_inside_tree():
@@ -193,7 +198,7 @@ func _build_balls(bounds_size: Vector2) -> void:
 		return
 
 	var radius := _get_ball_radius(bounds_size)
-	var margin := radius * 2.2
+	var margin := radius * 2.05
 	var usable_width := maxf(radius, bounds_size.x - margin * 2.0)
 	var usable_height := maxf(radius, bounds_size.y - margin * 2.0)
 	var columns := maxi(1, ceili(sqrt(float(ball_count))))
@@ -205,8 +210,8 @@ func _build_balls(bounds_size: Vector2) -> void:
 		var x := -usable_width * 0.5 + usable_width * (float(column) + 0.5) / float(columns)
 		var y := -usable_height * 0.5 + usable_height * (float(row) + 0.5) / float(rows)
 		var jitter := Vector2(
-			sin(float(index) * 12.9898) * radius * 0.65,
-			cos(float(index) * 78.233) * radius * 0.65
+			sin(float(index) * 12.9898) * radius * 0.06,
+			cos(float(index) * 78.233) * radius * 0.06
 		)
 		_add_ball(index, radius, Vector3(x + jitter.x, y + jitter.y, -box_depth_meters * 0.5))
 
@@ -254,6 +259,16 @@ func _make_surface_physics_material() -> PhysicsMaterial:
 	material.bounce = ball_bounce
 	return material
 
+func _apply_visual_roll_torque(ball: RigidBody3D, force: Vector3) -> void:
+	if visual_roll_torque_multiplier <= 0.0 or force.length_squared() <= 0.000001:
+		return
+	var radius := _get_ball_radius(_last_bounds_size)
+	var plane_normal := -global_transform.basis.z.normalized()
+	var torque_axis := plane_normal.cross(force.normalized())
+	if torque_axis.length_squared() <= 0.000001:
+		return
+	ball.apply_torque(torque_axis.normalized() * force.length() * radius * visual_roll_torque_multiplier)
+
 func _read_tilt_gravity() -> Vector2:
 	var gravity := Input.get_gravity()
 	var tilt := Vector2(gravity.x, gravity.y)
@@ -293,15 +308,17 @@ func _get_ball_radius(bounds_size: Vector2) -> float:
 func _get_wall_material() -> StandardMaterial3D:
 	if _wall_material == null:
 		_wall_material = StandardMaterial3D.new()
-		_wall_material.albedo_color = wall_color
-		_wall_material.roughness = 0.85
+		_wall_material.albedo_color = Color(0.82, 0.58, 0.34, 1.0)
+		_wall_material.albedo_texture = _get_wall_texture()
+		_wall_material.roughness = 0.9
 	return _wall_material
 
 func _get_back_material() -> StandardMaterial3D:
 	if _back_material == null:
 		_back_material = StandardMaterial3D.new()
-		_back_material.albedo_color = back_color
-		_back_material.roughness = 0.75
+		_back_material.albedo_color = Color(0.88, 0.68, 0.42, 1.0)
+		_back_material.albedo_texture = _get_back_texture()
+		_back_material.roughness = 0.86
 	return _back_material
 
 func _get_ball_material(index: int) -> StandardMaterial3D:
@@ -315,6 +332,34 @@ func _get_ball_material(index: int) -> StandardMaterial3D:
 		material.roughness = 0.62
 		_ball_materials.append(material)
 	return _ball_materials[index]
+
+func _get_wall_texture() -> Texture2D:
+	if _wall_texture == null:
+		_wall_texture = _make_wood_texture(Color(0.56, 0.32, 0.13, 1.0), Color(0.96, 0.69, 0.38, 1.0), 10)
+	return _wall_texture
+
+func _get_back_texture() -> Texture2D:
+	if _back_texture == null:
+		_back_texture = _make_wood_texture(Color(0.48, 0.29, 0.14, 1.0), Color(0.9, 0.66, 0.38, 1.0), 6)
+	return _back_texture
+
+func _make_wood_texture(dark: Color, light: Color, plank_count: int) -> ImageTexture:
+	var size := 128
+	var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	for y in range(size):
+		for x in range(size):
+			var u := float(x) / float(size)
+			var v := float(y) / float(size)
+			var plank := int(floor(u * float(plank_count)))
+			var grain := sin((v * 34.0) + sin(u * 19.0) * 1.7 + float(plank) * 0.63)
+			var plank_position := (u * float(plank_count)) - floor(u * float(plank_count))
+			var seam := 1.0 if abs(plank_position - 0.5) < 0.035 else 0.0
+			var shade := clampf(0.52 + grain * 0.18 + sin(v * 9.0 + float(plank)) * 0.08, 0.0, 1.0)
+			var color := dark.lerp(light, shade)
+			if seam > 0.0:
+				color = color.darkened(0.35)
+			image.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(image)
 
 func _get_ball_texture(index: int, base_color: Color) -> Texture2D:
 	while _ball_textures.size() <= index:

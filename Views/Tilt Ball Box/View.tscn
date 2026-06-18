@@ -5,7 +5,7 @@
 
 [node name="Tilt Ball Box" type="Node3D"]
 script = ExtResource("1_tilt_box")
-box_depth_meters = 0.72
+box_depth_meters = 1.25
 wall_thickness_meters = 0.07
 ball_count = 6
 ball_radius_ratio_of_bounds_height = 0.12
