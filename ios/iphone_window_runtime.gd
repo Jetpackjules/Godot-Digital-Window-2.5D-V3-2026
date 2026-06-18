@@ -37,6 +37,8 @@ const FRONT_CAMERA_EDGE_LEFT := 4
 const SETTINGS_TOGGLE_COOLDOWN_MSEC := 450
 const TAP_MAX_DURATION_MSEC := 450
 const TAP_MAX_MOVE_PIXELS := 32.0
+const MULTI_TOUCH_GESTURE_MAX_DURATION_MSEC := 900
+const MULTI_TOUCH_GESTURE_MAX_MOVE_PIXELS := 48.0
 const RUNTIME_BUILD_TAG := "ios-cycler-v3"
 
 var _camera_node: Camera3D
@@ -54,12 +56,17 @@ var _settings_offset_x_slider: HSlider
 var _settings_offset_y_slider: HSlider
 var _settings_scale_mode_option: OptionButton
 var _settings_black_fill_check: CheckBox
+var _settings_screen_reference_option: OptionButton
 var _active_touches: Dictionary = {}
 var _last_settings_toggle_msec: int = -10000
 var _tap_start_index: int = -1
 var _tap_start_position: Vector2 = Vector2.ZERO
 var _tap_start_msec: int = 0
 var _multi_touch_gesture_seen: bool = false
+var _multi_touch_start_msec: int = 0
+var _multi_touch_start_positions: Dictionary = {}
+var _multi_touch_max_count: int = 0
+var _multi_touch_moved_too_far: bool = false
 var _has_initialized_camera_pose: bool = false
 var _screen_profile_name: String = ""
 var _runtime_screen_size: Vector2i = Vector2i.ZERO
@@ -227,18 +234,48 @@ func _same_size_ignoring_orientation(a: Vector2i, b: Vector2i) -> bool:
 
 func _handle_settings_toggle_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
 		if event.pressed:
 			if _active_touches.is_empty():
-				_tap_start_index = event.index
-				_tap_start_position = event.position
+				_tap_start_index = touch.index
+				_tap_start_position = touch.position
 				_tap_start_msec = Time.get_ticks_msec()
 				_multi_touch_gesture_seen = false
-			_active_touches[event.index] = event.position
+				_multi_touch_start_msec = _tap_start_msec
+				_multi_touch_start_positions.clear()
+				_multi_touch_max_count = 0
+				_multi_touch_moved_too_far = false
+			_active_touches[touch.index] = touch.position
+			_multi_touch_start_positions[touch.index] = touch.position
 			if _active_touches.size() >= 2:
 				_multi_touch_gesture_seen = true
-				_toggle_settings_panel_with_cooldown()
+			_multi_touch_max_count = maxi(_multi_touch_max_count, _active_touches.size())
 		else:
-			_active_touches.erase(event.index)
+			_mark_touch_move_if_needed(touch.index, touch.position)
+			_active_touches.erase(touch.index)
+			if _active_touches.is_empty() and _multi_touch_gesture_seen:
+				_finish_multi_touch_gesture()
+				_tap_start_index = -1
+	elif event is InputEventScreenDrag:
+		var drag := event as InputEventScreenDrag
+		_active_touches[drag.index] = drag.position
+		_mark_touch_move_if_needed(drag.index, drag.position)
+
+func _mark_touch_move_if_needed(index: int, position: Vector2) -> void:
+	if not _multi_touch_start_positions.has(index):
+		return
+	var start_position: Vector2 = _multi_touch_start_positions[index]
+	if position.distance_to(start_position) > MULTI_TOUCH_GESTURE_MAX_MOVE_PIXELS:
+		_multi_touch_moved_too_far = true
+
+func _finish_multi_touch_gesture() -> void:
+	var elapsed_msec := Time.get_ticks_msec() - _multi_touch_start_msec
+	if elapsed_msec > MULTI_TOUCH_GESTURE_MAX_DURATION_MSEC or _multi_touch_moved_too_far:
+		return
+	if _multi_touch_max_count >= 3:
+		_cycle_screen_plane_reference()
+	elif _multi_touch_max_count == 2:
+		_toggle_settings_panel_with_cooldown()
 
 func _handle_view_cycle_input(event: InputEvent) -> void:
 	if not tap_to_cycle_views:
@@ -297,6 +334,12 @@ func _cycle_previous_view() -> void:
 		return
 	if _view_switcher.has_method("previous_view"):
 		_view_switcher.call("previous_view")
+
+func _cycle_screen_plane_reference() -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("cycle_screen_plane_reference_mode"):
+		_view_switcher.call("cycle_screen_plane_reference_mode")
 
 func _toggle_settings_panel_with_cooldown() -> void:
 	var now := Time.get_ticks_msec()
@@ -399,6 +442,15 @@ func _build_settings_panel() -> void:
 	_settings_black_fill_check.toggled.connect(_on_black_fill_toggled)
 	column.add_child(_settings_black_fill_check)
 
+	var screen_reference_label := Label.new()
+	screen_reference_label.text = "Screen Reference"
+	column.add_child(screen_reference_label)
+
+	_settings_screen_reference_option = OptionButton.new()
+	_populate_screen_reference_options()
+	_settings_screen_reference_option.item_selected.connect(_on_screen_reference_mode_selected)
+	column.add_child(_settings_screen_reference_option)
+
 	var reset_button := Button.new()
 	reset_button.text = "Zero Manual Offset"
 	reset_button.pressed.connect(_on_zero_manual_offset_pressed)
@@ -445,6 +497,32 @@ func _get_scale_mode_name(mode: int) -> String:
 		_:
 			return "No Scaling"
 
+func _populate_screen_reference_options() -> void:
+	if _settings_screen_reference_option == null:
+		return
+	_settings_screen_reference_option.clear()
+	var count := 5
+	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_count"):
+		count = int(_view_switcher.call("get_screen_plane_reference_mode_count"))
+	for index in range(count):
+		var mode_name := _get_screen_reference_mode_name(index)
+		_settings_screen_reference_option.add_item(mode_name, index)
+
+func _get_screen_reference_mode_name(mode: int) -> String:
+	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_name"):
+		return str(_view_switcher.call("get_screen_plane_reference_mode_name", mode))
+	match mode:
+		0:
+			return "Off"
+		1:
+			return "Vertical Bars"
+		2:
+			return "Edge Frame"
+		3:
+			return "Crosshair"
+		_:
+			return "Thirds Grid"
+
 func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_panel == null or (not force and not _settings_panel.visible):
 		return
@@ -476,6 +554,15 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 			enabled = bool(_view_switcher.get("black_fill_enabled"))
 		_settings_black_fill_check.button_pressed = enabled
 
+	if _settings_screen_reference_option != null and _view_switcher != null:
+		var reference_mode := 0
+		if _view_switcher.has_method("get_screen_plane_reference_mode"):
+			reference_mode = int(_view_switcher.call("get_screen_plane_reference_mode"))
+		else:
+			reference_mode = int(_view_switcher.get("screen_plane_reference_mode"))
+		if _settings_screen_reference_option.selected != reference_mode:
+			_settings_screen_reference_option.select(reference_mode)
+
 func _on_offset_slider_changed(value: float, axis: String) -> void:
 	match axis:
 		"x":
@@ -499,6 +586,14 @@ func _on_black_fill_toggled(enabled: bool) -> void:
 		_view_switcher.call("set_black_fill_enabled", enabled)
 	else:
 		_view_switcher.set("black_fill_enabled", enabled)
+
+func _on_screen_reference_mode_selected(index: int) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_screen_plane_reference_mode"):
+		_view_switcher.call("set_screen_plane_reference_mode", index)
+	else:
+		_view_switcher.set("screen_plane_reference_mode", index)
 
 func _on_zero_manual_offset_pressed() -> void:
 	manual_front_camera_origin_offset_meters = Vector3.ZERO

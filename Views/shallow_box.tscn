@@ -1,5 +1,7 @@
 [gd_scene format=3 uid="uid://hoydh75hu4nc"]
 
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
+
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vowyt"]
 albedo_color = Color(1, 0.09019608, 1, 1)
 
@@ -13,3 +15,11 @@ size = Vector3(8, 4.5, 1)
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=1113098349]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.5)
 mesh = SubResource("BoxMesh_03owx")
+
+[node name="ViewBounds" type="Node3D" parent="." unique_id=1804419774]
+script = ExtResource("view_bounds_meta")
+bounds_width_meters = 8.0
+bounds_height_meters = 4.5
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=419593830]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1.0909107)

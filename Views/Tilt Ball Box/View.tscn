@@ -1,0 +1,24 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Views/Tilt Ball Box/tilt_ball_box.gd" id="1_tilt_box"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="2_view_bounds"]
+
+[node name="Tilt Ball Box" type="Node3D"]
+script = ExtResource("1_tilt_box")
+box_depth_meters = 0.72
+wall_thickness_meters = 0.07
+ball_count = 12
+ball_radius_ratio_of_bounds_height = 0.032
+maximum_ball_radius_meters = 0.16
+
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("2_view_bounds")
+bounds_size_mode = 1
+bounds_width_meters = 8.0
+bounds_height_meters = 4.5
+show_preview_in_game = false
+preview_thickness_meters = 0.035
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.8660254, -0.35355338, 0.35355338, 0, 0.70710677, 0.70710677, -0.5, -0.6123724, 0.6123724, 0, 0, 0.8)
+light_energy = 2.0

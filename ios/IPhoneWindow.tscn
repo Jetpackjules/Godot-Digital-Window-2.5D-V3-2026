@@ -6,7 +6,6 @@
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="4_view"]
 [ext_resource type="Script" uid="uid://br14yx1hsmxga" path="res://ios/ios_arkit_head_pose_provider.gd" id="5_pose"]
 [ext_resource type="Script" uid="uid://ob7e6cl57yyc" path="res://ios/iphone_window_runtime.gd" id="6_runtime"]
-[ext_resource type="PackedScene" uid="uid://dk1sfjmbix8yc" path="res://Views/test_box.tscn" id="7_test_box"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_kxyc3"]
 shading_mode = 0
@@ -98,8 +97,9 @@ virtual_window_height = 0.14060220971036835
 [node name="View" type="Node3D" parent="." unique_id=1898748907]
 script = ExtResource("4_view")
 window_center_path = NodePath("../Player/MonitorFrame")
-current_view_scene = ExtResource("7_test_box")
-current_view_name = "test_box.tscn"
+black_fill_enabled = false
+screen_plane_reference_thickness_ratio = null
+current_view_name = "Tilt Ball Box"
 
 [node name="IPhonePoseProvider" type="Node" parent="." unique_id=960546126]
 script = ExtResource("5_pose")

@@ -1,4 +1,5 @@
 [gd_scene format=4 uid="uid://d1pxuv0emlsw8"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="Texture2D" uid="uid://cf34ofiooqsyr" path="res://Views/Isometric Rooms/tiny_isometric_room_0.png" id="1_hshlf"]
 [ext_resource type="Texture2D" uid="uid://m7hg1a2tfkfb" path="res://Views/Isometric Rooms/tiny_isometric_room_1.png" id="2_ldbnk"]
@@ -1169,3 +1170,7 @@ mesh = SubResource("ArrayMesh_y0ceh")
 
 [node name="Sketchfab_Scene" parent="." unique_id=803010952 instance=ExtResource("10_ldbnk")]
 transform = Transform3D(0.007, 0, 0, 0, 0.007, 0, 0, 0, 0.007, 0, -1.5854473, 0)
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false

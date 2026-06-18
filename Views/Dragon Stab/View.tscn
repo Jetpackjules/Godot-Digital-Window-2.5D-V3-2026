@@ -1,4 +1,5 @@
 [gd_scene format=4 uid="uid://b7ap8glsuntu3"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="Texture2D" uid="uid://bnc1qgw6h1bk1" path="res://Views/Dragon Stab/zilong_-_spear_of_dragon_2.png" id="1_xhtjj"]
 [ext_resource type="Texture2D" uid="uid://co2umogbpegop" path="res://Views/Dragon Stab/zilong_-_spear_of_dragon_3.png" id="2_x1gv4"]
@@ -2817,3 +2818,7 @@ transform = Transform3D(1, 6.483226e-39, 1.0587912e-22, -1.0587912e-22, 6.123234
 [node name="AnimationPlayer" type="AnimationPlayer" parent="warrior" unique_id=829746437]
 libraries/ = SubResource("AnimationLibrary_qxt1b")
 autoplay = &"city_action"
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false

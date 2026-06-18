@@ -1,4 +1,5 @@
 [gd_scene format=4 uid="uid://c4fs5bmpcmbl4"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="Texture2D" uid="uid://cv5oysx2yvqfd" path="res://Views/Fight/character_fight_0.png" id="1_wupck"]
 [ext_resource type="Texture2D" uid="uid://5xb3l4apb5od" path="res://Views/Fight/character_fight_1.png" id="2_m31ui"]
@@ -4675,3 +4676,7 @@ mesh = SubResource("ArrayMesh_jfyu8")
 [node name="AnimationPlayer" type="AnimationPlayer" parent="Fight Lawn" unique_id=40251527]
 libraries/ = SubResource("AnimationLibrary_0dhh3")
 autoplay = &"Animation"
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false

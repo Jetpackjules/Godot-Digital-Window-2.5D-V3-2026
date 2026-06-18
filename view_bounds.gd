@@ -3,14 +3,49 @@ extends Node3D
 class_name ViewBounds
 
 @export_group("Authored Window Bounds")
+@export var affects_view_layout: bool = true
+@export_enum("Authored Size", "Match Runtime Screen Aspect") var bounds_size_mode: int = 0 :
+	set(value):
+		bounds_size_mode = value
+		_update_preview(true)
+
+@export_subgroup("Aspect Lock")
+@export var lock_authored_aspect_ratio: bool = false :
+	set(value):
+		lock_authored_aspect_ratio = value
+		_apply_aspect_lock_from_driver()
+		_update_preview(true)
+
+@export_range(0.001, 100.0, 0.001) var locked_aspect_width: float = 16.0 :
+	set(value):
+		locked_aspect_width = maxf(value, 0.001)
+		_apply_aspect_lock_from_driver()
+		_update_preview(true)
+
+@export_range(0.001, 100.0, 0.001) var locked_aspect_height: float = 9.0 :
+	set(value):
+		locked_aspect_height = maxf(value, 0.001)
+		_apply_aspect_lock_from_driver()
+		_update_preview(true)
+
+@export_enum("Height Drives Width", "Width Drives Height") var aspect_lock_driver: int = 0 :
+	set(value):
+		aspect_lock_driver = value
+		_apply_aspect_lock_from_driver()
+		_update_preview(true)
+
 @export_range(0.001, 20.0, 0.001) var bounds_width_meters: float = 0.587 :
 	set(value):
-		bounds_width_meters = value
+		bounds_width_meters = maxf(value, 0.001)
+		if lock_authored_aspect_ratio and not _is_applying_aspect_lock:
+			_apply_height_from_width()
 		_update_preview(true)
 
 @export_range(0.001, 20.0, 0.001) var bounds_height_meters: float = 0.33 :
 	set(value):
-		bounds_height_meters = value
+		bounds_height_meters = maxf(value, 0.001)
+		if lock_authored_aspect_ratio and not _is_applying_aspect_lock:
+			_apply_width_from_height()
 		_update_preview(true)
 
 @export_group("Editor Preview")
@@ -68,6 +103,10 @@ var _last_color: Color = Color.TRANSPARENT
 var _last_visible: bool = false
 var _last_black_fill_enabled: bool = false
 var _last_black_fill_extent: float = -1.0
+var _last_bounds_size_mode: int = -1
+var _last_runtime_window_size: Vector2 = Vector2.INF
+var _runtime_window_size_meters: Vector2 = Vector2.ZERO
+var _is_applying_aspect_lock: bool = false
 
 func _enter_tree() -> void:
 	set_process(true)
@@ -80,7 +119,44 @@ func _process(_delta: float) -> void:
 	_update_preview(false)
 
 func get_bounds_size_meters() -> Vector2:
+	if bounds_size_mode == 1 and bounds_height_meters > 0.0:
+		var runtime_aspect := _get_runtime_window_aspect()
+		if runtime_aspect > 0.0:
+			return Vector2(bounds_height_meters * runtime_aspect, bounds_height_meters)
 	return Vector2(bounds_width_meters, bounds_height_meters)
+
+func should_affect_view_layout() -> bool:
+	return affects_view_layout
+
+func set_runtime_window_size_meters(size_meters: Vector2) -> void:
+	if _runtime_window_size_meters.is_equal_approx(size_meters):
+		return
+	_runtime_window_size_meters = size_meters
+	_update_preview(true)
+
+func _apply_aspect_lock_from_driver() -> void:
+	if not lock_authored_aspect_ratio or _is_applying_aspect_lock:
+		return
+	if aspect_lock_driver == 0:
+		_apply_width_from_height()
+	else:
+		_apply_height_from_width()
+
+func _apply_width_from_height() -> void:
+	var aspect := _get_locked_authored_aspect()
+	if aspect <= 0.0:
+		return
+	_is_applying_aspect_lock = true
+	bounds_width_meters = bounds_height_meters * aspect
+	_is_applying_aspect_lock = false
+
+func _apply_height_from_width() -> void:
+	var aspect := _get_locked_authored_aspect()
+	if aspect <= 0.0:
+		return
+	_is_applying_aspect_lock = true
+	bounds_height_meters = bounds_width_meters / aspect
+	_is_applying_aspect_lock = false
 
 func set_black_fill_enabled(enabled: bool) -> void:
 	black_fill_enabled = enabled
@@ -96,8 +172,9 @@ func should_show_preview() -> bool:
 
 func _update_preview(force: bool) -> void:
 	var preview_visible := should_show_preview()
-	var width := bounds_width_meters
-	var height := bounds_height_meters
+	var bounds_size := get_bounds_size_meters()
+	var width := bounds_size.x
+	var height := bounds_size.y
 	if (
 		not force
 		and is_equal_approx(width, _last_width)
@@ -107,6 +184,8 @@ func _update_preview(force: bool) -> void:
 		and preview_visible == _last_visible
 		and black_fill_enabled == _last_black_fill_enabled
 		and is_equal_approx(black_fill_extent_meters, _last_black_fill_extent)
+		and bounds_size_mode == _last_bounds_size_mode
+		and _runtime_window_size_meters.is_equal_approx(_last_runtime_window_size)
 	):
 		return
 
@@ -117,6 +196,8 @@ func _update_preview(force: bool) -> void:
 	_last_visible = preview_visible
 	_last_black_fill_enabled = black_fill_enabled
 	_last_black_fill_extent = black_fill_extent_meters
+	_last_bounds_size_mode = bounds_size_mode
+	_last_runtime_window_size = _runtime_window_size_meters
 
 	var half_width := width * 0.5
 	var half_height := height * 0.5
@@ -147,10 +228,11 @@ func _update_segment(segment_name: String, quad_size: Vector2, local_position: V
 	segment.visible = preview_visible
 
 func _update_black_fill(half_width: float, half_height: float) -> void:
-	var fill_extent := maxf(black_fill_extent_meters, maxf(bounds_width_meters, bounds_height_meters))
+	var bounds_size := get_bounds_size_meters()
+	var fill_extent := maxf(black_fill_extent_meters, maxf(bounds_size.x, bounds_size.y))
 	var side_width := fill_extent
-	var side_height := fill_extent * 2.0 + bounds_height_meters
-	var top_bottom_width := bounds_width_meters
+	var side_height := fill_extent * 2.0 + bounds_size.y
+	var top_bottom_width := bounds_size.x
 	var top_bottom_height := fill_extent
 
 	_update_black_fill_segment(_BLACK_FILL_NAMES[0], Vector2(side_width, side_height), Vector3(half_width + side_width * 0.5, 0.0, 0.0))
@@ -192,3 +274,13 @@ func _get_black_fill_material() -> StandardMaterial3D:
 	_black_fill_material.albedo_color = Color.BLACK
 	_black_fill_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return _black_fill_material
+
+func _get_runtime_window_aspect() -> float:
+	if _runtime_window_size_meters.x <= 0.0 or _runtime_window_size_meters.y <= 0.0:
+		return 0.0
+	return _runtime_window_size_meters.x / _runtime_window_size_meters.y
+
+func _get_locked_authored_aspect() -> float:
+	if locked_aspect_height <= 0.0:
+		return 0.0
+	return locked_aspect_width / locked_aspect_height

@@ -1,4 +1,5 @@
 [gd_scene format=4 uid="uid://hpdp1kmiscde"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="Texture2D" uid="uid://jqweh2ln60ma" path="res://Views/Chicken and Spider/spider/spider_animated_character_0.png" id="1_01eyi"]
 [ext_resource type="Texture2D" uid="uid://cbsoixhytbyc6" path="res://Views/Chicken and Spider/spider/spider_animated_character_1.png" id="2_hpvph"]
@@ -3795,3 +3796,7 @@ skeleton = NodePath("..")
 libraries/ = SubResource("AnimationLibrary_1wy82")
 autoplay = &"walk "
 speed_scale = 0.725
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false

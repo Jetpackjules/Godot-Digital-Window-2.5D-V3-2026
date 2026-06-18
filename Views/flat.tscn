@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://di7ipplfngb5j" path="res://Views/ALIGNMENT TEST/floor.jpg" id="1_g4rj8"]
 [ext_resource type="Texture2D" uid="uid://lgdbyik07l7h" path="res://Views/ALIGNMENT TEST/height_gemi.png" id="2_v3eet"]
 [ext_resource type="Texture2D" uid="uid://b67bdr8d1m11n" path="res://Views/ALIGNMENT TEST/floor_nomal.png" id="3_j0yre"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [sub_resource type="QuadMesh" id="QuadMesh_5y7sw"]
 lightmap_size_hint = Vector2i(42, 24)
@@ -32,3 +33,9 @@ surface_material_override/0 = SubResource("StandardMaterial3D_78cu8")
 
 [node name="Silly Dancing" parent="." unique_id=1605361915 instance=ExtResource("1_fbf4e")]
 transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0, 0)
+
+[node name="ViewBounds" type="Node3D" parent="." unique_id=1885482113]
+script = ExtResource("view_bounds_meta")
+bounds_width_meters = 8.0
+bounds_height_meters = 4.5
+black_fill_enabled = true

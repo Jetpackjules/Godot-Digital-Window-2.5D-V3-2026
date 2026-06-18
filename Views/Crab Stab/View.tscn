@@ -1,4 +1,5 @@
 [gd_scene format=4 uid="uid://cte67nkmhc5x1"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="Texture2D" uid="uid://dnb14icjwehi1" path="res://Views/Crab Stab/crabe_with_minespear_0.png" id="1_k6jif"]
 [ext_resource type="Texture2D" uid="uid://d1bwk1de3rehu" path="res://Views/Crab Stab/crabe_with_minespear_1.png" id="2_ld01b"]
@@ -8505,3 +8506,7 @@ transform = Transform3D(100.00001, 1.694431e-21, 5.643405e-21, -5.643405e-21, -4
 [node name="AnimationPlayer" type="AnimationPlayer" parent="CRAB" unique_id=1900712944]
 libraries/ = SubResource("AnimationLibrary_tj7l2")
 autoplay = &"Attack_mine"
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false

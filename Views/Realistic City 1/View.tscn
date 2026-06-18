@@ -1,4 +1,5 @@
 [gd_scene format=3 uid="uid://cckxouc8lsron"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="PackedScene" uid="uid://6lyqv6ek1shw" path="res://Views/Realistic City 1/full_gameready_city_buildings_iv_hongkong.glb" id="1_spd4w"]
 [ext_resource type="Environment" uid="uid://bxd3l7wofnavr" path="res://Assets/Foggy.tres" id="2_ku1ww"]
@@ -17,3 +18,7 @@ camera_attributes = ExtResource("3_50b3j")
 transform = Transform3D(0.7409745, 0.5540759, -0.37941635, -0.068698704, 0.6245799, 0.77793354, 0.66801006, -0.5503635, 0.500862, -5.7581205, 7.6799498, 2.5738828)
 shadow_enabled = true
 directional_shadow_mode = 0
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false

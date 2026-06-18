@@ -1,4 +1,5 @@
 [gd_scene format=4 uid="uid://1q38225oj5av"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [ext_resource type="Texture2D" uid="uid://cosggow0no86k" path="res://Views/Smoker/hey_good_lookin_-_vinnie_0.png" id="1_cyq25"]
 [ext_resource type="Texture2D" uid="uid://ch567idv6gdc5" path="res://Views/Smoker/hey_good_lookin_-_vinnie_1.png" id="2_gf3wc"]
@@ -3993,3 +3994,7 @@ transform = Transform3D(5.9604645e-06, -6.1232338e-15, 100, 0, 100, 6.1232338e-1
 [node name="AnimationPlayer" type="AnimationPlayer" parent="Sketchfab_Scene" unique_id=87921418]
 libraries/ = SubResource("AnimationLibrary_s04vf")
 autoplay = &"Vinnie idle"
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("view_bounds_meta")
+affects_view_layout = true
+show_preview_in_game = false
