@@ -463,6 +463,18 @@ func _build_settings_panel() -> void:
 
 	_sync_settings_values_from_runtime(true)
 
+func _variant_to_int(value: Variant, fallback: int = 0) -> int:
+	match typeof(value):
+		TYPE_INT:
+			return value
+		TYPE_FLOAT:
+			return roundi(value)
+		TYPE_STRING:
+			var text := value as String
+			if text.is_valid_int():
+				return text.to_int()
+	return fallback
+
 func _make_offset_slider() -> HSlider:
 	var slider := HSlider.new()
 	slider.min_value = -maximum_manual_offset_meters * 1000.0
@@ -477,7 +489,7 @@ func _populate_scale_mode_options() -> void:
 	_settings_scale_mode_option.clear()
 	var count := 5
 	if _view_switcher != null and _view_switcher.has_method("get_view_scale_mode_count"):
-		count = int(_view_switcher.call("get_view_scale_mode_count"))
+		count = _variant_to_int(_view_switcher.call("get_view_scale_mode_count"), count)
 	for index in range(count):
 		var mode_name := _get_scale_mode_name(index)
 		_settings_scale_mode_option.add_item(mode_name, index)
@@ -503,7 +515,7 @@ func _populate_screen_reference_options() -> void:
 	_settings_screen_reference_option.clear()
 	var count := 5
 	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_count"):
-		count = int(_view_switcher.call("get_screen_plane_reference_mode_count"))
+		count = _variant_to_int(_view_switcher.call("get_screen_plane_reference_mode_count"), count)
 	for index in range(count):
 		var mode_name := _get_screen_reference_mode_name(index)
 		_settings_screen_reference_option.add_item(mode_name, index)
@@ -540,9 +552,9 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_scale_mode_option != null and _view_switcher != null:
 		var mode := 0
 		if _view_switcher.has_method("get_view_scale_mode"):
-			mode = int(_view_switcher.call("get_view_scale_mode"))
+			mode = _variant_to_int(_view_switcher.call("get_view_scale_mode"), mode)
 		else:
-			mode = int(_view_switcher.get("view_scale_mode"))
+			mode = _variant_to_int(_view_switcher.get("view_scale_mode"), mode)
 		if _settings_scale_mode_option.selected != mode:
 			_settings_scale_mode_option.select(mode)
 
@@ -557,9 +569,9 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_screen_reference_option != null and _view_switcher != null:
 		var reference_mode := 0
 		if _view_switcher.has_method("get_screen_plane_reference_mode"):
-			reference_mode = int(_view_switcher.call("get_screen_plane_reference_mode"))
+			reference_mode = _variant_to_int(_view_switcher.call("get_screen_plane_reference_mode"), reference_mode)
 		else:
-			reference_mode = int(_view_switcher.get("screen_plane_reference_mode"))
+			reference_mode = _variant_to_int(_view_switcher.get("screen_plane_reference_mode"), reference_mode)
 		if _settings_screen_reference_option.selected != reference_mode:
 			_settings_screen_reference_option.select(reference_mode)
 
@@ -747,7 +759,7 @@ func _get_view_status_text() -> String:
 
 	var view_count := 0
 	if _view_switcher.has_method("get_available_view_count"):
-		view_count = int(_view_switcher.call("get_available_view_count"))
+		view_count = _variant_to_int(_view_switcher.call("get_available_view_count"), view_count)
 
 	var load_status := ""
 	if _view_switcher.has_method("get_view_debug_status"):

@@ -54,12 +54,19 @@ const VIEW_SCALE_MODE_NAMES := [
 	"Fit Width",
 	"No Scaling",
 ]
-const ScreenPlaneReferenceScene := preload("res://screen_plane_reference.gd")
+const SCREEN_PLANE_REFERENCE_SCRIPT_PATH := "res://screen_plane_reference.gd"
 const SCREEN_REFERENCE_MODE_OFF := 0
 const SCREEN_REFERENCE_MODE_VERTICAL_BARS := 1
 const SCREEN_REFERENCE_MODE_EDGE_FRAME := 2
 const SCREEN_REFERENCE_MODE_CROSSHAIR := 3
 const SCREEN_REFERENCE_MODE_THIRDS_GRID := 4
+const SCREEN_REFERENCE_MODE_NAMES := [
+	"Off",
+	"Vertical Bars",
+	"Edge Frame",
+	"Crosshair",
+	"Thirds Grid",
+]
 
 var current_view_name: String = "":
 	set(value):
@@ -83,6 +90,7 @@ var _last_applied_view_scale: float = -1.0
 var _last_applied_view_position: Vector3 = Vector3.INF
 var _last_view_load_status: String = ""
 var _screen_plane_reference: Node3D
+var _screen_plane_reference_script: Script
 
 func _ready() -> void:
 	_refresh_views()
@@ -318,10 +326,12 @@ func get_screen_plane_reference_mode() -> int:
 	return screen_plane_reference_mode
 
 func get_screen_plane_reference_mode_count() -> int:
-	return ScreenPlaneReferenceScene.get_mode_count()
+	return SCREEN_REFERENCE_MODE_NAMES.size()
 
 func get_screen_plane_reference_mode_name(mode: int) -> String:
-	return ScreenPlaneReferenceScene.get_mode_name(mode)
+	if mode < 0 or mode >= SCREEN_REFERENCE_MODE_NAMES.size():
+		return SCREEN_REFERENCE_MODE_NAMES[SCREEN_REFERENCE_MODE_OFF]
+	return SCREEN_REFERENCE_MODE_NAMES[mode]
 
 func cycle_screen_plane_reference_mode(direction: int = 1) -> void:
 	var mode_count := get_screen_plane_reference_mode_count()
@@ -628,9 +638,25 @@ func _sync_screen_plane_reference() -> void:
 func _ensure_screen_plane_reference() -> void:
 	if _screen_plane_reference != null and is_instance_valid(_screen_plane_reference):
 		return
-	_screen_plane_reference = ScreenPlaneReferenceScene.new()
+	var reference_script := _get_screen_plane_reference_script()
+	if reference_script == null:
+		return
+	_screen_plane_reference = reference_script.new()
+	if _screen_plane_reference == null:
+		push_warning("Screen plane reference script did not create a Node3D.")
+		return
 	_screen_plane_reference.name = "_ScreenPlaneReference"
 	add_child(_screen_plane_reference)
+
+func _get_screen_plane_reference_script() -> Script:
+	if _screen_plane_reference_script != null:
+		return _screen_plane_reference_script
+
+	var resource := load(SCREEN_PLANE_REFERENCE_SCRIPT_PATH)
+	_screen_plane_reference_script = resource as Script
+	if _screen_plane_reference_script == null:
+		push_warning("Missing screen plane reference script: %s" % [SCREEN_PLANE_REFERENCE_SCRIPT_PATH])
+	return _screen_plane_reference_script
 
 func _sync_fallback_directional_light() -> void:
 	_resolve_fallback_light()
