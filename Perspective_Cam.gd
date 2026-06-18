@@ -42,6 +42,9 @@ func _refresh_bindings() -> void:
 		_screen_scaler = get_node_or_null(screen_scaling_path)
 
 func _process(_delta: float) -> void:
+	refresh_off_axis_projection()
+
+func refresh_off_axis_projection() -> void:
 	_refresh_bindings()
 	if not _target or not _window_center: 
 		return

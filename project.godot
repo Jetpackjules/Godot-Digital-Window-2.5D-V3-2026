@@ -12,20 +12,23 @@ config_version=5
 
 config/name="2.5D window V3"
 run/main_scene="res://Main.tscn"
-run/main_scene.iphone_window="res://ios/IPhoneWindow.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 run/max_fps=240
 config/icon="res://icon.svg"
+run/main_scene.iphone_window="res://ios/IPhoneWindow.tscn"
 
 [display]
 
-window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
 [editor_plugins]
 
 enabled=PackedStringArray()
+
+[filesystem]
+
+import/blender/enabled=false
 
 [input]
 

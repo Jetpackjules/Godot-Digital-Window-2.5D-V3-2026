@@ -2,6 +2,7 @@
 
 [ext_resource type="Texture2D" uid="uid://bxl8v6cotb4ak" path="res://icon.svg" id="1_rjuhk"]
 [ext_resource type="PackedScene" uid="uid://iyk13aa885oo" path="res://Assets/silly_dancing.tscn" id="2_rdhwt"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="3_bounds"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_rjuhk"]
 lightmap_size_hint = Vector2i(8, 12)
@@ -29,7 +30,7 @@ text = "58.5x"
 font_size = 9
 
 [node name="Box" type="MeshInstance3D" unique_id=666923875]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.164)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.16)
 mesh = SubResource("BoxMesh_rjuhk")
 
 [node name="Cube" type="MeshInstance3D" parent="." unique_id=61684400]
@@ -74,3 +75,9 @@ transform = Transform3D(0.125, 0, 0, 0, 0.125, 0, 0, 0, 0.125, 0, -0.16363525, 0
 [node name="OmniLight3D" type="OmniLight3D" parent="." unique_id=349948758]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.17492676)
 light_energy = 0.065
+
+[node name="ViewBounds" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.005)
+script = ExtResource("3_bounds")
+bounds_width_meters = 0.587
+bounds_height_meters = 0.33

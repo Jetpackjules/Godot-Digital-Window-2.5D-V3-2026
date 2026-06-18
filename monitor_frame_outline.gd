@@ -4,12 +4,15 @@ extends Node3D
 @export var screen_scaling_path: NodePath = NodePath("../../../ScreenScaling")
 @export_range(0.001, 0.05, 0.001) var border_thickness_meters: float = 0.01
 @export_range(0.0, 0.05, 0.001) var border_depth_offset_meters: float = 0.002
+@export var border_color: Color = Color(1.0, 0.0, 0.0, 1.0)
 
 var _screen_scaler: ScreenScaling
+var _border_material: StandardMaterial3D
 var _last_width: float = -1.0
 var _last_height: float = -1.0
 var _last_thickness: float = -1.0
 var _last_depth_offset: float = -1.0
+var _last_border_color: Color = Color.TRANSPARENT
 
 func _enter_tree() -> void:
 	set_process(true)
@@ -42,7 +45,7 @@ func _update_outline(force: bool) -> void:
 	if width <= 0.0 or height <= 0.0 or thickness <= 0.0:
 		return
 
-	if not force and is_equal_approx(width, _last_width) and is_equal_approx(height, _last_height) and is_equal_approx(thickness, _last_thickness) and is_equal_approx(depth_offset, _last_depth_offset):
+	if not force and is_equal_approx(width, _last_width) and is_equal_approx(height, _last_height) and is_equal_approx(thickness, _last_thickness) and is_equal_approx(depth_offset, _last_depth_offset) and _last_border_color == border_color:
 		return
 
 	_last_width = width
@@ -69,5 +72,17 @@ func _update_border(border: MeshInstance3D, quad_size: Vector2, local_pos: Vecto
 		border.mesh = quad
 
 	quad.size = quad_size
+	border.material_override = _get_border_material()
 	border.position = local_pos
 	border.rotation = Vector3.ZERO
+
+func _get_border_material() -> StandardMaterial3D:
+	if _border_material == null:
+		_border_material = StandardMaterial3D.new()
+
+	if _last_border_color != border_color:
+		_last_border_color = border_color
+		_border_material.albedo_color = border_color
+		_border_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+	return _border_material

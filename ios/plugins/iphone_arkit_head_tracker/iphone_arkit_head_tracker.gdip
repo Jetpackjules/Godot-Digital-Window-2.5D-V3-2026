@@ -1,0 +1,18 @@
+[config]
+name="IPhoneARKitHeadTracker"
+binary="iphone_arkit_head_tracker.xcframework"
+
+initialization="register_iphone_arkit_head_tracker_types"
+deinitialization="unregister_iphone_arkit_head_tracker_types"
+
+[dependencies]
+linked=[]
+embedded=[]
+system=["ARKit.framework", "AVFoundation.framework"]
+
+capabilities=["arkit"]
+
+files=[]
+
+[plist]
+NSCameraUsageDescription="Uses the TrueDepth front camera for local head tracking that drives the 2.5D window effect."

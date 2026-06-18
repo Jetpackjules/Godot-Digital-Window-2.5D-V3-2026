@@ -1,10 +1,21 @@
-extends "res://core/head_pose_provider.gd"
+extends Node
 class_name IosArkitHeadPoseProvider
+
+enum TrackingState {
+	UNAVAILABLE,
+	SEARCHING,
+	TRACKING,
+}
 
 @export var singleton_name: String = "IPhoneARKitHeadTracker"
 @export var auto_start: bool = true
 @export var use_editor_simulation: bool = true
 @export var simulated_position_meters: Vector3 = Vector3(0.0, 0.0, 0.35)
+
+@export_group("Axis Mapping")
+@export var invert_x: bool = true
+@export var invert_y: bool = true
+@export var invert_z: bool = false
 
 var _tracker: Object
 var _started: bool = false
@@ -60,6 +71,9 @@ func get_head_pose_meters() -> Transform3D:
 	_refresh_latest_pose()
 	return _last_pose
 
+func get_head_position_meters() -> Vector3:
+	return get_head_pose_meters().origin
+
 func get_tracking_status() -> Dictionary:
 	_refresh_latest_pose()
 	var status := {
@@ -69,6 +83,9 @@ func get_tracking_status() -> Dictionary:
 		"started": _started,
 		"singleton": singleton_name,
 		"position_m": _last_pose.origin,
+		"invert_x": invert_x,
+		"invert_y": invert_y,
+		"invert_z": invert_z,
 	}
 	for key in _last_status.keys():
 		status[key] = _last_status[key]
@@ -107,30 +124,42 @@ func _refresh_latest_pose() -> void:
 
 	if _tracker.has_method("get_screen_local_head_pose_meters"):
 		var screen_pose_raw: Variant = _tracker.call("get_screen_local_head_pose_meters")
-		var screen_pose := _parse_pose(screen_pose_raw)
+		var screen_pose: Variant = _parse_pose(screen_pose_raw)
 		if screen_pose != null:
-			_last_pose = screen_pose
+			_last_pose = _apply_axis_mapping_to_pose(screen_pose)
 			return
 
 	if _tracker.has_method("get_head_pose_meters"):
 		var head_pose_raw: Variant = _tracker.call("get_head_pose_meters")
-		var head_pose := _parse_pose(head_pose_raw)
+		var head_pose: Variant = _parse_pose(head_pose_raw)
 		if head_pose != null:
-			_last_pose = head_pose
+			_last_pose = _apply_axis_mapping_to_pose(head_pose)
 			return
 
 	if _tracker.has_method("get_screen_local_head_position_meters"):
 		var screen_position_raw: Variant = _tracker.call("get_screen_local_head_position_meters")
-		var screen_position := _parse_position(screen_position_raw)
+		var screen_position: Variant = _parse_position(screen_position_raw)
 		if screen_position != null:
-			_last_pose = Transform3D(Basis.IDENTITY, screen_position)
+			_last_pose = Transform3D(Basis.IDENTITY, _apply_axis_mapping_to_position(screen_position))
 			return
 
 	if _tracker.has_method("get_head_position_meters"):
 		var head_position_raw: Variant = _tracker.call("get_head_position_meters")
-		var head_position := _parse_position(head_position_raw)
+		var head_position: Variant = _parse_position(head_position_raw)
 		if head_position != null:
-			_last_pose = Transform3D(Basis.IDENTITY, head_position)
+			_last_pose = Transform3D(Basis.IDENTITY, _apply_axis_mapping_to_position(head_position))
+
+func _apply_axis_mapping_to_pose(pose: Transform3D) -> Transform3D:
+	var mapped_pose := pose
+	mapped_pose.origin = _apply_axis_mapping_to_position(mapped_pose.origin)
+	return mapped_pose
+
+func _apply_axis_mapping_to_position(position: Vector3) -> Vector3:
+	return Vector3(
+		-position.x if invert_x else position.x,
+		-position.y if invert_y else position.y,
+		-position.z if invert_z else position.z
+	)
 
 func _parse_pose(value: Variant) -> Variant:
 	if value is Transform3D:
@@ -138,7 +167,7 @@ func _parse_pose(value: Variant) -> Variant:
 	if value is Dictionary:
 		if value.has("transform") and value["transform"] is Transform3D:
 			return value["transform"]
-		var parsed_position := _parse_position(value)
+		var parsed_position: Variant = _parse_position(value)
 		if parsed_position != null:
 			return Transform3D(Basis.IDENTITY, parsed_position)
 	return null

@@ -57,6 +57,9 @@ func _ready() -> void:
 	# Whether inside the editor or running the game, we must force a calculation
 	# based on the saved inspector variables to populate physical_height_meters, 
 	# which then inherently cascades to update tracking_scale_multiplier.
+	refresh_from_diagonal()
+
+func refresh_from_diagonal() -> void:
 	_update_from_diagonal()
 
 func _update_from_diagonal() -> void:
