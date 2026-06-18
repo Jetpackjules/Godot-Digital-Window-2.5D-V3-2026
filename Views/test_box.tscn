@@ -77,6 +77,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.17492676)
 light_energy = 0.065
 
 [node name="ViewBounds" type="Node3D" parent="." unique_id=2053719421]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.15493289)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.165)
 script = ExtResource("3_bounds")
 show_preview_in_game = true

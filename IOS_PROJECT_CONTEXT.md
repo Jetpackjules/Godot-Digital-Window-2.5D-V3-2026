@@ -177,6 +177,14 @@ Native side responsibilities:
 - Apply a calibrated TrueDepth-camera-to-screen transform.
 - Expose the latest pose through the Godot singleton.
 
+Current implementation state:
+
+- Source scaffold exists under `ios/plugins/iphone_arkit_head_tracker/`.
+- The plugin descriptor is `iphone_arkit_head_tracker.gdip`.
+- Native source implements `IPhoneARKitHeadTracker` as an `Engine` singleton.
+- `build_xcframework.sh` copies the source into a local clone of `godot-sdk-integrations/godot-ios-plugins`, patches the plugin enum, and invokes its official `generate_xcframework.sh`.
+- The actual `iphone_arkit_head_tracker.xcframework` binary still needs to be built against Godot iOS headers before Godot can include the plugin in an iOS export.
+
 ## Mac / Device Workflow
 
 On the MacBook:
@@ -231,7 +239,7 @@ Verification on Mac/iPhone after plugin:
 
 ## Known Gaps
 
-- Native ARKit plugin is not implemented yet.
+- Native ARKit plugin source exists, but `iphone_arkit_head_tracker.xcframework` still needs to be built and tested on device.
 - Exact TrueDepth-camera-to-screen offsets are not calibrated yet.
 - iPhone physical screen presets need device-specific tuning.
 - The current iOS export preset intentionally exports only the phone scene and `test_box.tscn`; add more scenes deliberately as they are tested on device.

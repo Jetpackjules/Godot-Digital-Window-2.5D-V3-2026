@@ -204,7 +204,7 @@ normal_texture = ExtResource("30_5xkf8")
 length = 0.001
 tracks/0/type = "value"
 tracks/0/imported = false
-tracks/0/enabled = true
+tracks/0/enabled = false
 tracks/0/path = NodePath("AnimationPlayer/ColorRect:color")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
@@ -216,7 +216,7 @@ tracks/0/keys = {
 }
 tracks/1/type = "value"
 tracks/1/imported = false
-tracks/1/enabled = true
+tracks/1/enabled = false
 tracks/1/path = NodePath("AnimationPlayer/Label:visible")
 tracks/1/interp = 1
 tracks/1/loop_wrap = true
@@ -1418,12 +1418,14 @@ autoplay = true
 libraries/ = SubResource("AnimationLibrary_r0u4d")
 
 [node name="ColorRect" type="ColorRect" parent="AnimationPlayer" unique_id=1759132706]
+visible = false
 offset_right = 1933.0
 offset_bottom = 1097.0
 mouse_filter = 2
 color = Color(0, 0, 0, 1)
 
 [node name="Label" type="Label" parent="AnimationPlayer" unique_id=1839114300]
+visible = false
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5

@@ -6,6 +6,14 @@ extends Node3D
 @export var window_center_path: NodePath
 @export var current_view_scene: PackedScene
 @export_enum("Fit Height", "Cover Screen", "Contain Screen", "Fit Width", "No Scaling") var view_scale_mode: int = 0
+@export var black_fill_enabled: bool = true :
+	set(value):
+		black_fill_enabled = value
+		_sync_view_bounds_black_fill()
+@export var view_bounds_preview_enabled: bool = false :
+	set(value):
+		view_bounds_preview_enabled = value
+		_sync_view_bounds_preview()
 @export var authored_reference_aspect_width: float = 16.0
 @export var authored_reference_aspect_height: float = 9.0
 
@@ -15,6 +23,13 @@ const VIEW_SCALE_COVER_SCREEN := 1
 const VIEW_SCALE_CONTAIN_SCREEN := 2
 const VIEW_SCALE_FIT_WIDTH := 3
 const VIEW_SCALE_NO_SCALING := 4
+const VIEW_SCALE_MODE_NAMES := [
+	"Fit Height",
+	"Cover Screen",
+	"Contain Screen",
+	"Fit Width",
+	"No Scaling",
+]
 
 var current_view_name: String = "":
 	set(value):
@@ -24,6 +39,7 @@ var current_view_name: String = "":
 				_load_view(current_view_name)
 
 var _available_views: Array[String] = []
+var _available_view_scene_paths: Dictionary = {}
 var _instantiated_view: Node3D
 var _fallback_directional_light: DirectionalLight3D
 var _screen_scaler: ScreenScaling
@@ -34,6 +50,7 @@ var _view_bounds_node: Node3D
 var _view_bounds_base_position: Vector3 = Vector3.ZERO
 var _last_applied_view_scale: float = -1.0
 var _last_applied_view_position: Vector3 = Vector3.INF
+var _last_view_load_status: String = ""
 
 func _ready() -> void:
 	_refresh_views()
@@ -49,6 +66,8 @@ func _ready() -> void:
 
 	if _instantiated_view != null:
 		_capture_instantiated_view_base_scale()
+		_sync_view_bounds_black_fill()
+		_sync_view_bounds_preview()
 		_sync_fallback_directional_light()
 		_apply_view_scale(true)
 		return
@@ -86,42 +105,121 @@ func _get_property_list() -> Array:
 
 func _refresh_views() -> void:
 	_available_views.clear()
-	var dir = DirAccess.open("res://Views")
+	_available_view_scene_paths.clear()
+	if _refresh_views_from_export_preset():
+		return
+
+	var dir := DirAccess.open("res://Views")
 	if dir:
 		dir.list_dir_begin()
-		var file_name = dir.get_next()
+		var file_name := dir.get_next()
 		while file_name != "":
 			if not dir.current_is_dir() and file_name.ends_with(".tscn"):
 				_available_views.append(file_name)
+				_available_view_scene_paths[file_name] = "res://Views/" + file_name
 			elif dir.current_is_dir() and not file_name.begins_with("."):
-				var sub_path = "res://Views/" + file_name
-				if FileAccess.file_exists(sub_path + "/View.tscn") or FileAccess.file_exists(sub_path + "/View.tscn"):
+				var sub_path: String = "res://Views/" + file_name
+				var view_scene_path: String = sub_path + "/View.tscn"
+				if ResourceLoader.exists(view_scene_path) or FileAccess.file_exists(view_scene_path):
 					_available_views.append(file_name) # Add just the folder name to the dropdown list
+					_available_view_scene_paths[file_name] = view_scene_path
 			file_name = dir.get_next()
 	else:
 		push_error("Could not find res://Views folder!")
 
-func _load_view(view_file: String) -> void:
-	if view_file == "":
+func _refresh_views_from_export_preset() -> bool:
+	if not FileAccess.file_exists("res://export_presets.cfg"):
+		return false
+
+	var file := FileAccess.open("res://export_presets.cfg", FileAccess.READ)
+	if file == null:
+		return false
+
+	var in_iphone_preset := false
+	var found_iphone_preset := false
+	while not file.eof_reached():
+		var line := file.get_line().strip_edges()
+		if line.begins_with("[preset."):
+			in_iphone_preset = false
+		elif line == "name=\"iOS iPhone Window\"":
+			in_iphone_preset = true
+			found_iphone_preset = true
+		elif in_iphone_preset and line.begins_with("export_files=PackedStringArray("):
+			_parse_exported_view_keys(line)
+			return _available_views.size() > 0
+
+	return found_iphone_preset and _available_views.size() > 0
+
+func _parse_exported_view_keys(export_files_line: String) -> void:
+	var regex := RegEx.new()
+	var error := regex.compile("\"([^\"]+)\"")
+	if error != OK:
 		return
+
+	for result in regex.search_all(export_files_line):
+		var path := result.get_string(1)
+		var view_key := _view_key_from_scene_path(path)
+		if view_key != "" and not _available_views.has(view_key):
+			_available_views.append(view_key)
+			_available_view_scene_paths[view_key] = path
+
+func _view_key_from_scene_path(scene_path: String) -> String:
+	if not scene_path.begins_with("res://Views/"):
+		return ""
+	if not scene_path.ends_with(".tscn"):
+		return ""
+
+	var relative_path := scene_path.trim_prefix("res://Views/")
+	if relative_path == "":
+		return ""
+	if relative_path.ends_with("/View.tscn"):
+		return relative_path.trim_suffix("/View.tscn")
+	if not relative_path.contains("/"):
+		return relative_path
+	return ""
+
+func _load_view(view_file: String) -> bool:
+	if view_file == "":
+		return false
 		
-	var scene_path = ""
-	if view_file.ends_with(".tscn"):
-		scene_path = "res://Views/" + view_file
-	else:
-		if FileAccess.file_exists("res://Views/" + view_file + "/View.tscn"):
-			scene_path = "res://Views/" + view_file + "/View.tscn"
-		elif FileAccess.file_exists("res://Views/" + view_file + "/View.tscn"):
-			scene_path = "res://Views/" + view_file + "/View.tscn"
-		else:
-			push_error("Could not find View.tscn inside " + view_file)
-			return
-	
-	var packed_scene = ResourceLoader.load(scene_path) as PackedScene
+	var scene_path := _get_view_scene_path(view_file)
+	if scene_path == "":
+		_last_view_load_status = "missing " + view_file
+		push_error("Could not find view scene for " + view_file)
+		return false
+
+	return _load_view_from_path(scene_path, view_file, true)
+
+func _load_view_from_path(scene_path: String, view_name: String, report_errors: bool) -> bool:
+	if scene_path == "":
+		if report_errors:
+			push_error("Could not find view scene for " + view_name)
+		return false
+
+	var packed_scene := ResourceLoader.load(scene_path) as PackedScene
 	if packed_scene:
+		current_view_name = view_name
+		_last_view_load_status = "loaded " + view_name
 		_instantiate_view(packed_scene)
+		return true
 	else:
-		push_error("Failed to load view scene: " + scene_path)
+		_last_view_load_status = "failed " + view_name
+		if report_errors:
+			push_error("Failed to load view scene: " + scene_path)
+		return false
+
+func _get_view_scene_path(view_file: String) -> String:
+	if view_file.begins_with("res://"):
+		return view_file if view_file.ends_with(".tscn") else ""
+	if _available_view_scene_paths.has(view_file):
+		return str(_available_view_scene_paths[view_file])
+	if view_file.ends_with(".tscn"):
+		var top_level_path := "res://Views/" + view_file
+		return top_level_path if ResourceLoader.exists(top_level_path) or FileAccess.file_exists(top_level_path) else ""
+	var folder_view_path := "res://Views/" + view_file + "/View.tscn"
+	if ResourceLoader.exists(folder_view_path) or FileAccess.file_exists(folder_view_path):
+		return folder_view_path
+	return ""
 
 func _instantiate_view(packed_scene: PackedScene) -> void:
 	if packed_scene == null:
@@ -138,9 +236,94 @@ func _instantiate_view(packed_scene: PackedScene) -> void:
 
 	self.add_child(_instantiated_view)
 	_capture_instantiated_view_base_scale()
+	_sync_view_bounds_black_fill()
+	_sync_view_bounds_preview()
 	if not Engine.is_editor_hint():
 		_apply_view_scale(true)
 	_sync_fallback_directional_light()
+
+func set_view_scale_mode(mode: int) -> void:
+	view_scale_mode = clampi(mode, VIEW_SCALE_FIT_HEIGHT, VIEW_SCALE_NO_SCALING)
+	_last_applied_view_scale = -1.0
+	_apply_view_scale(true)
+
+func get_view_scale_mode() -> int:
+	return view_scale_mode
+
+func get_view_scale_mode_count() -> int:
+	return VIEW_SCALE_MODE_NAMES.size()
+
+func get_view_scale_mode_name(mode: int) -> String:
+	if mode >= 0 and mode < VIEW_SCALE_MODE_NAMES.size():
+		return VIEW_SCALE_MODE_NAMES[mode]
+	return "Unknown"
+
+func set_black_fill_enabled(enabled: bool) -> void:
+	black_fill_enabled = enabled
+	_sync_view_bounds_black_fill()
+
+func is_black_fill_enabled() -> bool:
+	return black_fill_enabled
+
+func set_view_bounds_preview_enabled(enabled: bool) -> void:
+	view_bounds_preview_enabled = enabled
+	_sync_view_bounds_preview()
+
+func is_view_bounds_preview_enabled() -> bool:
+	return view_bounds_preview_enabled
+
+func get_current_view_name() -> String:
+	return current_view_name
+
+func get_available_view_count() -> int:
+	_refresh_views()
+	return _available_views.size()
+
+func get_view_debug_status() -> String:
+	return _last_view_load_status
+
+func next_view() -> void:
+	_step_view(1)
+
+func previous_view() -> void:
+	_step_view(-1)
+
+func _step_view(direction: int) -> void:
+	_refresh_views()
+	if _available_views.is_empty():
+		return
+
+	var current_index := _available_views.find(current_view_name)
+	if current_index < 0 and current_view_scene != null:
+		current_index = _find_view_index_for_scene(current_view_scene)
+	if current_index < 0:
+		current_index = 0
+	else:
+		current_index = wrapi(current_index + direction, 0, _available_views.size())
+
+	var step_direction := 1 if direction >= 0 else -1
+	for step in range(_available_views.size()):
+		var next_index := wrapi(current_index + step * step_direction, 0, _available_views.size())
+		var next_view_name := _available_views[next_index]
+		var scene_path := _get_view_scene_path(next_view_name)
+		if scene_path == "":
+			_last_view_load_status = "skipped missing " + next_view_name
+			continue
+		current_view_scene = null
+		if _load_view_from_path(scene_path, next_view_name, false):
+			return
+
+	_last_view_load_status = "no loadable view"
+	push_error("No exported view scenes could be loaded.")
+
+func _find_view_index_for_scene(scene: PackedScene) -> int:
+	if scene == null:
+		return -1
+	var scene_path := scene.resource_path
+	for index in range(_available_views.size()):
+		if _get_view_scene_path(_available_views[index]) == scene_path:
+			return index
+	return -1
 
 func _resolve_fallback_light() -> void:
 	if fallback_directional_light_path.is_empty():
@@ -265,6 +448,8 @@ func _resolve_view_bounds() -> void:
 
 	var bounds_transform := _instantiated_view.global_transform.affine_inverse() * _view_bounds_node.global_transform
 	_view_bounds_base_position = bounds_transform.origin
+	_sync_view_bounds_black_fill()
+	_sync_view_bounds_preview()
 
 func _find_view_bounds(node: Node) -> Node3D:
 	if node == null:
@@ -280,6 +465,19 @@ func _find_view_bounds(node: Node) -> Node3D:
 			return result
 
 	return null
+
+func _sync_view_bounds_black_fill() -> void:
+	if _view_bounds_node == null:
+		return
+	if _view_bounds_node.has_method("set_black_fill_enabled"):
+		_view_bounds_node.call("set_black_fill_enabled", black_fill_enabled)
+	else:
+		_view_bounds_node.set("black_fill_enabled", black_fill_enabled)
+
+func _sync_view_bounds_preview() -> void:
+	if _view_bounds_node == null:
+		return
+	_view_bounds_node.set("show_preview_in_game", view_bounds_preview_enabled)
 
 func _sync_fallback_directional_light() -> void:
 	_resolve_fallback_light()
