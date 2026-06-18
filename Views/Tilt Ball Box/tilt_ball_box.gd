@@ -24,11 +24,11 @@ extends Node3D
 		_rebuild_if_ready(true)
 
 @export_group("Balls")
-@export_range(1, 48, 1) var ball_count: int = 10 :
+@export_range(1, 48, 1) var ball_count: int = 6 :
 	set(value):
 		ball_count = value
 		_rebuild_if_ready(true)
-@export_range(0.005, 0.2, 0.001) var ball_radius_ratio_of_bounds_height: float = 0.035 :
+@export_range(0.005, 0.2, 0.001) var ball_radius_ratio_of_bounds_height: float = 0.12 :
 	set(value):
 		ball_radius_ratio_of_bounds_height = value
 		_rebuild_if_ready(true)
@@ -51,9 +51,13 @@ extends Node3D
 @export_group("Tilt Physics")
 @export_range(0.0, 4.0, 0.05) var tilt_gravity_multiplier: float = 1.0
 @export_range(0.0, 1.0, 0.01) var tilt_smoothing: float = 0.16
-@export var swap_tilt_axes: bool = false
+@export var swap_tilt_axes: bool = true
 @export var invert_tilt_x: bool = false
 @export var invert_tilt_y: bool = true
+@export_range(0.0, 2.0, 0.01) var ball_linear_damp: float = 0.18
+@export_range(0.0, 2.0, 0.01) var ball_angular_damp: float = 0.08
+@export_range(0.0, 1.0, 0.01) var ball_surface_friction: float = 0.08
+@export_range(0.0, 1.0, 0.01) var ball_bounce: float = 0.08
 @export var desktop_debug_arrow_keys: bool = true
 
 const GRAVITY_METERS_PER_SECOND_SQUARED := 9.80665
@@ -67,6 +71,7 @@ var _last_bounds_size: Vector2 = Vector2.ZERO
 var _wall_material: StandardMaterial3D
 var _back_material: StandardMaterial3D
 var _ball_materials: Array[StandardMaterial3D] = []
+var _ball_textures: Array[Texture2D] = []
 var _smoothed_tilt: Vector2 = Vector2.ZERO
 
 func _enter_tree() -> void:
@@ -150,6 +155,7 @@ func _add_box_piece(piece_name: String, size: Vector3, local_position: Vector3, 
 	var body := StaticBody3D.new()
 	body.name = piece_name
 	body.position = local_position
+	body.physics_material_override = _make_surface_physics_material()
 	_geometry_root.add_child(body)
 
 	var mesh_instance := MeshInstance3D.new()
@@ -172,6 +178,7 @@ func _add_collision_piece(piece_name: String, size: Vector3, local_position: Vec
 	var body := StaticBody3D.new()
 	body.name = piece_name
 	body.position = local_position
+	body.physics_material_override = _make_surface_physics_material()
 	_geometry_root.add_child(body)
 
 	var collision := CollisionShape3D.new()
@@ -209,8 +216,9 @@ func _add_ball(index: int, radius: float, local_position: Vector3) -> void:
 	body.position = local_position
 	body.mass = maxf(0.03, radius * 1.2)
 	body.gravity_scale = 0.0
-	body.linear_damp = 0.55
-	body.angular_damp = 0.3
+	body.linear_damp = ball_linear_damp
+	body.angular_damp = ball_angular_damp
+	body.physics_material_override = _make_ball_physics_material()
 	body.set("axis_lock_linear_z", true)
 	_ball_root.add_child(body)
 	_balls.append(body)
@@ -221,6 +229,8 @@ func _add_ball(index: int, radius: float, local_position: Vector3) -> void:
 	var mesh := SphereMesh.new()
 	mesh.radius = radius
 	mesh.height = radius * 2.0
+	mesh.radial_segments = 48
+	mesh.rings = 24
 	mesh.material = _get_ball_material(index)
 	mesh_instance.mesh = mesh
 	body.add_child(mesh_instance)
@@ -231,6 +241,18 @@ func _add_ball(index: int, radius: float, local_position: Vector3) -> void:
 	shape.radius = radius
 	collision.shape = shape
 	body.add_child(collision)
+
+func _make_ball_physics_material() -> PhysicsMaterial:
+	var material := PhysicsMaterial.new()
+	material.friction = ball_surface_friction
+	material.bounce = ball_bounce
+	return material
+
+func _make_surface_physics_material() -> PhysicsMaterial:
+	var material := PhysicsMaterial.new()
+	material.friction = ball_surface_friction
+	material.bounce = ball_bounce
+	return material
 
 func _read_tilt_gravity() -> Vector2:
 	var gravity := Input.get_gravity()
@@ -286,8 +308,39 @@ func _get_ball_material(index: int) -> StandardMaterial3D:
 	while _ball_materials.size() <= index:
 		var material := StandardMaterial3D.new()
 		var color_index := _ball_materials.size() % maxi(1, ball_colors.size())
-		material.albedo_color = ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
-		material.metallic = 0.05
-		material.roughness = 0.28
+		var base_color := ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
+		material.albedo_texture = _get_ball_texture(_ball_materials.size(), base_color)
+		material.albedo_color = Color.WHITE
+		material.metallic = 0.0
+		material.roughness = 0.62
 		_ball_materials.append(material)
 	return _ball_materials[index]
+
+func _get_ball_texture(index: int, base_color: Color) -> Texture2D:
+	while _ball_textures.size() <= index:
+		var color_index := _ball_textures.size() % maxi(1, ball_colors.size())
+		var color := ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
+		_ball_textures.append(_make_ball_texture(_ball_textures.size(), color))
+	return _ball_textures[index]
+
+func _make_ball_texture(index: int, base_color: Color) -> ImageTexture:
+	var size := 128
+	var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var accent := base_color.lightened(0.45)
+	var shadow := base_color.darkened(0.55)
+	var stripe_count := 6 + (index % 3) * 2
+	for y in range(size):
+		for x in range(size):
+			var u := float(x) / float(size)
+			var v := float(y) / float(size)
+			var stripe := int(floor((u + v * 0.38 + float(index) * 0.071) * float(stripe_count))) % 2
+			var ring := int(floor(abs(v - 0.5) * float(stripe_count * 2))) % 2
+			var color := base_color
+			if stripe == 0:
+				color = accent
+			if ring == 0:
+				color = color.lerp(shadow, 0.28)
+			if (x / 16 + y / 16 + index) % 7 == 0:
+				color = color.lightened(0.18)
+			image.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(image)

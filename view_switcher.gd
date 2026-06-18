@@ -5,6 +5,7 @@ extends Node3D
 @export var screen_scaling_path: NodePath = NodePath("../ScreenScaling")
 @export var window_center_path: NodePath
 @export var current_view_scene: PackedScene
+@export var explicit_view_scene_paths: PackedStringArray = []
 @export var log_view_loads: bool = true
 @export_enum("Fit Height", "Cover Screen", "Contain Screen", "Fit Width", "No Scaling") var view_scale_mode: int = 0
 @export var black_fill_enabled: bool = true :
@@ -91,9 +92,12 @@ var _last_applied_view_position: Vector3 = Vector3.INF
 var _last_view_load_status: String = ""
 var _screen_plane_reference: Node3D
 var _screen_plane_reference_script: Script
+var _screen_plane_reference_load_failed: bool = false
+var _has_logged_available_views: bool = false
 
 func _ready() -> void:
 	_refresh_views()
+	_log_available_views_once()
 	_resolve_fallback_light()
 	_resolve_screen_scaler()
 	_resolve_window_center()
@@ -160,6 +164,8 @@ func _get_property_list() -> Array:
 func _refresh_views() -> void:
 	_available_views.clear()
 	_available_view_scene_paths.clear()
+	if _refresh_views_from_explicit_paths():
+		return
 	if _refresh_views_from_export_preset():
 		return
 
@@ -180,6 +186,14 @@ func _refresh_views() -> void:
 			file_name = dir.get_next()
 	else:
 		push_error("Could not find res://Views folder!")
+
+func _refresh_views_from_explicit_paths() -> bool:
+	for path in explicit_view_scene_paths:
+		var view_key := _view_key_from_scene_path(path)
+		if view_key != "" and not _available_views.has(view_key):
+			_available_views.append(view_key)
+			_available_view_scene_paths[view_key] = path
+	return _available_views.size() > 0
 
 func _refresh_views_from_export_preset() -> bool:
 	if not FileAccess.file_exists("res://export_presets.cfg"):
@@ -320,6 +334,7 @@ func get_view_scale_mode_name(mode: int) -> String:
 
 func set_screen_plane_reference_mode(mode: int) -> void:
 	screen_plane_reference_mode = clampi(mode, SCREEN_REFERENCE_MODE_OFF, SCREEN_REFERENCE_MODE_THIRDS_GRID)
+	print("[ViewSwitcher] screen reference mode='%s'" % [get_screen_plane_reference_mode_name(screen_plane_reference_mode)])
 	_sync_screen_plane_reference()
 
 func get_screen_plane_reference_mode() -> int:
@@ -406,6 +421,12 @@ func _log_view_load(state: String, view_name: String, scene_path: String) -> voi
 		print("[ViewSwitcher] %s view='%s'" % [state, view_name])
 	else:
 		print("[ViewSwitcher] %s view='%s' path='%s'" % [state, view_name, scene_path])
+
+func _log_available_views_once() -> void:
+	if _has_logged_available_views or not log_view_loads:
+		return
+	_has_logged_available_views = true
+	print("[ViewSwitcher] available views='%s'" % [",".join(_available_views)])
 
 func _find_view_index_for_scene(scene: PackedScene) -> int:
 	if scene == null:
@@ -651,10 +672,13 @@ func _ensure_screen_plane_reference() -> void:
 func _get_screen_plane_reference_script() -> Script:
 	if _screen_plane_reference_script != null:
 		return _screen_plane_reference_script
+	if _screen_plane_reference_load_failed:
+		return null
 
 	var resource := load(SCREEN_PLANE_REFERENCE_SCRIPT_PATH)
 	_screen_plane_reference_script = resource as Script
 	if _screen_plane_reference_script == null:
+		_screen_plane_reference_load_failed = true
 		push_warning("Missing screen plane reference script: %s" % [SCREEN_PLANE_REFERENCE_SCRIPT_PATH])
 	return _screen_plane_reference_script
 

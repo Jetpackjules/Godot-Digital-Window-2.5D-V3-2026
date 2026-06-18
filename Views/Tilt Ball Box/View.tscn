@@ -7,9 +7,9 @@
 script = ExtResource("1_tilt_box")
 box_depth_meters = 0.72
 wall_thickness_meters = 0.07
-ball_count = 12
-ball_radius_ratio_of_bounds_height = 0.032
-maximum_ball_radius_meters = 0.16
+ball_count = 6
+ball_radius_ratio_of_bounds_height = 0.12
+maximum_ball_radius_meters = 0.6
 
 [node name="ViewBounds" type="Node3D" parent="."]
 script = ExtResource("2_view_bounds")
