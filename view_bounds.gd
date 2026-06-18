@@ -14,6 +14,11 @@ class_name ViewBounds
 		_update_preview(true)
 
 @export_group("Editor Preview")
+@export var show_preview_in_editor: bool = true :
+	set(value):
+		show_preview_in_editor = value
+		_update_preview(true)
+
 @export var show_preview_in_game: bool = false :
 	set(value):
 		show_preview_in_game = value
@@ -57,34 +62,38 @@ func get_bounds_size_meters() -> Vector2:
 	return Vector2(bounds_width_meters, bounds_height_meters)
 
 func should_show_preview() -> bool:
-	return Engine.is_editor_hint() or show_preview_in_game
+	if Engine.is_editor_hint():
+		return show_preview_in_editor
+	return show_preview_in_game
 
 func _update_preview(force: bool) -> void:
 	var preview_visible := should_show_preview()
+	var width := bounds_width_meters
+	var height := bounds_height_meters
 	if (
 		not force
-		and is_equal_approx(bounds_width_meters, _last_width)
-		and is_equal_approx(bounds_height_meters, _last_height)
+		and is_equal_approx(width, _last_width)
+		and is_equal_approx(height, _last_height)
 		and is_equal_approx(preview_thickness_meters, _last_thickness)
 		and preview_color == _last_color
 		and preview_visible == _last_visible
 	):
 		return
 
-	_last_width = bounds_width_meters
-	_last_height = bounds_height_meters
+	_last_width = width
+	_last_height = height
 	_last_thickness = preview_thickness_meters
 	_last_color = preview_color
 	_last_visible = preview_visible
 
-	var half_width := bounds_width_meters * 0.5
-	var half_height := bounds_height_meters * 0.5
+	var half_width := width * 0.5
+	var half_height := height * 0.5
 	var half_thickness := preview_thickness_meters * 0.5
 
-	_update_segment(_PREVIEW_NAMES[0], Vector2(preview_thickness_meters, bounds_height_meters + preview_thickness_meters * 2.0), Vector3(half_width + half_thickness, 0.0, 0.0), preview_visible)
-	_update_segment(_PREVIEW_NAMES[1], Vector2(preview_thickness_meters, bounds_height_meters + preview_thickness_meters * 2.0), Vector3(-(half_width + half_thickness), 0.0, 0.0), preview_visible)
-	_update_segment(_PREVIEW_NAMES[2], Vector2(bounds_width_meters, preview_thickness_meters), Vector3(0.0, half_height + half_thickness, 0.0), preview_visible)
-	_update_segment(_PREVIEW_NAMES[3], Vector2(bounds_width_meters, preview_thickness_meters), Vector3(0.0, -(half_height + half_thickness), 0.0), preview_visible)
+	_update_segment(_PREVIEW_NAMES[0], Vector2(preview_thickness_meters, height + preview_thickness_meters * 2.0), Vector3(half_width + half_thickness, 0.0, 0.0), preview_visible)
+	_update_segment(_PREVIEW_NAMES[1], Vector2(preview_thickness_meters, height + preview_thickness_meters * 2.0), Vector3(-(half_width + half_thickness), 0.0, 0.0), preview_visible)
+	_update_segment(_PREVIEW_NAMES[2], Vector2(width, preview_thickness_meters), Vector3(0.0, half_height + half_thickness, 0.0), preview_visible)
+	_update_segment(_PREVIEW_NAMES[3], Vector2(width, preview_thickness_meters), Vector3(0.0, -(half_height + half_thickness), 0.0), preview_visible)
 
 func _update_segment(segment_name: String, quad_size: Vector2, local_position: Vector3, preview_visible: bool) -> void:
 	var segment := get_node_or_null(segment_name) as MeshInstance3D

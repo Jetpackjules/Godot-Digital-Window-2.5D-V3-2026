@@ -123,6 +123,7 @@ Then run `Main.tscn` in Godot or use the web export.
 - `View`
   - Uses `view_switcher.gd`.
   - Loads the current content scene from `Views/`.
+  - Centers the loaded scene's `ViewBounds` on `Player/MonitorFrame`.
 
 - `ArUcoPreloader`
   - Preloads screen marker textures.
@@ -164,6 +165,8 @@ Most of the current app tries to match the virtual window height to the physical
 ```gdscript
 AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS := 0.3299948403966754
 ```
+
+Content scenes can include a `ViewBounds` node using `view_bounds.gd`. That node is the authored window rectangle for the scene: adjust its size/position to define which part of the scene should map to the physical window. `view_switcher.gd` uses that rectangle to scale the scene and center it on `Player/MonitorFrame`.
 
 So content authored for the original reference window remains proportional on other physical displays.
 
@@ -785,4 +788,3 @@ Point cloud:
    - bridge/packet age
    - Godot pose application
    - off-axis frustum math
-

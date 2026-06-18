@@ -11,6 +11,8 @@ class_name IPhoneWindowRuntime
 @export_range(0.02, 1.5, 0.01) var minimum_head_distance_meters: float = 0.08
 @export_range(0.0, 0.5, 0.005) var smoothing_half_life_seconds: float = 0.035
 @export var auto_configure_ios_screen_size: bool = true
+@export var match_desktop_debug_window_to_screen_aspect: bool = true
+@export_range(320, 2160, 1) var desktop_debug_window_height_pixels: int = 900
 
 var _camera_node: Camera3D
 var _window_center: Node3D
@@ -23,6 +25,7 @@ var _screen_profile_name: String = ""
 func _ready() -> void:
 	_resolve_nodes()
 	_apply_initial_screen_defaults()
+	_apply_desktop_debug_window_aspect()
 	set_process(true)
 
 func _process(delta: float) -> void:
@@ -82,6 +85,23 @@ func _apply_ios_screen_profile() -> void:
 		_screen_profile_name = str(profile.get("name", "iOS screen"))
 	else:
 		_screen_profile_name = "iOS screen %.0fx%.0f" % [float(runtime_size.x), float(runtime_size.y)]
+
+func _apply_desktop_debug_window_aspect() -> void:
+	if not match_desktop_debug_window_to_screen_aspect or OS.has_feature("ios"):
+		return
+	if DisplayServer.get_name() == "headless":
+		return
+	if _screen_scaler == null:
+		return
+
+	var width_meters := _screen_scaler.physical_width_meters
+	var height_meters := _screen_scaler.physical_height_meters
+	if width_meters <= 0.0 or height_meters <= 0.0:
+		return
+
+	var height_pixels := maxi(320, desktop_debug_window_height_pixels)
+	var width_pixels := maxi(240, roundi(float(height_pixels) * (width_meters / height_meters)))
+	DisplayServer.window_set_size(Vector2i(width_pixels, height_pixels))
 
 func _get_best_runtime_screen_size() -> Vector2i:
 	var candidates: Array[Vector2i] = []

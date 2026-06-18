@@ -8,6 +8,10 @@
 [ext_resource type="Script" uid="uid://ob7e6cl57yyc" path="res://ios/iphone_window_runtime.gd" id="6_runtime"]
 [ext_resource type="PackedScene" uid="uid://dk1sfjmbix8yc" path="res://Views/test_box.tscn" id="7_test_box"]
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_yc44r"]
+shading_mode = 0
+albedo_color = Color(1, 0, 0, 1)
+
 [sub_resource type="QuadMesh" id="QuadMesh_yc44r"]
 size = Vector2(0.004, 0.1486022)
 
@@ -48,34 +52,37 @@ border_depth_offset_meters = 0.0
 
 [node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1422772874]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.034446664, 0, 0)
+material_override = SubResource("StandardMaterial3D_yc44r")
 mesh = SubResource("QuadMesh_yc44r")
 
 [node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1773498256]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.034446664, 0, 0)
+material_override = SubResource("StandardMaterial3D_yc44r")
 mesh = SubResource("QuadMesh_kxyc3")
 
 [node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=736076604]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.072301105, 0)
+material_override = SubResource("StandardMaterial3D_yc44r")
 mesh = SubResource("QuadMesh_w5s7j")
 
 [node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=895567163]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.072301105, 0)
+material_override = SubResource("StandardMaterial3D_yc44r")
 mesh = SubResource("QuadMesh_65mgu")
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=1989601163]
 script = ExtResource("3_scale")
 aspect_ratio_width = 9.0
 aspect_ratio_height = 19.5
-screen_diagonal_inches = 6.096660447408572
-physical_width_meters = 0.06489332755863153
-physical_height_meters = 0.14060220971036833
-virtual_window_height = 0.14060220971036833
+screen_diagonal_inches = 6.096660447408573
+physical_width_meters = 0.06489332755863154
+physical_height_meters = 0.14060220971036835
+virtual_window_height = 0.14060220971036835
 
 [node name="View" type="Node3D" parent="." unique_id=1898748907]
 script = ExtResource("4_view")
-screen_scaling_path = NodePath("../ScreenScaling")
+window_center_path = NodePath("../Player/MonitorFrame")
 current_view_scene = ExtResource("7_test_box")
-view_scale_mode = 1
 current_view_name = "test_box.tscn"
 
 [node name="IPhonePoseProvider" type="Node" parent="." unique_id=960546126]

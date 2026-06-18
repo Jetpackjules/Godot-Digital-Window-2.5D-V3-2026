@@ -3,6 +3,7 @@ extends Node3D
 
 @export var fallback_directional_light_path: NodePath
 @export var screen_scaling_path: NodePath = NodePath("../ScreenScaling")
+@export var window_center_path: NodePath
 @export var current_view_scene: PackedScene
 @export_enum("Fit Height", "Cover Screen", "Contain Screen", "Fit Width", "No Scaling") var view_scale_mode: int = 0
 @export var authored_reference_aspect_width: float = 16.0
@@ -26,6 +27,7 @@ var _available_views: Array[String] = []
 var _instantiated_view: Node3D
 var _fallback_directional_light: DirectionalLight3D
 var _screen_scaler: ScreenScaling
+var _window_center: Node3D
 var _instantiated_view_base_scale: Vector3 = Vector3.ONE
 var _instantiated_view_base_position: Vector3 = Vector3.ZERO
 var _view_bounds_node: Node3D
@@ -37,6 +39,7 @@ func _ready() -> void:
 	_refresh_views()
 	_resolve_fallback_light()
 	_resolve_screen_scaler()
+	_resolve_window_center()
 	set_process(true)
 	
 	for child in get_children():
@@ -62,6 +65,7 @@ func _process(_delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
 	_resolve_screen_scaler()
+	_resolve_window_center()
 	_apply_view_scale(false)
 
 func _get_property_list() -> Array:
@@ -150,6 +154,12 @@ func _resolve_screen_scaler() -> void:
 		return
 	_screen_scaler = get_node_or_null(screen_scaling_path) as ScreenScaling
 
+func _resolve_window_center() -> void:
+	if window_center_path.is_empty():
+		_window_center = null
+		return
+	_window_center = get_node_or_null(window_center_path) as Node3D
+
 func _capture_instantiated_view_base_scale() -> void:
 	if _instantiated_view == null:
 		return
@@ -201,8 +211,9 @@ func _get_target_view_scale() -> float:
 	return target_scale
 
 func _get_target_view_position(target_scale: float) -> Vector3:
+	var target_center := _get_target_window_center_position()
 	if _view_bounds_node == null:
-		return _instantiated_view_base_position
+		return target_center
 
 	var effective_scale := _instantiated_view_base_scale * target_scale
 	var scaled_bounds_offset := Vector3(
@@ -210,7 +221,17 @@ func _get_target_view_position(target_scale: float) -> Vector3:
 		_view_bounds_base_position.y * effective_scale.y,
 		_view_bounds_base_position.z * effective_scale.z
 	)
-	return _instantiated_view_base_position - scaled_bounds_offset
+	return target_center - scaled_bounds_offset
+
+func _get_target_window_center_position() -> Vector3:
+	if _instantiated_view == null or _window_center == null:
+		return _instantiated_view_base_position
+
+	var view_parent := _instantiated_view.get_parent() as Node3D
+	if view_parent == null:
+		return _instantiated_view_base_position
+
+	return view_parent.to_local(_window_center.global_position)
 
 func _get_authored_window_size_meters() -> Vector2:
 	if _view_bounds_node != null and _view_bounds_node.has_method("get_bounds_size_meters"):

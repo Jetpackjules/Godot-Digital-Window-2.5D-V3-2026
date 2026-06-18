@@ -131,6 +131,10 @@ The provider returns the viewer/head pose in phone-screen-local meters:
 
 `Perspective_Cam.gd` then treats `Head_Cam` as the viewer eye and `MonitorFrame` as the glass/screen plane.
 
+Loaded content scenes define an authored `ViewBounds` rectangle. `view_switcher.gd` scales that content and centers the `ViewBounds` rectangle on `MonitorFrame`, so adjusting the bounds in a scene defines what should fill the physical window.
+
+When `IPhoneWindow.tscn` runs on desktop for debugging, `iphone_window_runtime.gd` can resize the desktop game window to the saved phone aspect. Without that, a portrait phone plane cannot be flush with a landscape desktop viewport.
+
 The future native ARKit plugin should do the camera-to-screen conversion before exposing the pose to GDScript. That keeps the rest of the Godot code independent from ARKit camera-space details.
 
 ## Native ARKit Plugin Plan
@@ -206,7 +210,7 @@ Verification on Windows before native plugin:
 - Run the scene.
 - Confirm the status label reads `arkit-missing` or simulated/fallback.
 - Confirm the box renders through `Perspective_Cam.gd`.
-- Confirm changing `ScreenScaling` changes the red border and view scale.
+- Confirm changing `ScreenScaling` changes the red border and the scaled/centered blue `ViewBounds`.
 
 Verification on Mac/iPhone after plugin:
 
