@@ -324,8 +324,8 @@ func _get_back_material() -> StandardMaterial3D:
 func _get_ball_material(index: int) -> StandardMaterial3D:
 	while _ball_materials.size() <= index:
 		var material := StandardMaterial3D.new()
-		var color_index := _ball_materials.size() % maxi(1, ball_colors.size())
-		var base_color := ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
+		var color_index: int = _ball_materials.size() % maxi(1, ball_colors.size())
+		var base_color: Color = ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
 		material.albedo_texture = _get_ball_texture(_ball_materials.size(), base_color)
 		material.albedo_color = Color.WHITE
 		material.metallic = 0.0
@@ -344,18 +344,19 @@ func _get_back_texture() -> Texture2D:
 	return _back_texture
 
 func _make_wood_texture(dark: Color, light: Color, plank_count: int) -> ImageTexture:
-	var size := 128
+	var size: int = 128
 	var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
 	for y in range(size):
 		for x in range(size):
-			var u := float(x) / float(size)
-			var v := float(y) / float(size)
-			var plank := int(floor(u * float(plank_count)))
-			var grain := sin((v * 34.0) + sin(u * 19.0) * 1.7 + float(plank) * 0.63)
-			var plank_position := (u * float(plank_count)) - floor(u * float(plank_count))
-			var seam := 1.0 if abs(plank_position - 0.5) < 0.035 else 0.0
-			var shade := clampf(0.52 + grain * 0.18 + sin(v * 9.0 + float(plank)) * 0.08, 0.0, 1.0)
-			var color := dark.lerp(light, shade)
+			var u: float = float(x) / float(size)
+			var v: float = float(y) / float(size)
+			var plank_float: float = u * float(plank_count)
+			var plank: int = int(floor(plank_float))
+			var grain: float = sin((v * 34.0) + sin(u * 19.0) * 1.7 + float(plank) * 0.63)
+			var plank_position: float = plank_float - floor(plank_float)
+			var seam: float = 1.0 if abs(plank_position - 0.5) < 0.035 else 0.0
+			var shade: float = clampf(0.52 + grain * 0.18 + sin(v * 9.0 + float(plank)) * 0.08, 0.0, 1.0)
+			var color: Color = dark.lerp(light, shade)
 			if seam > 0.0:
 				color = color.darkened(0.35)
 			image.set_pixel(x, y, color)
@@ -363,24 +364,24 @@ func _make_wood_texture(dark: Color, light: Color, plank_count: int) -> ImageTex
 
 func _get_ball_texture(index: int, base_color: Color) -> Texture2D:
 	while _ball_textures.size() <= index:
-		var color_index := _ball_textures.size() % maxi(1, ball_colors.size())
-		var color := ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
+		var color_index: int = _ball_textures.size() % maxi(1, ball_colors.size())
+		var color: Color = ball_colors[color_index] if ball_colors.size() > 0 else Color.WHITE
 		_ball_textures.append(_make_ball_texture(_ball_textures.size(), color))
 	return _ball_textures[index]
 
 func _make_ball_texture(index: int, base_color: Color) -> ImageTexture:
-	var size := 128
+	var size: int = 128
 	var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var accent := base_color.lightened(0.45)
-	var shadow := base_color.darkened(0.55)
-	var stripe_count := 6 + (index % 3) * 2
+	var accent: Color = base_color.lightened(0.45)
+	var shadow: Color = base_color.darkened(0.55)
+	var stripe_count: int = 6 + (index % 3) * 2
 	for y in range(size):
 		for x in range(size):
-			var u := float(x) / float(size)
-			var v := float(y) / float(size)
-			var stripe := int(floor((u + v * 0.38 + float(index) * 0.071) * float(stripe_count))) % 2
-			var ring := int(floor(abs(v - 0.5) * float(stripe_count * 2))) % 2
-			var color := base_color
+			var u: float = float(x) / float(size)
+			var v: float = float(y) / float(size)
+			var stripe: int = int(floor((u + v * 0.38 + float(index) * 0.071) * float(stripe_count))) % 2
+			var ring: int = int(floor(abs(v - 0.5) * float(stripe_count * 2))) % 2
+			var color: Color = base_color
 			if stripe == 0:
 				color = accent
 			if ring == 0:
