@@ -134,6 +134,8 @@ virtual_window_height = 0.3299948403966754
 [node name="View" type="Node3D" parent="." unique_id=1612227734]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("9_vs123")
+fallback_directional_light_path = NodePath("../Light")
+fallback_world_environment_path = NodePath("../WorldEnvironment")
 window_center_path = NodePath("../Player/MonitorFrame")
 current_view_name = "test_box.tscn"
 

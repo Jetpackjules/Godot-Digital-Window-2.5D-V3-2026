@@ -1,8 +1,8 @@
 [gd_scene load_steps=6 format=3 uid="uid://bktes6ef7os5n"]
 
 [ext_resource type="ArrayMesh" uid="uid://btmp5f7rlwgo0" path="res://Models/Objects/Meshes/Objects_FloorLamp.res" id="1_tdp7w"]
-[ext_resource type="Material" uid="uid://chr5u7g7lklm6" path="res://Materials/Misc/floorLamp.tres" id="2_ffq5u"]
-[ext_resource type="Material" uid="uid://brp685rkating" path="res://Materials/Effects/LensFlare1.tres" id="3_w866e"]
+[ext_resource type="Material" uid="uid://chr5u7g7lklm6" path="res://Views/Spaceship/Materials/Misc/floorLamp.tres" id="2_ffq5u"]
+[ext_resource type="Material" uid="uid://brp685rkating" path="res://Views/Spaceship/Materials/Effects/LensFlare1.tres" id="3_w866e"]
 
 [sub_resource type="QuadMesh" id="QuadMesh_s5x8h"]
 size = Vector2(2, 2)

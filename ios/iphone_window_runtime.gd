@@ -29,34 +29,24 @@ class_name IPhoneWindowRuntime
 @export var tap_to_cycle_views: bool = true
 @export var desktop_debug_cycle_views: bool = true
 
-@export_group("Island / Notch")
-@export_enum("Off", "Crop Top", "Top Wall") var island_adjustment_mode: int = 0 :
-	set(value):
-		island_adjustment_mode = clampi(value, ISLAND_MODE_OFF, ISLAND_MODE_TOP_WALL)
-		_apply_island_adjustment()
-@export_range(0.0, 0.04, 0.0005) var island_height_meters: float = 0.011 :
-	set(value):
-		island_height_meters = value
-		_apply_island_adjustment()
-@export_range(0.0, 0.02, 0.0005) var island_wall_depth_meters: float = 0.004 :
-	set(value):
-		island_wall_depth_meters = value
-		_sync_island_wall()
+@export_group("Tracking Loss Fallback")
+@export var inertial_tracking_loss_fallback_enabled: bool = false
+@export var map_inertial_gravity_to_screen_axes: bool = true
+
+@export_group("Camera Reactive Lighting")
+@export var camera_reactive_lighting_enabled: bool = false
 
 const FRONT_CAMERA_EDGE_AUTO := 0
 const FRONT_CAMERA_EDGE_TOP := 1
 const FRONT_CAMERA_EDGE_RIGHT := 2
 const FRONT_CAMERA_EDGE_BOTTOM := 3
 const FRONT_CAMERA_EDGE_LEFT := 4
-const ISLAND_MODE_OFF := 0
-const ISLAND_MODE_CROP_TOP := 1
-const ISLAND_MODE_TOP_WALL := 2
-const ISLAND_MODE_NAMES := ["Off", "Crop Top", "Top Wall"]
 const SETTINGS_TOGGLE_COOLDOWN_MSEC := 450
 const TAP_MAX_DURATION_MSEC := 450
 const TAP_MAX_MOVE_PIXELS := 32.0
 const MULTI_TOUCH_GESTURE_MAX_DURATION_MSEC := 900
 const MULTI_TOUCH_GESTURE_MAX_MOVE_PIXELS := 48.0
+const TRACKING_REACQUIRE_BLEND_SECONDS := 0.08
 const RUNTIME_BUILD_TAG := "ios-cycler-v3"
 
 var _camera_node: Camera3D
@@ -73,11 +63,24 @@ var _settings_offset_y_label: Label
 var _settings_offset_x_slider: HSlider
 var _settings_offset_y_slider: HSlider
 var _settings_scale_mode_option: OptionButton
+var _settings_viewbox_scale_label: Label
+var _settings_viewbox_scale_slider: HSlider
+var _settings_ball_size_label: Label
+var _settings_ball_size_slider: HSlider
+var _settings_press_depth_label: Label
+var _settings_press_depth_slider: HSlider
+var _settings_pop_height_label: Label
+var _settings_pop_height_slider: HSlider
+var _settings_tile_size_label: Label
+var _settings_tile_size_slider: HSlider
 var _settings_black_fill_check: CheckBox
+var _settings_enhanced_graphics_option: OptionButton
+var _settings_camera_reactive_lighting_check: CheckBox
+var _settings_inertial_fallback_check: CheckBox
 var _settings_screen_reference_option: OptionButton
-var _settings_island_mode_option: OptionButton
 var _active_touches: Dictionary = {}
 var _last_settings_toggle_msec: int = -10000
+var _logged_missing_native_haptics: bool = false
 var _tap_start_index: int = -1
 var _tap_start_position: Vector2 = Vector2.ZERO
 var _tap_start_msec: int = 0
@@ -92,14 +95,19 @@ var _runtime_screen_size: Vector2i = Vector2i.ZERO
 var _base_physical_width_meters: float = 0.0
 var _base_physical_height_meters: float = 0.0
 var _base_virtual_window_height_meters: float = 0.0
-var _is_applying_island_adjustment: bool = false
-var _island_wall: MeshInstance3D
-var _island_wall_material: StandardMaterial3D
+var _has_inertial_tracking_anchor: bool = false
+var _inertial_anchor_head_position: Vector3 = Vector3.ZERO
+var _inertial_anchor_gravity: Vector3 = Vector3.ZERO
+var _was_provider_active: bool = false
+var _tracking_reacquire_blend_remaining_seconds: float = 0.0
+var _nodes_resolved: bool = false
+var _last_native_camera_light_enabled: bool = false
 
 func _ready() -> void:
 	_resolve_nodes()
 	_apply_initial_screen_defaults()
 	_apply_desktop_debug_window_aspect()
+	_sync_native_camera_light_estimation_enabled(true)
 	set_process(true)
 	set_process_input(true)
 
@@ -110,33 +118,90 @@ func _input(event: InputEvent) -> void:
 		return
 
 func _process(delta: float) -> void:
-	_resolve_nodes()
+	if not _nodes_resolved or _camera_node == null or _window_center == null:
+		_resolve_nodes()
 	if _camera_node == null or _window_center == null:
 		return
 
 	var provider_active: bool = _pose_provider != null and _pose_provider.has_method("is_tracking_active") and bool(_pose_provider.call("is_tracking_active"))
-	var local_head_position := fallback_head_position_meters
+	var local_head_position: Vector3 = fallback_head_position_meters
 	if provider_active and _pose_provider.has_method("get_head_position_meters"):
 		var head_position_raw: Variant = _pose_provider.call("get_head_position_meters")
 		if head_position_raw is Vector3:
 			local_head_position = head_position_raw
-	local_head_position += _get_front_camera_origin_offset_meters()
-	local_head_position.z = maxf(local_head_position.z, minimum_head_distance_meters)
+		local_head_position += _get_front_camera_origin_offset_meters()
+		local_head_position.z = maxf(local_head_position.z, minimum_head_distance_meters)
+		_capture_inertial_tracking_anchor(local_head_position)
+	elif inertial_tracking_loss_fallback_enabled and _has_inertial_tracking_anchor:
+		local_head_position = _get_inertial_fallback_head_position()
+	else:
+		local_head_position += _get_front_camera_origin_offset_meters()
+		local_head_position.z = maxf(local_head_position.z, minimum_head_distance_meters)
+
+	if provider_active and not _was_provider_active and _has_initialized_camera_pose:
+		_tracking_reacquire_blend_remaining_seconds = TRACKING_REACQUIRE_BLEND_SECONDS
 
 	var window_basis := _window_center.global_basis.orthonormalized()
 	var target_position := _window_center.global_position + (window_basis * local_head_position)
-	if smoothing_half_life_seconds > 0.0 and _has_initialized_camera_pose:
+	var should_smooth_camera: bool = (
+		smoothing_half_life_seconds > 0.0
+		and _has_initialized_camera_pose
+		and (not provider_active or _tracking_reacquire_blend_remaining_seconds > 0.0)
+	)
+	if should_smooth_camera:
 		var alpha := 1.0 - pow(0.5, delta / smoothing_half_life_seconds)
 		_camera_node.global_position = _camera_node.global_position.lerp(target_position, clampf(alpha, 0.0, 1.0))
 	else:
 		_camera_node.global_position = target_position
+	if _tracking_reacquire_blend_remaining_seconds > 0.0:
+		_tracking_reacquire_blend_remaining_seconds = maxf(0.0, _tracking_reacquire_blend_remaining_seconds - delta)
+	_was_provider_active = provider_active
 	_has_initialized_camera_pose = true
 	if _camera_node.has_method("refresh_off_axis_projection"):
 		_camera_node.call("refresh_off_axis_projection")
 
 	_update_head_plane_debug_dot(local_head_position)
 	_update_status_label(provider_active, local_head_position)
+	_sync_camera_reactive_lighting()
 	_sync_settings_values_from_runtime()
+
+func _capture_inertial_tracking_anchor(local_head_position: Vector3) -> void:
+	_inertial_anchor_head_position = local_head_position
+	_inertial_anchor_gravity = _get_normalized_inertial_gravity()
+	_has_inertial_tracking_anchor = true
+
+func _get_inertial_fallback_head_position() -> Vector3:
+	var fallback_position: Vector3 = _inertial_anchor_head_position
+	var current_gravity: Vector3 = _get_normalized_inertial_gravity()
+	if _inertial_anchor_gravity.length_squared() > 0.0001 and current_gravity.length_squared() > 0.0001:
+		var gravity_delta: Quaternion = Quaternion(_inertial_anchor_gravity, current_gravity)
+		fallback_position = Basis(gravity_delta) * _inertial_anchor_head_position
+	fallback_position.z = maxf(fallback_position.z, minimum_head_distance_meters)
+	return fallback_position
+
+func _get_normalized_inertial_gravity() -> Vector3:
+	var device_gravity: Vector3 = _get_normalized_device_gravity()
+	if not map_inertial_gravity_to_screen_axes or device_gravity == Vector3.ZERO:
+		return device_gravity
+	return _map_device_gravity_to_window_axes(device_gravity).normalized()
+
+func _map_device_gravity_to_window_axes(device_gravity: Vector3) -> Vector3:
+	var edge: int = _get_effective_front_camera_edge()
+	match edge:
+		FRONT_CAMERA_EDGE_RIGHT:
+			return Vector3(device_gravity.y, -device_gravity.x, device_gravity.z)
+		FRONT_CAMERA_EDGE_LEFT:
+			return Vector3(-device_gravity.y, device_gravity.x, device_gravity.z)
+		FRONT_CAMERA_EDGE_BOTTOM:
+			return Vector3(-device_gravity.x, -device_gravity.y, device_gravity.z)
+		_:
+			return device_gravity
+
+func _get_normalized_device_gravity() -> Vector3:
+	var gravity: Vector3 = Input.get_gravity()
+	if gravity.length_squared() < 0.0001:
+		return Vector3.ZERO
+	return gravity.normalized()
 
 func _resolve_nodes() -> void:
 	_camera_node = get_node_or_null(camera_node_path) as Camera3D
@@ -147,6 +212,13 @@ func _resolve_nodes() -> void:
 	_status_panel = _status_label.get_parent() as Control if _status_label != null else null
 	_head_plane_debug_dot = get_node_or_null(head_plane_debug_dot_path) as Node3D
 	_view_switcher = get_node_or_null(view_switcher_path)
+	_nodes_resolved = (
+		_camera_node != null
+		and _window_center != null
+		and _screen_scaler != null
+		and _pose_provider != null
+		and _view_switcher != null
+	)
 
 func _apply_initial_screen_defaults() -> void:
 	if _screen_scaler == null:
@@ -155,7 +227,6 @@ func _apply_initial_screen_defaults() -> void:
 		_apply_ios_screen_profile()
 	_screen_scaler.refresh_from_diagonal()
 	_capture_base_screen_size()
-	_apply_island_adjustment()
 
 func _apply_ios_screen_profile() -> void:
 	if not OS.has_feature("ios"):
@@ -185,33 +256,12 @@ func _capture_base_screen_size() -> void:
 	_base_physical_height_meters = _screen_scaler.physical_height_meters
 	_base_virtual_window_height_meters = _screen_scaler.virtual_window_height
 
-func _apply_island_adjustment() -> void:
-	if _is_applying_island_adjustment or _screen_scaler == null:
-		return
-	if _base_physical_width_meters <= 0.0 or _base_physical_height_meters <= 0.0:
-		_capture_base_screen_size()
-	if _base_physical_width_meters <= 0.0 or _base_physical_height_meters <= 0.0:
-		_sync_island_wall()
-		return
-
-	_is_applying_island_adjustment = true
-	var adjusted_height := _base_physical_height_meters
-	if island_adjustment_mode == ISLAND_MODE_CROP_TOP:
-		adjusted_height = maxf(0.01, _base_physical_height_meters - island_height_meters)
-
-	_screen_scaler.physical_width_meters = _base_physical_width_meters
-	_screen_scaler.physical_height_meters = adjusted_height
-	if _screen_scaler.match_virtual_window_to_physical_height:
-		_screen_scaler.virtual_window_height = adjusted_height
-	else:
-		_screen_scaler.virtual_window_height = minf(_base_virtual_window_height_meters, adjusted_height)
-	_is_applying_island_adjustment = false
-	_sync_island_wall()
-
 func _apply_desktop_debug_window_aspect() -> void:
 	if not match_desktop_debug_window_to_screen_aspect or OS.has_feature("ios"):
 		return
 	if DisplayServer.get_name() == "headless":
+		return
+	if OS.has_feature("editor"):
 		return
 	if _screen_scaler == null:
 		return
@@ -319,6 +369,11 @@ func _handle_settings_toggle_input(event: InputEvent) -> void:
 		var drag := event as InputEventScreenDrag
 		_active_touches[drag.index] = drag.position
 		_mark_touch_move_if_needed(drag.index, drag.position)
+	elif not OS.has_feature("ios") and event is InputEventMouseButton:
+		var mouse := event as InputEventMouseButton
+		if mouse.pressed and mouse.button_index == MOUSE_BUTTON_RIGHT:
+			_toggle_settings_panel_with_cooldown()
+			get_viewport().set_input_as_handled()
 
 func _mark_touch_move_if_needed(index: int, position: Vector2) -> void:
 	if not _multi_touch_start_positions.has(index):
@@ -331,8 +386,13 @@ func _finish_multi_touch_gesture() -> void:
 	var elapsed_msec := Time.get_ticks_msec() - _multi_touch_start_msec
 	if elapsed_msec > MULTI_TOUCH_GESTURE_MAX_DURATION_MSEC or _multi_touch_moved_too_far:
 		return
+	if _multi_touch_max_count >= 4 and _current_view_handle_four_finger_tap():
+		return
 	if _multi_touch_max_count >= 3:
-		_cycle_screen_plane_reference()
+		if _current_view_uses_triple_tap_for_view_cycle():
+			_cycle_next_view()
+		else:
+			_cycle_screen_plane_reference()
 	elif _multi_touch_max_count == 2:
 		_toggle_settings_panel_with_cooldown()
 
@@ -340,6 +400,8 @@ func _handle_view_cycle_input(event: InputEvent) -> void:
 	if not tap_to_cycle_views:
 		return
 	if _settings_panel != null and _settings_panel.visible:
+		return
+	if _current_view_wants_primary_touch_input() and not (event is InputEventKey):
 		return
 	if desktop_debug_cycle_views and _handle_desktop_view_cycle_input(event):
 		return
@@ -382,6 +444,27 @@ func _handle_desktop_view_cycle_input(event: InputEvent) -> bool:
 			return true
 	return false
 
+func _current_view_wants_primary_touch_input() -> bool:
+	if _view_switcher == null:
+		return false
+	if _view_switcher.has_method("current_view_wants_primary_touch_input"):
+		return bool(_view_switcher.call("current_view_wants_primary_touch_input"))
+	return false
+
+func _current_view_uses_triple_tap_for_view_cycle() -> bool:
+	if _view_switcher == null:
+		return false
+	if _view_switcher.has_method("current_view_uses_triple_tap_for_view_cycle"):
+		return bool(_view_switcher.call("current_view_uses_triple_tap_for_view_cycle"))
+	return false
+
+func _current_view_handle_four_finger_tap() -> bool:
+	if _view_switcher == null:
+		return false
+	if _view_switcher.has_method("current_view_handle_four_finger_tap"):
+		return bool(_view_switcher.call("current_view_handle_four_finger_tap"))
+	return false
+
 func _cycle_next_view() -> void:
 	if _view_switcher == null:
 		return
@@ -414,10 +497,22 @@ func _toggle_settings_panel() -> void:
 		return
 
 	_settings_panel.visible = not _settings_panel.visible
+	_play_native_selection_haptic()
 	_set_debug_overlay_visible(_settings_panel.visible)
 	_set_view_bounds_preview_visible(_settings_panel.visible)
 	if _settings_panel.visible:
 		_sync_settings_values_from_runtime(true)
+
+func _play_native_selection_haptic() -> void:
+	if not OS.has_feature("ios") or not Engine.has_singleton("IPhoneARKitHeadTracker"):
+		return
+	var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
+	if tracker == null or not tracker.has_method("play_haptic_selection"):
+		if not _logged_missing_native_haptics:
+			_logged_missing_native_haptics = true
+			print("[IPhoneWindow] native iOS haptics unavailable.")
+		return
+	tracker.call("play_haptic_selection")
 
 func _set_debug_overlay_visible(visible: bool) -> void:
 	if _status_panel != null:
@@ -435,45 +530,6 @@ func _set_view_bounds_preview_visible(visible: bool) -> void:
 	else:
 		_view_switcher.set("view_bounds_preview_enabled", visible)
 
-func _sync_island_wall() -> void:
-	if _window_center == null or _screen_scaler == null:
-		return
-	if island_adjustment_mode != ISLAND_MODE_TOP_WALL or island_height_meters <= 0.0:
-		if _island_wall != null:
-			_island_wall.visible = false
-		return
-
-	if _island_wall == null or not is_instance_valid(_island_wall):
-		_island_wall = MeshInstance3D.new()
-		_island_wall.name = "IslandTopWall"
-		_island_wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_window_center.add_child(_island_wall)
-
-	var width := _screen_scaler.physical_width_meters
-	var height := _screen_scaler.physical_height_meters
-	if _base_physical_width_meters > 0.0:
-		width = _base_physical_width_meters
-	if _base_physical_height_meters > 0.0:
-		height = _base_physical_height_meters
-	if width <= 0.0 or height <= 0.0:
-		_island_wall.visible = false
-		return
-
-	var mesh := BoxMesh.new()
-	mesh.size = Vector3(width, island_height_meters, maxf(0.0005, island_wall_depth_meters))
-	_island_wall.mesh = mesh
-	_island_wall.material_override = _get_island_wall_material()
-	_island_wall.position = Vector3(0.0, height * 0.5 - island_height_meters * 0.5, maxf(0.00025, island_wall_depth_meters * 0.5))
-	_island_wall.visible = true
-
-func _get_island_wall_material() -> StandardMaterial3D:
-	if _island_wall_material == null:
-		_island_wall_material = StandardMaterial3D.new()
-		_island_wall_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_island_wall_material.albedo_color = Color.BLACK
-		_island_wall_material.roughness = 1.0
-	return _island_wall_material
-
 func _build_settings_panel() -> void:
 	var parent := get_node_or_null("../UI") as Node
 	if parent == null:
@@ -489,20 +545,29 @@ func _build_settings_panel() -> void:
 	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	panel.offset_left = 18.0
 	panel.offset_top = 60.0
-	panel.offset_right = 500.0
-	panel.offset_bottom = 460.0
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size if get_viewport() != null else Vector2(540.0, 720.0)
+	var panel_width: float = clampf(viewport_size.x - 36.0, 320.0, 500.0)
+	var panel_height: float = clampf(viewport_size.y - 78.0, 240.0, 580.0)
+	panel.offset_right = panel.offset_left + panel_width
+	panel.offset_bottom = panel.offset_top + panel_height
 	parent.add_child(panel)
 	_settings_panel = panel
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_child(scroll)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 16)
 	margin.add_theme_constant_override("margin_top", 12)
 	margin.add_theme_constant_override("margin_right", 16)
 	margin.add_theme_constant_override("margin_bottom", 12)
-	panel.add_child(margin)
+	scroll.add_child(margin)
 
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 8)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.add_child(column)
 
 	var title := Label.new()
@@ -535,19 +600,59 @@ func _build_settings_panel() -> void:
 	_settings_scale_mode_option.item_selected.connect(_on_scale_mode_selected)
 	column.add_child(_settings_scale_mode_option)
 
+	_settings_viewbox_scale_label = Label.new()
+	column.add_child(_settings_viewbox_scale_label)
+	_settings_viewbox_scale_slider = _make_viewbox_scale_slider()
+	_settings_viewbox_scale_slider.value_changed.connect(_on_viewbox_scale_slider_changed)
+	column.add_child(_settings_viewbox_scale_slider)
+
+	_settings_ball_size_label = Label.new()
+	column.add_child(_settings_ball_size_label)
+	_settings_ball_size_slider = _make_ball_size_slider()
+	_settings_ball_size_slider.value_changed.connect(_on_ball_size_slider_changed)
+	column.add_child(_settings_ball_size_slider)
+
+	_settings_press_depth_label = Label.new()
+	column.add_child(_settings_press_depth_label)
+	_settings_press_depth_slider = _make_press_depth_slider()
+	_settings_press_depth_slider.value_changed.connect(_on_press_depth_slider_changed)
+	column.add_child(_settings_press_depth_slider)
+
+	_settings_pop_height_label = Label.new()
+	column.add_child(_settings_pop_height_label)
+	_settings_pop_height_slider = _make_pop_height_slider()
+	_settings_pop_height_slider.value_changed.connect(_on_pop_height_slider_changed)
+	column.add_child(_settings_pop_height_slider)
+
+	_settings_tile_size_label = Label.new()
+	column.add_child(_settings_tile_size_label)
+	_settings_tile_size_slider = _make_tile_size_slider()
+	_settings_tile_size_slider.value_changed.connect(_on_tile_size_slider_changed)
+	column.add_child(_settings_tile_size_slider)
+
 	_settings_black_fill_check = CheckBox.new()
 	_settings_black_fill_check.text = "Blackfill"
 	_settings_black_fill_check.toggled.connect(_on_black_fill_toggled)
 	column.add_child(_settings_black_fill_check)
 
-	var island_label := Label.new()
-	island_label.text = "Island / Notch"
-	column.add_child(island_label)
+	var enhanced_graphics_label := Label.new()
+	enhanced_graphics_label.text = "Enhanced Graphics"
+	column.add_child(enhanced_graphics_label)
 
-	_settings_island_mode_option = OptionButton.new()
-	_populate_island_mode_options()
-	_settings_island_mode_option.item_selected.connect(_on_island_mode_selected)
-	column.add_child(_settings_island_mode_option)
+	_settings_enhanced_graphics_option = OptionButton.new()
+	_populate_enhanced_graphics_options()
+	_settings_enhanced_graphics_option.item_selected.connect(_on_enhanced_graphics_selected)
+	column.add_child(_settings_enhanced_graphics_option)
+
+	_settings_camera_reactive_lighting_check = CheckBox.new()
+	_settings_camera_reactive_lighting_check.text = "Camera Lighting"
+	_settings_camera_reactive_lighting_check.toggled.connect(_on_camera_reactive_lighting_toggled)
+	column.add_child(_settings_camera_reactive_lighting_check)
+
+	_settings_inertial_fallback_check = CheckBox.new()
+	_settings_inertial_fallback_check.text = "Inertial Tracking Fallback"
+	_settings_inertial_fallback_check.toggled.connect(_on_inertial_fallback_toggled)
+	column.add_child(_settings_inertial_fallback_check)
 
 	var screen_reference_label := Label.new()
 	screen_reference_label.text = "Screen Reference"
@@ -562,6 +667,20 @@ func _build_settings_panel() -> void:
 	reset_button.text = "Zero Manual Offset"
 	reset_button.pressed.connect(_on_zero_manual_offset_pressed)
 	column.add_child(reset_button)
+
+	var view_buttons := HBoxContainer.new()
+	view_buttons.add_theme_constant_override("separation", 8)
+	column.add_child(view_buttons)
+
+	var previous_view_button := Button.new()
+	previous_view_button.text = "Previous View"
+	previous_view_button.pressed.connect(_cycle_previous_view)
+	view_buttons.add_child(previous_view_button)
+
+	var next_view_button := Button.new()
+	next_view_button.text = "Next View"
+	next_view_button.pressed.connect(_cycle_next_view)
+	view_buttons.add_child(next_view_button)
 
 	var close_button := Button.new()
 	close_button.text = "Close"
@@ -586,6 +705,46 @@ func _make_offset_slider() -> HSlider:
 	var slider := HSlider.new()
 	slider.min_value = -maximum_manual_offset_meters * 1000.0
 	slider.max_value = maximum_manual_offset_meters * 1000.0
+	slider.step = 1.0
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return slider
+
+func _make_viewbox_scale_slider() -> HSlider:
+	var slider := HSlider.new()
+	slider.min_value = 50.0
+	slider.max_value = 120.0
+	slider.step = 1.0
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return slider
+
+func _make_ball_size_slider() -> HSlider:
+	var slider := HSlider.new()
+	slider.min_value = 50.0
+	slider.max_value = 250.0
+	slider.step = 1.0
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return slider
+
+func _make_press_depth_slider() -> HSlider:
+	var slider := HSlider.new()
+	slider.min_value = 5.0
+	slider.max_value = 800.0
+	slider.step = 1.0
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return slider
+
+func _make_pop_height_slider() -> HSlider:
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 300.0
+	slider.step = 1.0
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return slider
+
+func _make_tile_size_slider() -> HSlider:
+	var slider := HSlider.new()
+	slider.min_value = 40.0
+	slider.max_value = 3000.0
 	slider.step = 1.0
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return slider
@@ -627,12 +786,16 @@ func _populate_screen_reference_options() -> void:
 		var mode_name := _get_screen_reference_mode_name(index)
 		_settings_screen_reference_option.add_item(mode_name, index)
 
-func _populate_island_mode_options() -> void:
-	if _settings_island_mode_option == null:
+func _populate_enhanced_graphics_options() -> void:
+	if _settings_enhanced_graphics_option == null:
 		return
-	_settings_island_mode_option.clear()
-	for index in range(ISLAND_MODE_NAMES.size()):
-		_settings_island_mode_option.add_item(ISLAND_MODE_NAMES[index], index)
+	_settings_enhanced_graphics_option.clear()
+	var count := 3
+	if _view_switcher != null and _view_switcher.has_method("get_enhanced_graphics_quality_count"):
+		count = _variant_to_int(_view_switcher.call("get_enhanced_graphics_quality_count"), count)
+	for index in range(count):
+		var quality_name := _get_enhanced_graphics_quality_name(index)
+		_settings_enhanced_graphics_option.add_item(quality_name, index)
 
 func _get_screen_reference_mode_name(mode: int) -> String:
 	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_name"):
@@ -648,6 +811,17 @@ func _get_screen_reference_mode_name(mode: int) -> String:
 			return "Crosshair"
 		_:
 			return "Thirds Grid"
+
+func _get_enhanced_graphics_quality_name(quality: int) -> String:
+	if _view_switcher != null and _view_switcher.has_method("get_enhanced_graphics_quality_name"):
+		return str(_view_switcher.call("get_enhanced_graphics_quality_name", quality))
+	match quality:
+		1:
+			return "Low"
+		2:
+			return "High"
+		_:
+			return "Off"
 
 func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_panel == null or (not force and not _settings_panel.visible):
@@ -672,6 +846,54 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 		if _settings_scale_mode_option.selected != mode:
 			_settings_scale_mode_option.select(mode)
 
+	if _view_switcher != null:
+		var viewbox_scale: float = 1.0
+		if _view_switcher.has_method("get_view_scale_multiplier"):
+			viewbox_scale = float(_view_switcher.call("get_view_scale_multiplier"))
+		else:
+			viewbox_scale = float(_view_switcher.get("view_scale_multiplier"))
+		var viewbox_percent: float = viewbox_scale * 100.0
+		if _settings_viewbox_scale_slider != null and not _settings_viewbox_scale_slider.has_focus():
+			_settings_viewbox_scale_slider.value = viewbox_percent
+		if _settings_viewbox_scale_label != null:
+			_settings_viewbox_scale_label.text = "Viewbox Size: %.0f%%" % [viewbox_percent]
+
+		var ball_size: float = 1.0
+		if _view_switcher.has_method("get_current_view_ball_size_multiplier"):
+			ball_size = float(_view_switcher.call("get_current_view_ball_size_multiplier"))
+		var ball_percent: float = ball_size * 100.0
+		if _settings_ball_size_slider != null and not _settings_ball_size_slider.has_focus():
+			_settings_ball_size_slider.value = ball_percent
+		if _settings_ball_size_label != null:
+			_settings_ball_size_label.text = "Ball Size: %.0f%%" % [ball_percent]
+
+		var press_depth: float = 0.32
+		if _view_switcher.has_method("get_current_view_press_depth_meters"):
+			press_depth = float(_view_switcher.call("get_current_view_press_depth_meters"))
+		var press_depth_mm: float = press_depth * 1000.0
+		if _settings_press_depth_slider != null and not _settings_press_depth_slider.has_focus():
+			_settings_press_depth_slider.value = press_depth_mm
+		if _settings_press_depth_label != null:
+			_settings_press_depth_label.text = "Press Depth: %.0f mm" % [press_depth_mm]
+
+		var pop_height: float = 0.9
+		if _view_switcher.has_method("get_current_view_pop_height_multiplier"):
+			pop_height = float(_view_switcher.call("get_current_view_pop_height_multiplier"))
+		var pop_height_percent: float = pop_height * 100.0
+		if _settings_pop_height_slider != null and not _settings_pop_height_slider.has_focus():
+			_settings_pop_height_slider.value = pop_height_percent
+		if _settings_pop_height_label != null:
+			_settings_pop_height_label.text = "Pop Height: %.0f%%" % [pop_height_percent]
+
+		var tile_size: float = 0.16
+		if _view_switcher.has_method("get_current_view_tile_size_meters"):
+			tile_size = float(_view_switcher.call("get_current_view_tile_size_meters"))
+		var tile_size_mm: float = tile_size * 1000.0
+		if _settings_tile_size_slider != null and not _settings_tile_size_slider.has_focus():
+			_settings_tile_size_slider.value = tile_size_mm
+		if _settings_tile_size_label != null:
+			_settings_tile_size_label.text = "Cube Size: %.0f mm" % [tile_size_mm]
+
 	if _settings_black_fill_check != null and _view_switcher != null:
 		var enabled := true
 		if _view_switcher.has_method("is_black_fill_enabled"):
@@ -679,6 +901,21 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 		else:
 			enabled = bool(_view_switcher.get("black_fill_enabled"))
 		_settings_black_fill_check.button_pressed = enabled
+
+	if _settings_enhanced_graphics_option != null and _view_switcher != null:
+		var enhanced_quality := 0
+		if _view_switcher.has_method("get_enhanced_graphics_quality"):
+			enhanced_quality = _variant_to_int(_view_switcher.call("get_enhanced_graphics_quality"), enhanced_quality)
+		elif _view_switcher.has_method("is_current_view_cinematic_lighting_enabled"):
+			enhanced_quality = 2 if bool(_view_switcher.call("is_current_view_cinematic_lighting_enabled")) else 0
+		if _settings_enhanced_graphics_option.selected != enhanced_quality:
+			_settings_enhanced_graphics_option.select(enhanced_quality)
+
+	if _settings_camera_reactive_lighting_check != null:
+		_settings_camera_reactive_lighting_check.button_pressed = camera_reactive_lighting_enabled
+
+	if _settings_inertial_fallback_check != null:
+		_settings_inertial_fallback_check.button_pressed = inertial_tracking_loss_fallback_enabled
 
 	if _settings_screen_reference_option != null and _view_switcher != null:
 		var reference_mode := 0
@@ -688,9 +925,6 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 			reference_mode = _variant_to_int(_view_switcher.get("screen_plane_reference_mode"), reference_mode)
 		if _settings_screen_reference_option.selected != reference_mode:
 			_settings_screen_reference_option.select(reference_mode)
-
-	if _settings_island_mode_option != null and _settings_island_mode_option.selected != island_adjustment_mode:
-		_settings_island_mode_option.select(island_adjustment_mode)
 
 func _on_offset_slider_changed(value: float, axis: String) -> void:
 	match axis:
@@ -708,6 +942,45 @@ func _on_scale_mode_selected(index: int) -> void:
 	else:
 		_view_switcher.set("view_scale_mode", index)
 
+func _on_viewbox_scale_slider_changed(value: float) -> void:
+	if _view_switcher == null:
+		return
+	var multiplier: float = clampf(value / 100.0, 0.5, 1.2)
+	if _view_switcher.has_method("set_view_scale_multiplier"):
+		_view_switcher.call("set_view_scale_multiplier", multiplier)
+	else:
+		_view_switcher.set("view_scale_multiplier", multiplier)
+	_sync_settings_values_from_runtime(true)
+
+func _on_ball_size_slider_changed(value: float) -> void:
+	if _view_switcher == null:
+		return
+	var multiplier: float = clampf(value / 100.0, 0.5, 2.5)
+	if _view_switcher.has_method("set_current_view_ball_size_multiplier"):
+		_view_switcher.call("set_current_view_ball_size_multiplier", multiplier)
+	_sync_settings_values_from_runtime(true)
+
+func _on_press_depth_slider_changed(value: float) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_current_view_press_depth_meters"):
+		_view_switcher.call("set_current_view_press_depth_meters", value / 1000.0)
+	_sync_settings_values_from_runtime(true)
+
+func _on_pop_height_slider_changed(value: float) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_current_view_pop_height_multiplier"):
+		_view_switcher.call("set_current_view_pop_height_multiplier", value / 100.0)
+	_sync_settings_values_from_runtime(true)
+
+func _on_tile_size_slider_changed(value: float) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_current_view_tile_size_meters"):
+		_view_switcher.call("set_current_view_tile_size_meters", value / 1000.0)
+	_sync_settings_values_from_runtime(true)
+
 func _on_black_fill_toggled(enabled: bool) -> void:
 	if _view_switcher == null:
 		return
@@ -716,6 +989,26 @@ func _on_black_fill_toggled(enabled: bool) -> void:
 	else:
 		_view_switcher.set("black_fill_enabled", enabled)
 
+func _on_enhanced_graphics_selected(index: int) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_enhanced_graphics_quality"):
+		_view_switcher.call("set_enhanced_graphics_quality", index)
+	elif _view_switcher.has_method("set_current_view_cinematic_lighting_enabled"):
+		_view_switcher.call("set_current_view_cinematic_lighting_enabled", index > 0)
+	_sync_settings_values_from_runtime(true)
+
+func _on_camera_reactive_lighting_toggled(enabled: bool) -> void:
+	camera_reactive_lighting_enabled = enabled
+	_sync_camera_reactive_lighting()
+	_sync_settings_values_from_runtime(true)
+
+func _on_inertial_fallback_toggled(enabled: bool) -> void:
+	inertial_tracking_loss_fallback_enabled = enabled
+	if not enabled:
+		_has_inertial_tracking_anchor = false
+	_sync_settings_values_from_runtime(true)
+
 func _on_screen_reference_mode_selected(index: int) -> void:
 	if _view_switcher == null:
 		return
@@ -723,11 +1016,6 @@ func _on_screen_reference_mode_selected(index: int) -> void:
 		_view_switcher.call("set_screen_plane_reference_mode", index)
 	else:
 		_view_switcher.set("screen_plane_reference_mode", index)
-
-func _on_island_mode_selected(index: int) -> void:
-	island_adjustment_mode = clampi(index, ISLAND_MODE_OFF, ISLAND_MODE_TOP_WALL)
-	_apply_island_adjustment()
-	_sync_settings_values_from_runtime(true)
 
 func _on_zero_manual_offset_pressed() -> void:
 	manual_front_camera_origin_offset_meters = Vector3.ZERO
@@ -760,6 +1048,43 @@ func _apply_touch_calibration_drag(pixel_delta: Vector2) -> void:
 		-maximum_manual_offset_meters,
 		maximum_manual_offset_meters
 	)
+
+func _sync_camera_reactive_lighting() -> void:
+	_sync_native_camera_light_estimation_enabled(false)
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_camera_reactive_lighting_enabled"):
+		_view_switcher.call("set_camera_reactive_lighting_enabled", camera_reactive_lighting_enabled)
+	elif _view_switcher.has_method("set"):
+		_view_switcher.set("camera_reactive_lighting_enabled", camera_reactive_lighting_enabled)
+	if not camera_reactive_lighting_enabled:
+		return
+	var sample := _get_camera_light_estimate()
+	if sample.is_empty():
+		return
+	if _view_switcher.has_method("set_camera_reactive_lighting_sample"):
+		_view_switcher.call("set_camera_reactive_lighting_sample", sample)
+
+func _sync_native_camera_light_estimation_enabled(force: bool) -> void:
+	if not force and _last_native_camera_light_enabled == camera_reactive_lighting_enabled:
+		return
+	_last_native_camera_light_enabled = camera_reactive_lighting_enabled
+	if not Engine.has_singleton("IPhoneARKitHeadTracker"):
+		return
+	var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
+	if tracker != null and tracker.has_method("set_camera_light_estimation_enabled"):
+		tracker.call("set_camera_light_estimation_enabled", camera_reactive_lighting_enabled)
+
+func _get_camera_light_estimate() -> Dictionary:
+	if not Engine.has_singleton("IPhoneARKitHeadTracker"):
+		return {}
+	var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
+	if tracker == null or not tracker.has_method("get_camera_light_estimate"):
+		return {}
+	var raw_sample: Variant = tracker.call("get_camera_light_estimate")
+	if raw_sample is Dictionary:
+		return raw_sample
+	return {}
 
 func _update_head_plane_debug_dot(local_head_position: Vector3) -> void:
 	if _head_plane_debug_dot == null:
@@ -825,6 +1150,12 @@ func _update_status_label(provider_active: bool, local_head_position: Vector3) -
 			state_text = "tracking" if provider_active else "waiting"
 			if status.has("message"):
 				detail_text = " | " + str(status["message"])
+	if not provider_active and inertial_tracking_loss_fallback_enabled and _has_inertial_tracking_anchor:
+		source = "ios-inertial"
+		state_text = "tracking-lost"
+		detail_text += " | inertial fallback"
+	if camera_reactive_lighting_enabled:
+		detail_text += " | cam-light"
 	var estimated_camera_offset := _get_estimated_front_camera_origin_offset_meters()
 	var camera_offset := _get_front_camera_origin_offset_meters()
 	_status_label.text = "%s | %s | %s | %.2f %.2f %.2f m | base %.0f %.0fmm | tweak %.0f %.0fmm | camOff %.0f %.0fmm | %s | %s%s" % [
@@ -860,14 +1191,13 @@ func _get_screen_status_text() -> String:
 	if profile_name == "":
 		profile_name = "screen"
 
-	return "%s %dx%d %.0fx%.0fmm %.1fin island:%s" % [
+	return "%s %dx%d %.0fx%.0fmm %.1fin" % [
 		profile_name,
 		runtime_size.x,
 		runtime_size.y,
 		_screen_scaler.physical_width_meters * 1000.0,
 		_screen_scaler.physical_height_meters * 1000.0,
 		_screen_scaler.screen_diagonal_inches,
-		ISLAND_MODE_NAMES[island_adjustment_mode],
 	]
 
 func _get_view_status_text() -> String:

@@ -6,7 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://bhp5tdut7rfxj" path="res://Models/Outside/Tree.tscn" id="4_iqpf7"]
 [ext_resource type="LightmapGIData" uid="uid://c8xalx0q85dih" path="res://Scenes/Outside.lmbake" id="5_ced55"]
 [ext_resource type="ArrayMesh" uid="uid://ifblllssjegs" path="res://Models/Distant/Meshes/Distant_Tree_Proxy_Group.res" id="5_qxivf"]
-[ext_resource type="Script" path="res://Scripts/DestroyOnLoad.gd" id="6_lfii7"]
+[ext_resource type="Script" path="res://Views/Spaceship/Scripts/DestroyOnLoad.gd" id="6_lfii7"]
 [ext_resource type="PackedScene" uid="uid://d3lcvmcetlpw1" path="res://Models/Outside/ferns_Low.tscn" id="6_q0ult"]
 [ext_resource type="PackedScene" uid="uid://df0hr7scc3bry" path="res://Models/Outside/fern_Low.tscn" id="7_gwb4l"]
 [ext_resource type="PackedScene" uid="uid://dxdi4u4735wnl" path="res://Models/Objects/fern.tscn" id="8_xbypw"]

@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://df3v8ucyursk8"]
 
 [ext_resource type="Environment" uid="uid://3mjh4eonnhh3" path="res://Scenes/Environment/environment.tres" id="1_lslde"]
-[ext_resource type="Script" path="res://Scripts/ReflecttionProbeUpdate.gd" id="2_jh760"]
+[ext_resource type="Script" path="res://Views/Spaceship/Scripts/ReflecttionProbeUpdate.gd" id="2_jh760"]
 
 [node name="WorldEnvironment" type="WorldEnvironment"]
 environment = ExtResource("1_lslde")

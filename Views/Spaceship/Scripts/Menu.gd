@@ -1,7 +1,7 @@
 extends Control
 
 @onready var fps_label =  get_node("../FPSLabel")
-@onready var recolor_material : ShaderMaterial = preload("res://Materials/Utrim_SpaceShip/utrim_spaceship_recolored.tres")
+@onready var recolor_material : ShaderMaterial = preload("res://Views/Spaceship/Materials/Utrim_SpaceShip/utrim_spaceship_recolored.tres")
 #@onready var environment = 
 
 func _ready():

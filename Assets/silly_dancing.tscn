@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://iyk13aa885oo"]
 
 [ext_resource type="PackedScene" uid="uid://bml7sjqendt6p" path="res://Assets/Silly Dancing.fbx" id="1_34ytt"]
+[ext_resource type="Script" path="res://Assets/silly_dancing_loop.gd" id="2_loop"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_34ytt"]
 albedo_color = Color(0.33877435, 0.6935014, 0.3661482, 1)
@@ -10,6 +11,7 @@ clearcoat_enabled = true
 clearcoat_roughness = 1.0
 
 [node name="Silly Dancing" unique_id=1605361915 instance=ExtResource("1_34ytt")]
+script = ExtResource("2_loop")
 
 [node name="Skeleton3D" parent="." index="0" unique_id=429346977]
 bones/0/position = Vector3(-0.008635726, 0.91014516, 0.020898953)

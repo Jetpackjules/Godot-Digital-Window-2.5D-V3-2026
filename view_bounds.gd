@@ -70,7 +70,7 @@ class_name ViewBounds
 		_update_preview(true)
 
 @export_group("Runtime Mask")
-@export var black_fill_enabled: bool = false :
+@export var black_fill_enabled: bool = true :
 	set(value):
 		black_fill_enabled = value
 		_update_preview(true)

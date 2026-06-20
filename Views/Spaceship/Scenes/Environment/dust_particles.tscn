@@ -1,6 +1,6 @@
 [gd_scene load_steps=9 format=3 uid="uid://x4wqam8k4bq3"]
 
-[ext_resource type="Texture2D" uid="uid://dbvubbitkwl1q" path="res://Materials/Effects/PointLightTransparent.png" id="1_yuav8"]
+[ext_resource type="Texture2D" uid="uid://dbvubbitkwl1q" path="res://Views/Spaceship/Materials/Effects/PointLightTransparent.png" id="1_yuav8"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_hqgbs"]
 transparency = 1

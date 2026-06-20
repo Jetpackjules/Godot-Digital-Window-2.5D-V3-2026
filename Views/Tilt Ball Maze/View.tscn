@@ -1,0 +1,33 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Views/Tilt Ball Box/tilt_ball_box.gd" id="1_tilt_box"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="2_view_bounds"]
+
+[node name="Tilt Ball Maze" type="Node3D"]
+script = ExtResource("1_tilt_box")
+play_mode = 1
+box_depth_meters = 0.75
+screen_corner_radius_meters = 0.36
+screen_corner_radius_ratio_of_bounds_height = 0.17
+ball_count = 1
+ball_radius_ratio_of_bounds_height = 0.07
+ball_surface_friction = 0.58
+maze_columns = 5
+maze_rows = 9
+maze_wall_thickness_meters = 0.055
+maze_cell_clearance_ball_diameters = 1.35
+
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("2_view_bounds")
+bounds_size_mode = 1
+lock_authored_aspect_ratio = true
+locked_aspect_width = 16.0
+locked_aspect_height = 9.0
+bounds_width_meters = 8.0
+bounds_height_meters = 4.5
+show_preview_in_game = false
+preview_thickness_meters = 0.035
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.86273, 0.357407, -0.357407, -0.0789899, 0.793353, 0.603681, 0.49939, -0.492564, 0.712862, 0.0, 0.9, 1.2)
+light_energy = 1.8

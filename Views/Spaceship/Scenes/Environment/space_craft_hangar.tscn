@@ -1,7 +1,7 @@
 [gd_scene load_steps=19 format=3 uid="uid://ccjmuj0wg0hgi"]
 
 [ext_resource type="PackedScene" uid="uid://yjw8md4q5vju" path="res://Models/SpaceCraftHangar.glb" id="1_nrulx"]
-[ext_resource type="Material" uid="uid://six1wvwnxaxk" path="res://Materials/Utrim_Concrete/utrim_concrete_recolored.tres" id="2_jexqu"]
+[ext_resource type="Material" uid="uid://six1wvwnxaxk" path="res://Views/Spaceship/Materials/Utrim_Concrete/utrim_concrete_recolored.tres" id="2_jexqu"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_enpou"]
 size = Vector3(40, 1, 30)

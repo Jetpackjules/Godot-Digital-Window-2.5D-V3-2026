@@ -1,6 +1,6 @@
 [gd_scene load_steps=8 format=3 uid="uid://dncguvff05q2p"]
 
-[ext_resource type="Material" uid="uid://six1wvwnxaxk" path="res://Materials/Utrim_Concrete/utrim_concrete_recolored.tres" id="1_yvnyp"]
+[ext_resource type="Material" uid="uid://six1wvwnxaxk" path="res://Views/Spaceship/Materials/Utrim_Concrete/utrim_concrete_recolored.tres" id="1_yvnyp"]
 [ext_resource type="ArrayMesh" uid="uid://bklbq3pyq5km5" path="res://Models/Objects/Meshes/Objects_Doorway.res" id="2_slxtx"]
 [ext_resource type="ArrayMesh" uid="uid://dyps1vjc0wpvd" path="res://Models/Objects/Meshes/Objects_DoorLeft.res" id="3_btaq8"]
 [ext_resource type="ArrayMesh" uid="uid://ymuf00ms4fcw" path="res://Models/Objects/Meshes/Objects_DoorRight.res" id="4_l8r4h"]

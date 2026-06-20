@@ -21,6 +21,8 @@ is_tracking() -> bool
 get_screen_local_head_position_meters() -> Vector3
 get_tracking_status() -> Dictionary
 reset_tracking_reference() -> void
+play_haptic_impact(intensity: float) -> void
+play_haptic_selection() -> void
 ```
 
 ## Native Build Note

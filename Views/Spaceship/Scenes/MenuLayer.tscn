@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://b1wrv31em1a0m"]
 
-[ext_resource type="Script" path="res://Scripts/Menu.gd" id="1_o8wkt"]
+[ext_resource type="Script" path="res://Views/Spaceship/Scripts/Menu.gd" id="1_o8wkt"]
 
 [node name="MenuLayer" type="CanvasLayer"]
 process_mode = 3

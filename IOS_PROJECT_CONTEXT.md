@@ -135,6 +135,8 @@ Loaded content scenes define an authored `ViewBounds` rectangle. `view_switcher.
 
 When `IPhoneWindow.tscn` runs on desktop for debugging, `iphone_window_runtime.gd` can resize the desktop game window to the saved phone aspect. Without that, a portrait phone plane cannot be flush with a landscape desktop viewport.
 
+Important implementation memo: the iPhone app is held and rendered in landscape. Screen-space interactions and inertial fallback must be interpreted in landscape viewport/screen axes (`+X` right across the visible window, `+Y` up the visible window), not raw portrait device axes. For literal touch-on-glass interactions, prefer mapping the touch pixel directly into `ViewBounds` screen space instead of casting through an off-axis camera ray.
+
 The future native ARKit plugin should do the camera-to-screen conversion before exposing the pose to GDScript. That keeps the rest of the Godot code independent from ARKit camera-space details.
 
 ## Native ARKit Plugin Plan

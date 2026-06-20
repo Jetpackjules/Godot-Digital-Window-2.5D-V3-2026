@@ -1,16 +1,16 @@
 [gd_scene load_steps=15 format=3 uid="uid://xf5syq4i2ahe"]
 
 [ext_resource type="ArrayMesh" uid="uid://okqya5borqia" path="res://Models/Objects/Meshes/Objects_Arcade.res" id="1_wlhet"]
-[ext_resource type="Script" path="res://Scripts/Arcade.gd" id="2_kgm2f"]
+[ext_resource type="Script" path="res://Views/Spaceship/Scripts/Arcade.gd" id="2_kgm2f"]
 [ext_resource type="ArrayMesh" uid="uid://dallle0bdd4fs" path="res://Models/Objects/Meshes/Objects_ArcadeButton.res" id="2_n3eww"]
 [ext_resource type="ArrayMesh" uid="uid://cgwix00ge1wxb" path="res://Models/Objects/Meshes/Objects_ArcadeButtonInner.res" id="3_cms1j"]
 [ext_resource type="ArrayMesh" uid="uid://4lvtfsit5rlx" path="res://Models/Objects/Meshes/Objects_ArcadeStick.res" id="4_fjc3r"]
 [ext_resource type="ArrayMesh" uid="uid://cvis804tjemgp" path="res://Models/Objects/Meshes/Objects_ArcadeStickInner.res" id="5_l4d6i"]
 [ext_resource type="ArrayMesh" uid="uid://b7efhbvt2im87" path="res://Models/Objects/Meshes/Objects_ArcadeStickers.res" id="6_jvhdm"]
-[ext_resource type="Material" uid="uid://dfvvdnmsgvk86" path="res://Materials/Misc/ArcadeStickersMaterial.tres" id="6_wdxmk"]
-[ext_resource type="VideoStream" path="res://Materials/Videos/GameLoop.ogv" id="8_1avck"]
+[ext_resource type="Material" uid="uid://dfvvdnmsgvk86" path="res://Views/Spaceship/Materials/Misc/ArcadeStickersMaterial.tres" id="6_wdxmk"]
+[ext_resource type="VideoStream" path="res://Views/Spaceship/Materials/Videos/GameLoop.ogv" id="8_1avck"]
 [ext_resource type="ArrayMesh" uid="uid://cp6ip6cm4hr3n" path="res://Models/Objects/Meshes/Objects_ArcadeScreenRound.res" id="9_s0lru"]
-[ext_resource type="Texture2D" uid="uid://c6r6pnmsu1ugh" path="res://Materials/Misc/Grunge.png" id="10_2ltbx"]
+[ext_resource type="Texture2D" uid="uid://c6r6pnmsu1ugh" path="res://Views/Spaceship/Materials/Misc/Grunge.png" id="10_2ltbx"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_7v6jg"]
 resource_local_to_scene = true

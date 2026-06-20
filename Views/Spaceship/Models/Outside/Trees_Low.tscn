@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://c3e6iin7rhno7"]
 
-[ext_resource type="Material" uid="uid://cnnemxdoblqc7" path="res://Materials/Vegetation/Vegetation.tres" id="1_aq7og"]
+[ext_resource type="Material" uid="uid://cnnemxdoblqc7" path="res://Views/Spaceship/Materials/Vegetation/Vegetation.tres" id="1_aq7og"]
 [ext_resource type="ArrayMesh" uid="uid://5res42ufn80h" path="res://Models/Outside/Meshes/Outside_Tree_Low.res" id="2_wggee"]
 
 [node name="Trees_Low" type="Node3D"]

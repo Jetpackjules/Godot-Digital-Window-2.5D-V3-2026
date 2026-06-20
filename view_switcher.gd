@@ -2,12 +2,18 @@
 extends Node3D
 
 @export var fallback_directional_light_path: NodePath
+@export var fallback_world_environment_path: NodePath
 @export var screen_scaling_path: NodePath = NodePath("../ScreenScaling")
 @export var window_center_path: NodePath
 @export var current_view_scene: PackedScene
 @export var explicit_view_scene_paths: PackedStringArray = []
 @export var log_view_loads: bool = true
 @export_enum("Fit Height", "Cover Screen", "Contain Screen", "Fit Width", "No Scaling") var view_scale_mode: int = 0
+@export_range(0.5, 1.2, 0.005) var view_scale_multiplier: float = 1.0 :
+	set(value):
+		view_scale_multiplier = clampf(value, 0.5, 1.2)
+		_last_applied_view_scale = -1.0
+		_apply_view_scale(true)
 @export var black_fill_enabled: bool = true :
 	set(value):
 		black_fill_enabled = value
@@ -31,6 +37,10 @@ extends Node3D
 	set(value):
 		screen_plane_reference_thickness_ratio = value
 		_sync_screen_plane_reference()
+@export_range(0.0, 0.25, 0.005) var screen_plane_reference_combined_coverage_ratio: float = 0.12 :
+	set(value):
+		screen_plane_reference_combined_coverage_ratio = value
+		_sync_screen_plane_reference()
 @export_range(0.0001, 0.05, 0.0001) var screen_plane_reference_minimum_thickness_meters: float = 0.002 :
 	set(value):
 		screen_plane_reference_minimum_thickness_meters = value
@@ -41,6 +51,15 @@ extends Node3D
 		_sync_screen_plane_reference()
 @export var desktop_screen_plane_reference_cycle_enabled: bool = true
 @export var desktop_screen_plane_reference_cycle_key: Key = KEY_V
+@export_group("Enhanced Graphics")
+@export_enum("Off", "Low", "High", "Insane") var enhanced_graphics_quality: int = 0 :
+	set(value):
+		enhanced_graphics_quality = clampi(value, ENHANCED_GRAPHICS_OFF, ENHANCED_GRAPHICS_INSANE)
+		_sync_enhanced_graphics()
+@export var camera_reactive_lighting_enabled: bool = false :
+	set(value):
+		camera_reactive_lighting_enabled = value
+		_sync_current_view_camera_reactive_lighting()
 
 const AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS := 0.3299948403966754
 const VIEW_SCALE_FIT_HEIGHT := 0
@@ -61,6 +80,10 @@ const SCREEN_REFERENCE_MODE_VERTICAL_BARS := 1
 const SCREEN_REFERENCE_MODE_EDGE_FRAME := 2
 const SCREEN_REFERENCE_MODE_CROSSHAIR := 3
 const SCREEN_REFERENCE_MODE_THIRDS_GRID := 4
+const ENHANCED_GRAPHICS_OFF := 0
+const ENHANCED_GRAPHICS_LOW := 1
+const ENHANCED_GRAPHICS_HIGH := 2
+const ENHANCED_GRAPHICS_INSANE := 3
 const SCREEN_REFERENCE_MODE_NAMES := [
 	"Off",
 	"Vertical Bars",
@@ -68,6 +91,16 @@ const SCREEN_REFERENCE_MODE_NAMES := [
 	"Crosshair",
 	"Thirds Grid",
 ]
+const ENHANCED_GRAPHICS_QUALITY_NAMES := [
+	"Off",
+	"Low",
+	"High",
+	"Insane",
+]
+const _ENHANCED_GRAPHICS_ENVIRONMENT_NAME := "EnhancedGraphicsEnvironment"
+const _ENHANCED_GRAPHICS_KEY_LIGHT_NAME := "EnhancedGraphicsKeyLight"
+const _ENHANCED_GRAPHICS_FILL_LIGHT_NAME := "EnhancedGraphicsFillLight"
+const _ENHANCED_GRAPHICS_RIM_LIGHT_NAME := "EnhancedGraphicsRimLight"
 
 var current_view_name: String = "":
 	set(value):
@@ -80,6 +113,8 @@ var _available_views: Array[String] = []
 var _available_view_scene_paths: Dictionary = {}
 var _instantiated_view: Node3D
 var _fallback_directional_light: DirectionalLight3D
+var _fallback_world_environment: WorldEnvironment
+var _fallback_world_environment_resource: Environment
 var _screen_scaler: ScreenScaling
 var _window_center: Node3D
 var _instantiated_view_base_scale: Vector3 = Vector3.ONE
@@ -94,11 +129,17 @@ var _screen_plane_reference: Node3D
 var _screen_plane_reference_script: Script
 var _screen_plane_reference_load_failed: bool = false
 var _has_logged_available_views: bool = false
+var _enhanced_environment: WorldEnvironment
+var _enhanced_key_light: DirectionalLight3D
+var _enhanced_fill_light: DirectionalLight3D
+var _enhanced_rim_light: DirectionalLight3D
+var _camera_reactive_lighting_sample: Dictionary = {}
 
 func _ready() -> void:
 	_refresh_views()
 	_log_available_views_once()
 	_resolve_fallback_light()
+	_resolve_fallback_world_environment()
 	_resolve_screen_scaler()
 	_resolve_window_center()
 	set_process(true)
@@ -114,8 +155,10 @@ func _ready() -> void:
 		_sync_view_bounds_black_fill()
 		_sync_view_bounds_preview()
 		_sync_fallback_directional_light()
+		_sync_fallback_world_environment()
 		_apply_view_scale(true)
 		_sync_screen_plane_reference()
+		_sync_enhanced_graphics()
 		return
 
 	if current_view_name == "" and _available_views.size() > 0:
@@ -129,10 +172,11 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
-	_resolve_screen_scaler()
-	_resolve_window_center()
+	if _screen_scaler == null:
+		_resolve_screen_scaler()
+	if _window_center == null:
+		_resolve_window_center()
 	_apply_view_scale(false)
-	_sync_screen_plane_reference()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if Engine.is_editor_hint() or OS.has_feature("ios"):
@@ -315,6 +359,9 @@ func _instantiate_view(packed_scene: PackedScene) -> void:
 		_apply_view_scale(true)
 	_sync_screen_plane_reference()
 	_sync_fallback_directional_light()
+	_sync_enhanced_graphics()
+	_sync_current_view_camera_reactive_lighting()
+	_sync_fallback_world_environment()
 
 func set_view_scale_mode(mode: int) -> void:
 	view_scale_mode = clampi(mode, VIEW_SCALE_FIT_HEIGHT, VIEW_SCALE_NO_SCALING)
@@ -331,6 +378,198 @@ func get_view_scale_mode_name(mode: int) -> String:
 	if mode >= 0 and mode < VIEW_SCALE_MODE_NAMES.size():
 		return VIEW_SCALE_MODE_NAMES[mode]
 	return "Unknown"
+
+func set_view_scale_multiplier(multiplier: float) -> void:
+	view_scale_multiplier = clampf(multiplier, 0.5, 1.2)
+	_last_applied_view_scale = -1.0
+	_apply_view_scale(true)
+
+func get_view_scale_multiplier() -> float:
+	return view_scale_multiplier
+
+func set_current_view_ball_size_multiplier(multiplier: float) -> void:
+	if _instantiated_view == null:
+		return
+	if _instantiated_view.has_method("set_ball_size_multiplier"):
+		_instantiated_view.call("set_ball_size_multiplier", multiplier)
+	elif _node_has_property(_instantiated_view, "ball_size_multiplier"):
+		_instantiated_view.set("ball_size_multiplier", multiplier)
+
+func get_current_view_ball_size_multiplier() -> float:
+	if _instantiated_view == null:
+		return 1.0
+	if _instantiated_view.has_method("get_ball_size_multiplier"):
+		return float(_instantiated_view.call("get_ball_size_multiplier"))
+	if _node_has_property(_instantiated_view, "ball_size_multiplier"):
+		return float(_instantiated_view.get("ball_size_multiplier"))
+	return 1.0
+
+func set_current_view_cinematic_lighting_enabled(enabled: bool) -> void:
+	set_enhanced_graphics_quality(ENHANCED_GRAPHICS_HIGH if enabled else ENHANCED_GRAPHICS_OFF)
+
+func is_current_view_cinematic_lighting_enabled() -> bool:
+	return enhanced_graphics_quality != ENHANCED_GRAPHICS_OFF
+
+func set_enhanced_graphics_quality(quality: int) -> void:
+	enhanced_graphics_quality = clampi(quality, ENHANCED_GRAPHICS_OFF, ENHANCED_GRAPHICS_INSANE)
+	_sync_enhanced_graphics()
+
+func get_enhanced_graphics_quality() -> int:
+	return enhanced_graphics_quality
+
+func get_enhanced_graphics_quality_count() -> int:
+	return ENHANCED_GRAPHICS_QUALITY_NAMES.size()
+
+func get_enhanced_graphics_quality_name(quality: int) -> String:
+	if quality >= 0 and quality < ENHANCED_GRAPHICS_QUALITY_NAMES.size():
+		return ENHANCED_GRAPHICS_QUALITY_NAMES[quality]
+	return ENHANCED_GRAPHICS_QUALITY_NAMES[ENHANCED_GRAPHICS_OFF]
+
+func set_camera_reactive_lighting_enabled(enabled: bool) -> void:
+	camera_reactive_lighting_enabled = enabled
+	_sync_current_view_camera_reactive_lighting()
+
+func is_camera_reactive_lighting_enabled() -> bool:
+	return camera_reactive_lighting_enabled
+
+func set_camera_reactive_lighting_sample(sample: Dictionary) -> void:
+	_camera_reactive_lighting_sample = sample
+	_sync_current_view_camera_reactive_lighting()
+
+func _sync_current_view_camera_reactive_lighting() -> bool:
+	if _instantiated_view == null:
+		return false
+	var handled := false
+	if _instantiated_view.has_method("set_camera_reactive_lighting_enabled"):
+		_instantiated_view.call("set_camera_reactive_lighting_enabled", camera_reactive_lighting_enabled)
+		handled = true
+	elif _node_has_property(_instantiated_view, "camera_reactive_lighting_enabled"):
+		_instantiated_view.set("camera_reactive_lighting_enabled", camera_reactive_lighting_enabled)
+		handled = true
+	if camera_reactive_lighting_enabled and _instantiated_view.has_method("set_camera_reactive_lighting_sample"):
+		_instantiated_view.call("set_camera_reactive_lighting_sample", _camera_reactive_lighting_sample)
+		handled = true
+	return handled
+
+func _sync_current_view_enhanced_graphics() -> bool:
+	if _instantiated_view == null:
+		return false
+	var enabled := enhanced_graphics_quality != ENHANCED_GRAPHICS_OFF
+	if _instantiated_view.has_method("set_enhanced_graphics_quality"):
+		_instantiated_view.call("set_enhanced_graphics_quality", enhanced_graphics_quality)
+		return true
+	if _instantiated_view.has_method("set_cinematic_quality_lighting_enabled"):
+		_instantiated_view.call("set_cinematic_quality_lighting_enabled", enabled)
+		return true
+	if _node_has_property(_instantiated_view, "cinematic_quality_lighting_enabled"):
+		_instantiated_view.set("cinematic_quality_lighting_enabled", enabled)
+		return true
+	return false
+
+func _sync_enhanced_graphics() -> void:
+	if not is_inside_tree():
+		return
+	var current_view_handles_graphics := _sync_current_view_enhanced_graphics()
+	_ensure_enhanced_graphics_nodes()
+
+	var use_shared_rig := enhanced_graphics_quality != ENHANCED_GRAPHICS_OFF and not current_view_handles_graphics
+	_enhanced_key_light.visible = use_shared_rig
+	_enhanced_fill_light.visible = use_shared_rig
+	_enhanced_rim_light.visible = use_shared_rig
+	if not use_shared_rig:
+		_enhanced_environment.environment = null
+		_sync_fallback_directional_light()
+		_sync_fallback_world_environment()
+		return
+
+	var high_quality := enhanced_graphics_quality >= ENHANCED_GRAPHICS_HIGH
+	var insane_quality := enhanced_graphics_quality >= ENHANCED_GRAPHICS_INSANE
+	var environment := _enhanced_environment.environment
+	if environment == null:
+		environment = Environment.new()
+	_enhanced_environment.environment = environment
+	environment.background_mode = Environment.BG_CLEAR_COLOR
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color(0.9, 0.82, 0.72, 1.0)
+	environment.ambient_light_energy = 0.42 if insane_quality else (0.34 if high_quality else 0.24)
+	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	environment.tonemap_exposure = 0.8 if insane_quality else (0.86 if high_quality else 0.92)
+	environment.tonemap_white = 2.0 if insane_quality else (1.65 if high_quality else 1.35)
+	environment.ssao_enabled = true
+	environment.ssao_radius = 1.35 if insane_quality else (0.95 if high_quality else 0.65)
+	environment.ssao_intensity = 1.05 if insane_quality else (0.82 if high_quality else 0.45)
+	environment.ssil_enabled = high_quality
+	environment.ssil_radius = 1.15 if insane_quality else 0.8
+	environment.ssil_intensity = 0.44 if insane_quality else 0.28
+	environment.glow_enabled = high_quality
+	environment.glow_intensity = 0.03 if insane_quality else 0.018
+	environment.adjustment_enabled = true
+	environment.adjustment_brightness = 0.96 if insane_quality else 0.98
+	environment.adjustment_contrast = 1.08 if insane_quality else (1.04 if high_quality else 1.02)
+	environment.adjustment_saturation = 1.05 if insane_quality else (1.03 if high_quality else 1.01)
+
+	_enhanced_key_light.rotation_degrees = Vector3(-38.0, -28.0, -8.0)
+	_enhanced_key_light.light_color = Color(1.0, 0.9, 0.76, 1.0)
+	_enhanced_key_light.light_energy = 0.95 if insane_quality else (0.78 if high_quality else 0.42)
+	_enhanced_key_light.shadow_enabled = high_quality
+	_enhanced_key_light.shadow_opacity = 0.34 if insane_quality else 0.22
+	_enhanced_key_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	_enhanced_key_light.directional_shadow_blend_splits = true
+	_enhanced_key_light.directional_shadow_max_distance = 10.0
+
+	_enhanced_fill_light.rotation_degrees = Vector3(18.0, 142.0, 0.0)
+	_enhanced_fill_light.light_color = Color(0.66, 0.78, 1.0, 1.0)
+	_enhanced_fill_light.light_energy = 0.38 if insane_quality else (0.28 if high_quality else 0.16)
+	_enhanced_fill_light.shadow_enabled = false
+
+	_enhanced_rim_light.rotation_degrees = Vector3(-12.0, 42.0, 0.0)
+	_enhanced_rim_light.light_color = Color(1.0, 0.65, 0.42, 1.0)
+	_enhanced_rim_light.light_energy = 0.34 if insane_quality else (0.24 if high_quality else 0.12)
+	_enhanced_rim_light.shadow_enabled = false
+	_sync_fallback_directional_light()
+	_sync_fallback_world_environment()
+
+func _ensure_enhanced_graphics_nodes() -> void:
+	_enhanced_environment = get_node_or_null(_ENHANCED_GRAPHICS_ENVIRONMENT_NAME) as WorldEnvironment
+	if _enhanced_environment == null:
+		_enhanced_environment = WorldEnvironment.new()
+		_enhanced_environment.name = _ENHANCED_GRAPHICS_ENVIRONMENT_NAME
+		add_child(_enhanced_environment)
+		_set_scene_owner(_enhanced_environment)
+
+	_enhanced_key_light = get_node_or_null(_ENHANCED_GRAPHICS_KEY_LIGHT_NAME) as DirectionalLight3D
+	if _enhanced_key_light == null:
+		_enhanced_key_light = DirectionalLight3D.new()
+		_enhanced_key_light.name = _ENHANCED_GRAPHICS_KEY_LIGHT_NAME
+		add_child(_enhanced_key_light)
+		_set_scene_owner(_enhanced_key_light)
+
+	_enhanced_fill_light = get_node_or_null(_ENHANCED_GRAPHICS_FILL_LIGHT_NAME) as DirectionalLight3D
+	if _enhanced_fill_light == null:
+		_enhanced_fill_light = DirectionalLight3D.new()
+		_enhanced_fill_light.name = _ENHANCED_GRAPHICS_FILL_LIGHT_NAME
+		add_child(_enhanced_fill_light)
+		_set_scene_owner(_enhanced_fill_light)
+
+	_enhanced_rim_light = get_node_or_null(_ENHANCED_GRAPHICS_RIM_LIGHT_NAME) as DirectionalLight3D
+	if _enhanced_rim_light == null:
+		_enhanced_rim_light = DirectionalLight3D.new()
+		_enhanced_rim_light.name = _ENHANCED_GRAPHICS_RIM_LIGHT_NAME
+		add_child(_enhanced_rim_light)
+		_set_scene_owner(_enhanced_rim_light)
+
+func _set_scene_owner(node: Node) -> void:
+	if not Engine.is_editor_hint() or node == null:
+		return
+	var edited_root := get_tree().edited_scene_root
+	if edited_root != null and edited_root.is_ancestor_of(node):
+		node.owner = edited_root
+
+func _node_has_property(node: Object, property_name: String) -> bool:
+	for property in node.get_property_list():
+		if str(property.get("name", "")) == property_name:
+			return true
+	return false
 
 func set_screen_plane_reference_mode(mode: int) -> void:
 	screen_plane_reference_mode = clampi(mode, SCREEN_REFERENCE_MODE_OFF, SCREEN_REFERENCE_MODE_THIRDS_GRID)
@@ -377,6 +616,78 @@ func get_available_view_count() -> int:
 
 func get_view_debug_status() -> String:
 	return _last_view_load_status
+
+func current_view_wants_primary_touch_input() -> bool:
+	if _instantiated_view == null:
+		return false
+	if _instantiated_view.has_method("wants_primary_touch_input"):
+		return bool(_instantiated_view.call("wants_primary_touch_input"))
+	return false
+
+func current_view_uses_triple_tap_for_view_cycle() -> bool:
+	if _instantiated_view == null:
+		return false
+	if _instantiated_view.has_method("uses_triple_tap_for_view_cycle"):
+		return bool(_instantiated_view.call("uses_triple_tap_for_view_cycle"))
+	return false
+
+func current_view_handle_four_finger_tap() -> bool:
+	if _instantiated_view == null:
+		return false
+	if _instantiated_view.has_method("handle_four_finger_tap"):
+		return bool(_instantiated_view.call("handle_four_finger_tap"))
+	return false
+
+func set_current_view_press_depth_meters(depth_meters: float) -> void:
+	if _instantiated_view == null:
+		return
+	if _instantiated_view.has_method("set_press_depth_meters"):
+		_instantiated_view.call("set_press_depth_meters", depth_meters)
+	elif _node_has_property(_instantiated_view, "press_depth_meters"):
+		_instantiated_view.set("press_depth_meters", depth_meters)
+
+func get_current_view_press_depth_meters() -> float:
+	if _instantiated_view == null:
+		return 0.32
+	if _instantiated_view.has_method("get_press_depth_meters"):
+		return float(_instantiated_view.call("get_press_depth_meters"))
+	if _node_has_property(_instantiated_view, "press_depth_meters"):
+		return float(_instantiated_view.get("press_depth_meters"))
+	return 0.32
+
+func set_current_view_pop_height_multiplier(multiplier: float) -> void:
+	if _instantiated_view == null:
+		return
+	if _instantiated_view.has_method("set_pop_height_multiplier"):
+		_instantiated_view.call("set_pop_height_multiplier", multiplier)
+	elif _node_has_property(_instantiated_view, "release_pop_multiplier"):
+		_instantiated_view.set("release_pop_multiplier", multiplier)
+
+func get_current_view_pop_height_multiplier() -> float:
+	if _instantiated_view == null:
+		return 0.9
+	if _instantiated_view.has_method("get_pop_height_multiplier"):
+		return float(_instantiated_view.call("get_pop_height_multiplier"))
+	if _node_has_property(_instantiated_view, "release_pop_multiplier"):
+		return float(_instantiated_view.get("release_pop_multiplier"))
+	return 0.9
+
+func set_current_view_tile_size_meters(size_meters: float) -> void:
+	if _instantiated_view == null:
+		return
+	if _instantiated_view.has_method("set_target_tile_size_meters"):
+		_instantiated_view.call("set_target_tile_size_meters", size_meters)
+	elif _node_has_property(_instantiated_view, "target_tile_size_meters"):
+		_instantiated_view.set("target_tile_size_meters", size_meters)
+
+func get_current_view_tile_size_meters() -> float:
+	if _instantiated_view == null:
+		return 0.16
+	if _instantiated_view.has_method("get_target_tile_size_meters"):
+		return float(_instantiated_view.call("get_target_tile_size_meters"))
+	if _node_has_property(_instantiated_view, "target_tile_size_meters"):
+		return float(_instantiated_view.get("target_tile_size_meters"))
+	return 0.16
 
 func next_view() -> void:
 	_step_view(1)
@@ -443,6 +754,15 @@ func _resolve_fallback_light() -> void:
 		return
 	_fallback_directional_light = get_node_or_null(fallback_directional_light_path) as DirectionalLight3D
 
+func _resolve_fallback_world_environment() -> void:
+	if fallback_world_environment_path.is_empty():
+		_fallback_world_environment = null
+		_fallback_world_environment_resource = null
+		return
+	_fallback_world_environment = get_node_or_null(fallback_world_environment_path) as WorldEnvironment
+	if _fallback_world_environment != null and _fallback_world_environment_resource == null:
+		_fallback_world_environment_resource = _fallback_world_environment.environment
+
 func _resolve_screen_scaler() -> void:
 	if screen_scaling_path.is_empty():
 		_screen_scaler = null
@@ -483,7 +803,7 @@ func _apply_view_scale(force: bool) -> void:
 func _get_target_view_scale() -> float:
 	var target_scale := 1.0
 	if view_scale_mode == VIEW_SCALE_NO_SCALING:
-		return target_scale
+		return target_scale * view_scale_multiplier
 
 	var authored_size := _get_authored_window_size_meters()
 	if _screen_scaler != null and authored_size.x > 0.0 and authored_size.y > 0.0:
@@ -504,7 +824,7 @@ func _get_target_view_scale() -> float:
 					target_scale = width_scale
 				_:
 					target_scale = height_scale
-	return target_scale
+	return target_scale * view_scale_multiplier
 
 func _get_target_view_position(target_scale: float) -> Vector3:
 	var target_center := _get_target_window_center_position()
@@ -650,7 +970,8 @@ func _sync_screen_plane_reference() -> void:
 		screen_plane_reference_color,
 		screen_plane_reference_thickness_ratio,
 		screen_plane_reference_minimum_thickness_meters,
-		screen_plane_reference_depth_offset_meters
+		screen_plane_reference_depth_offset_meters,
+		screen_plane_reference_combined_coverage_ratio
 	)
 	_screen_plane_reference.call("set_reference_mode", screen_plane_reference_mode)
 	_sync_view_bounds_runtime_window_size()
@@ -688,7 +1009,16 @@ func _sync_fallback_directional_light() -> void:
 		return
 
 	var has_view_directional_light := _view_has_directional_light(_instantiated_view)
-	_fallback_directional_light.visible = not has_view_directional_light
+	_fallback_directional_light.visible = not has_view_directional_light and enhanced_graphics_quality == ENHANCED_GRAPHICS_OFF
+
+func _sync_fallback_world_environment() -> void:
+	_resolve_fallback_world_environment()
+	if _fallback_world_environment == null:
+		return
+
+	var has_view_world_environment := _view_has_world_environment(_instantiated_view)
+	var should_use_fallback_environment := not has_view_world_environment and enhanced_graphics_quality == ENHANCED_GRAPHICS_OFF
+	_fallback_world_environment.environment = _fallback_world_environment_resource if should_use_fallback_environment else null
 
 func _view_has_directional_light(node: Node) -> bool:
 	if node == null:
@@ -698,6 +1028,18 @@ func _view_has_directional_light(node: Node) -> bool:
 		if child is DirectionalLight3D:
 			return true
 		if _view_has_directional_light(child):
+			return true
+
+	return false
+
+func _view_has_world_environment(node: Node) -> bool:
+	if node == null:
+		return false
+
+	for child in node.get_children():
+		if child is WorldEnvironment:
+			return true
+		if _view_has_world_environment(child):
 			return true
 
 	return false

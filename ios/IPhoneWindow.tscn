@@ -12,16 +12,16 @@ shading_mode = 0
 albedo_color = Color(1, 0, 0, 1)
 
 [sub_resource type="QuadMesh" id="QuadMesh_yc44r"]
-size = Vector2(0.004, 0.1486022)
+size = Vector2(0.004, 0.08391949)
 
 [sub_resource type="QuadMesh" id="QuadMesh_kxyc3"]
-size = Vector2(0.004, 0.1486022)
+size = Vector2(0.004, 0.08391949)
 
 [sub_resource type="QuadMesh" id="QuadMesh_w5s7j"]
-size = Vector2(0.06489333, 0.004)
+size = Vector2(0.13496798, 0.004)
 
 [sub_resource type="QuadMesh" id="QuadMesh_65mgu"]
-size = Vector2(0.06489333, 0.004)
+size = Vector2(0.13496798, 0.004)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_yc44r"]
 shading_mode = 0
@@ -60,22 +60,22 @@ border_thickness_meters = 0.004
 border_depth_offset_meters = 0.0
 
 [node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1422772874]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.034446664, 0, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.06948399, 0, 0)
 material_override = SubResource("StandardMaterial3D_roh0t")
 mesh = SubResource("QuadMesh_yc44r")
 
 [node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1773498256]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.034446664, 0, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.06948399, 0, 0)
 material_override = SubResource("StandardMaterial3D_roh0t")
 mesh = SubResource("QuadMesh_kxyc3")
 
 [node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=736076604]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.072301105, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.039959744, 0)
 material_override = SubResource("StandardMaterial3D_roh0t")
 mesh = SubResource("QuadMesh_w5s7j")
 
 [node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=895567163]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.072301105, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.039959744, 0)
 material_override = SubResource("StandardMaterial3D_roh0t")
 mesh = SubResource("QuadMesh_65mgu")
 
@@ -87,18 +87,17 @@ mesh = SubResource("SphereMesh_head_dot")
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=1989601163]
 script = ExtResource("3_scale")
-aspect_ratio_width = 9.0
-aspect_ratio_height = 19.5
 screen_diagonal_inches = 6.096660447408573
-physical_width_meters = 0.06489332755863154
-physical_height_meters = 0.14060220971036835
-virtual_window_height = 0.14060220971036835
+physical_width_meters = 0.13496798264454948
+physical_height_meters = 0.07591949023755909
+virtual_window_height = 0.07591949023755909
 
 [node name="View" type="Node3D" parent="." unique_id=1898748907]
 script = ExtResource("4_view")
+fallback_directional_light_path = NodePath("../Light")
+fallback_world_environment_path = NodePath("../WorldEnvironment")
 window_center_path = NodePath("../Player/MonitorFrame")
-explicit_view_scene_paths = PackedStringArray("res://Views/test_box.tscn", "res://Views/Stereo Point Cloud/View.tscn", "res://Views/Construction/View.tscn", "res://Views/Crab Stab/View.tscn", "res://Views/Dragon Stab/View.tscn", "res://Views/Fight/View.tscn", "res://Views/Fish Box/View.tscn", "res://Views/Floater/View.tscn", "res://Views/Isometric Rooms/View.tscn", "res://Views/flat.tscn", "res://Views/Smoker/View.tscn", "res://Views/shallow_box.tscn", "res://Views/Tilt Ball Box/View.tscn")
-black_fill_enabled = false
+explicit_view_scene_paths = PackedStringArray("res://Views/test_box.tscn", "res://Views/Stereo Point Cloud/View.tscn", "res://Views/Construction/View.tscn", "res://Views/Crab Stab/View.tscn", "res://Views/Dragon Stab/View.tscn", "res://Views/Fight/View.tscn", "res://Views/Fish Box/View.tscn", "res://Views/Floater/View.tscn", "res://Views/Isometric Rooms/View.tscn", "res://Views/flat.tscn", "res://Views/Smoker/View.tscn", "res://Views/shallow_box.tscn", "res://Views/Tilt Ball Box/View.tscn", "res://Views/Tilt Ball Maze/View.tscn", "res://Views/Spring Surface/View.tscn")
 current_view_name = "Tilt Ball Box"
 
 [node name="IPhonePoseProvider" type="Node" parent="." unique_id=960546126]
@@ -115,7 +114,7 @@ head_plane_debug_dot_path = NodePath("../Player/MonitorFrame/HeadPlaneDebugDot")
 view_switcher_path = NodePath("../View")
 
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1283087681]
-transform = Transform3D(0.871214, 0.320867, -0.371245, -0.100983, 0.897212, 0.42983, 0.480356, -0.337157, 0.809689, 0, 0.6, 1.2)
+transform = Transform3D(0.87123436, 0.29429767, -0.39286083, -0.10098536, 0.8906814, 0.44327033, 0.48036724, -0.34651917, 0.805712, 0, 0.6, 1.2)
 light_energy = 0.65
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1907250174]

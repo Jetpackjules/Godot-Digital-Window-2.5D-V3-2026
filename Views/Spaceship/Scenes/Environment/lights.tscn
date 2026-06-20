@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" uid="uid://bktes6ef7os5n" path="res://Models/Objects/floorLamp.tscn" id="1_745tg"]
 [ext_resource type="PackedScene" uid="uid://c6oeq13hbctem" path="res://Models/Objects/ceilingLamp.tscn" id="2_6ppw6"]
-[ext_resource type="Material" uid="uid://c1gup63ytbb4r" path="res://Materials/Misc/ceilingLampRed.tres" id="3_jyg2q"]
+[ext_resource type="Material" uid="uid://c1gup63ytbb4r" path="res://Views/Spaceship/Materials/Misc/ceilingLampRed.tres" id="3_jyg2q"]
 
 [node name="Lights" type="Node3D"]
 visible = false

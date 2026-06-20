@@ -1,24 +1,21 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene format=3 uid="uid://bqye210twle25"]
 
-[ext_resource type="Script" path="res://Views/Tilt Ball Box/tilt_ball_box.gd" id="1_tilt_box"]
-[ext_resource type="Script" path="res://view_bounds.gd" id="2_view_bounds"]
+[ext_resource type="Script" uid="uid://sdhqiturptbu" path="res://Views/Tilt Ball Box/tilt_ball_box.gd" id="1_tilt_box"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="2_view_bounds"]
 
-[node name="Tilt Ball Box" type="Node3D"]
+[node name="Tilt Ball Box" type="Node3D" unique_id=1087960548]
 script = ExtResource("1_tilt_box")
-box_depth_meters = 1.25
-wall_thickness_meters = 0.07
-ball_count = 6
-ball_radius_ratio_of_bounds_height = 0.12
-maximum_ball_radius_meters = 0.6
+box_depth_meters = 0.5
+maximum_ball_radius_ratio_of_depth = 0.49
+cinematic_quality_lighting_enabled = true
+cinematic_quality_level = 0
+cinematic_shadow_opacity = 0.61
+cinematic_softbox_energy = 0.35
 
-[node name="ViewBounds" type="Node3D" parent="."]
+[node name="ViewBounds" type="Node3D" parent="." unique_id=771867793]
 script = ExtResource("2_view_bounds")
 bounds_size_mode = 1
 bounds_width_meters = 8.0
 bounds_height_meters = 4.5
-show_preview_in_game = false
 preview_thickness_meters = 0.035
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.8660254, -0.35355338, 0.35355338, 0, 0.70710677, 0.70710677, -0.5, -0.6123724, 0.6123724, 0, 0, 0.8)
-light_energy = 2.0
+black_fill_enabled = false

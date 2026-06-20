@@ -1,8 +1,8 @@
 [gd_scene load_steps=4 format=3 uid="uid://d3yl1wqnxgjk"]
 
-[ext_resource type="Material" uid="uid://cnnemxdoblqc7" path="res://Materials/Vegetation/Vegetation.tres" id="1_k425v"]
+[ext_resource type="Material" uid="uid://cnnemxdoblqc7" path="res://Views/Spaceship/Materials/Vegetation/Vegetation.tres" id="1_k425v"]
 [ext_resource type="ArrayMesh" uid="uid://ifblllssjegs" path="res://Models/Distant/Meshes/Distant_Tree_Proxy_Group.res" id="2_1qrwi"]
-[ext_resource type="Script" path="res://Scripts/DisableShadows.gd" id="3_h13n4"]
+[ext_resource type="Script" path="res://Views/Spaceship/Scripts/DisableShadows.gd" id="3_h13n4"]
 
 [node name="Tree" type="MeshInstance3D"]
 material_override = ExtResource("1_k425v")

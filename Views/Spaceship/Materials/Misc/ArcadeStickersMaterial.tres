@@ -1,6 +1,6 @@
 [gd_resource type="StandardMaterial3D" load_steps=2 format=3 uid="uid://dfvvdnmsgvk86"]
 
-[ext_resource type="Texture2D" uid="uid://byp4gnpv7f10q" path="res://Materials/Misc/ArcadeStickers.png" id="1_8pfq7"]
+[ext_resource type="Texture2D" uid="uid://byp4gnpv7f10q" path="res://Views/Spaceship/Materials/Misc/ArcadeStickers.png" id="1_8pfq7"]
 
 [resource]
 transparency = 1

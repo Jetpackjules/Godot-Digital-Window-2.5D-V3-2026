@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Views/Spring Surface/spring_surface.gd" id="1_spring"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="2_bounds"]
+
+[node name="Spring Surface" type="Node3D"]
+script = ExtResource("1_spring")
+
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("2_bounds")
+lock_authored_aspect_ratio = true
+locked_aspect_width = 16.0
+locked_aspect_height = 9.0
+bounds_width_meters = 8.0
+bounds_height_meters = 4.5
+show_preview_in_game = false
+black_fill_enabled = true

@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://d3lcvmcetlpw1"]
 
 [ext_resource type="ArrayMesh" uid="uid://cx1y8hdgfv83m" path="res://Models/Outside/Meshes/Outside_Fern_Low.res" id="1_ep23g"]
-[ext_resource type="Script" path="res://Scripts/DisableShadows.gd" id="2_tlbnu"]
+[ext_resource type="Script" path="res://Views/Spaceship/Scripts/DisableShadows.gd" id="2_tlbnu"]
 
 [node name="Ferns_Low" type="Node3D"]
 
