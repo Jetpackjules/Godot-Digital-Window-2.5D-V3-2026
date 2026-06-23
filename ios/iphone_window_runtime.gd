@@ -35,6 +35,10 @@ class_name IPhoneWindowRuntime
 
 @export_group("Camera Reactive Lighting")
 @export var camera_reactive_lighting_enabled: bool = false
+@export var desktop_debug_camera_reactive_lighting_enabled: bool = true
+@export_range(1.0, 30.0, 1.0) var desktop_debug_camera_light_sample_fps: float = 12.0
+@export var desktop_debug_camera_light_mirror_x: bool = true
+@export var desktop_debug_camera_light_flip_y: bool = false
 
 const FRONT_CAMERA_EDGE_AUTO := 0
 const FRONT_CAMERA_EDGE_TOP := 1
@@ -76,6 +80,9 @@ var _settings_tile_size_slider: HSlider
 var _settings_black_fill_check: CheckBox
 var _settings_enhanced_graphics_option: OptionButton
 var _settings_camera_reactive_lighting_check: CheckBox
+var _settings_camera_reactive_lighting_mode_option: OptionButton
+var _settings_camera_reactive_lighting_status_label: Label
+var _settings_camera_reactive_preview_rect: TextureRect
 var _settings_inertial_fallback_check: CheckBox
 var _settings_screen_reference_option: OptionButton
 var _active_touches: Dictionary = {}
@@ -102,6 +109,16 @@ var _was_provider_active: bool = false
 var _tracking_reacquire_blend_remaining_seconds: float = 0.0
 var _nodes_resolved: bool = false
 var _last_native_camera_light_enabled: bool = false
+var _desktop_camera_feed: CameraFeed
+var _desktop_camera_texture: CameraTexture
+var _desktop_camera_cbcr_texture: CameraTexture
+var _desktop_camera_preview_texture: ImageTexture
+var _desktop_camera_light_sample: Dictionary = {}
+var _desktop_camera_light_sample_elapsed: float = 999.0
+var _desktop_camera_light_active: bool = false
+var _desktop_camera_light_logged_no_feed: bool = false
+var _desktop_camera_feed_monitoring_enabled: bool = false
+var _desktop_camera_feed_debug_text: String = ""
 
 func _ready() -> void:
 	_resolve_nodes()
@@ -162,7 +179,7 @@ func _process(delta: float) -> void:
 
 	_update_head_plane_debug_dot(local_head_position)
 	_update_status_label(provider_active, local_head_position)
-	_sync_camera_reactive_lighting()
+	_sync_camera_reactive_lighting(delta)
 	_sync_settings_values_from_runtime()
 
 func _capture_inertial_tracking_anchor(local_head_position: Vector3) -> void:
@@ -649,6 +666,22 @@ func _build_settings_panel() -> void:
 	_settings_camera_reactive_lighting_check.toggled.connect(_on_camera_reactive_lighting_toggled)
 	column.add_child(_settings_camera_reactive_lighting_check)
 
+	_settings_camera_reactive_lighting_mode_option = OptionButton.new()
+	_populate_camera_reactive_lighting_mode_options()
+	_settings_camera_reactive_lighting_mode_option.item_selected.connect(_on_camera_reactive_lighting_mode_selected)
+	column.add_child(_settings_camera_reactive_lighting_mode_option)
+
+	_settings_camera_reactive_lighting_status_label = Label.new()
+	_settings_camera_reactive_lighting_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_settings_camera_reactive_lighting_status_label)
+
+	_settings_camera_reactive_preview_rect = TextureRect.new()
+	_settings_camera_reactive_preview_rect.custom_minimum_size = Vector2(220.0, 124.0)
+	_settings_camera_reactive_preview_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_settings_camera_reactive_preview_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_settings_camera_reactive_preview_rect.visible = false
+	column.add_child(_settings_camera_reactive_preview_rect)
+
 	_settings_inertial_fallback_check = CheckBox.new()
 	_settings_inertial_fallback_check.text = "Inertial Tracking Fallback"
 	_settings_inertial_fallback_check.toggled.connect(_on_inertial_fallback_toggled)
@@ -797,6 +830,25 @@ func _populate_enhanced_graphics_options() -> void:
 		var quality_name := _get_enhanced_graphics_quality_name(index)
 		_settings_enhanced_graphics_option.add_item(quality_name, index)
 
+func _populate_camera_reactive_lighting_mode_options() -> void:
+	if _settings_camera_reactive_lighting_mode_option == null:
+		return
+	_settings_camera_reactive_lighting_mode_option.clear()
+	var count := 1
+	if _view_switcher != null and _view_switcher.has_method("get_current_view_camera_reactive_lighting_mode_count"):
+		count = maxi(1, _variant_to_int(_view_switcher.call("get_current_view_camera_reactive_lighting_mode_count"), count))
+	for index in range(count):
+		_settings_camera_reactive_lighting_mode_option.add_item(_get_camera_reactive_lighting_mode_name(index), index)
+
+func _get_camera_reactive_lighting_mode_name(mode: int) -> String:
+	if _view_switcher != null and _view_switcher.has_method("get_current_view_camera_reactive_lighting_mode_name"):
+		return str(_view_switcher.call("get_current_view_camera_reactive_lighting_mode_name", mode))
+	match mode:
+		1:
+			return "Projected Feed"
+		_:
+			return "Grid Lights"
+
 func _get_screen_reference_mode_name(mode: int) -> String:
 	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_name"):
 		return str(_view_switcher.call("get_screen_plane_reference_mode_name", mode))
@@ -914,6 +966,30 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_camera_reactive_lighting_check != null:
 		_settings_camera_reactive_lighting_check.button_pressed = camera_reactive_lighting_enabled
 
+	if _settings_camera_reactive_lighting_mode_option != null:
+		_populate_camera_reactive_lighting_mode_options()
+		var camera_mode := 0
+		if _view_switcher != null and _view_switcher.has_method("get_current_view_camera_reactive_lighting_mode"):
+			camera_mode = _variant_to_int(_view_switcher.call("get_current_view_camera_reactive_lighting_mode"), camera_mode)
+		if _settings_camera_reactive_lighting_mode_option.selected != camera_mode:
+			_settings_camera_reactive_lighting_mode_option.select(camera_mode)
+
+	if _settings_camera_reactive_lighting_status_label != null:
+		_settings_camera_reactive_lighting_status_label.text = _get_camera_light_debug_text()
+
+	if _settings_camera_reactive_preview_rect != null:
+		var show_desktop_preview := (
+			camera_reactive_lighting_enabled
+			and _desktop_camera_light_active
+			and (_desktop_camera_preview_texture != null or _desktop_camera_texture != null)
+			and not OS.has_feature("ios")
+		)
+		_settings_camera_reactive_preview_rect.visible = show_desktop_preview
+		if show_desktop_preview and _desktop_camera_preview_texture != null:
+			_settings_camera_reactive_preview_rect.texture = _desktop_camera_preview_texture
+		else:
+			_settings_camera_reactive_preview_rect.texture = _desktop_camera_texture if show_desktop_preview else null
+
 	if _settings_inertial_fallback_check != null:
 		_settings_inertial_fallback_check.button_pressed = inertial_tracking_loss_fallback_enabled
 
@@ -1003,6 +1079,14 @@ func _on_camera_reactive_lighting_toggled(enabled: bool) -> void:
 	_sync_camera_reactive_lighting()
 	_sync_settings_values_from_runtime(true)
 
+func _on_camera_reactive_lighting_mode_selected(index: int) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_current_view_camera_reactive_lighting_mode"):
+		_view_switcher.call("set_current_view_camera_reactive_lighting_mode", index)
+	_sync_camera_reactive_lighting()
+	_sync_settings_values_from_runtime(true)
+
 func _on_inertial_fallback_toggled(enabled: bool) -> void:
 	inertial_tracking_loss_fallback_enabled = enabled
 	if not enabled:
@@ -1049,8 +1133,9 @@ func _apply_touch_calibration_drag(pixel_delta: Vector2) -> void:
 		maximum_manual_offset_meters
 	)
 
-func _sync_camera_reactive_lighting() -> void:
+func _sync_camera_reactive_lighting(delta: float = 0.0) -> void:
 	_sync_native_camera_light_estimation_enabled(false)
+	_sync_desktop_camera_light_estimation(delta)
 	if _view_switcher == null:
 		return
 	if _view_switcher.has_method("set_camera_reactive_lighting_enabled"):
@@ -1076,15 +1161,269 @@ func _sync_native_camera_light_estimation_enabled(force: bool) -> void:
 		tracker.call("set_camera_light_estimation_enabled", camera_reactive_lighting_enabled)
 
 func _get_camera_light_estimate() -> Dictionary:
-	if not Engine.has_singleton("IPhoneARKitHeadTracker"):
-		return {}
-	var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
-	if tracker == null or not tracker.has_method("get_camera_light_estimate"):
-		return {}
-	var raw_sample: Variant = tracker.call("get_camera_light_estimate")
-	if raw_sample is Dictionary:
-		return raw_sample
+	if Engine.has_singleton("IPhoneARKitHeadTracker"):
+		var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
+		if tracker != null and tracker.has_method("get_camera_light_estimate"):
+			var raw_sample: Variant = tracker.call("get_camera_light_estimate")
+			if raw_sample is Dictionary:
+				return raw_sample
+	if _desktop_camera_light_active and not _desktop_camera_light_sample.is_empty():
+		return _desktop_camera_light_sample
 	return {}
+
+func _get_camera_light_debug_text() -> String:
+	if not camera_reactive_lighting_enabled:
+		return "Camera Light: off"
+
+	var source := _get_camera_light_source_text()
+	var sample := _get_camera_light_estimate()
+	if sample.is_empty() or not bool(sample.get("active", false)):
+		if not OS.has_feature("ios") and not Engine.has_singleton("IPhoneARKitHeadTracker"):
+			var feed_count := CameraServer.get_feed_count()
+			if feed_count <= 0:
+				if _desktop_camera_feed_monitoring_enabled:
+					return "Camera Light: monitoring, no desktop feed"
+				return "Camera Light: no desktop camera feed"
+			if _desktop_camera_feed == null:
+				return "Camera Light: desktop feed count %d, not selected" % [feed_count]
+			return "Camera Light: desktop feed '%s', waiting for image" % [_desktop_camera_feed.get_name()]
+		if Engine.has_singleton("IPhoneARKitHeadTracker"):
+			return "Camera Light: arkit waiting for sample"
+		return "Camera Light: waiting"
+
+	var average_luma := float(sample.get("average_luma", 0.0))
+	var average_color := _variant_to_color(sample.get("average_color", Color.WHITE), Color.WHITE)
+	var brightest_luma := float(sample.get("brightest_luma", 0.0))
+	var brightest_index := _variant_to_int(sample.get("brightest_index", -1), -1)
+	var grid_width := _variant_to_int(sample.get("grid_width", 3), 3)
+	var bright_x: int = brightest_index % max(1, grid_width) if brightest_index >= 0 else -1
+	var bright_y: int = int(brightest_index / max(1, grid_width)) if brightest_index >= 0 else -1
+	return "Camera Light: %s %s avg %.2f rgb %.2f %.2f %.2f bright %.2f cell %d,%d" % [
+		source,
+		_desktop_camera_feed_debug_text,
+		average_luma,
+		average_color.r,
+		average_color.g,
+		average_color.b,
+		brightest_luma,
+		bright_x,
+		bright_y,
+	]
+
+func _sync_desktop_camera_light_estimation(delta: float) -> void:
+	var should_enable := (
+		camera_reactive_lighting_enabled
+		and desktop_debug_camera_reactive_lighting_enabled
+		and not OS.has_feature("ios")
+		and not Engine.has_singleton("IPhoneARKitHeadTracker")
+	)
+	if not should_enable:
+		_stop_desktop_camera_light_feed()
+		return
+	_set_desktop_camera_feed_monitoring(true)
+	if not _ensure_desktop_camera_light_feed():
+		return
+
+	_desktop_camera_light_sample_elapsed += maxf(delta, 0.0)
+	var min_interval := 1.0 / maxf(desktop_debug_camera_light_sample_fps, 1.0)
+	if _desktop_camera_light_sample_elapsed < min_interval:
+		return
+	_desktop_camera_light_sample_elapsed = 0.0
+
+	if _desktop_camera_texture == null:
+		return
+	var image: Image = _desktop_camera_texture.get_image()
+	if image == null or image.is_empty():
+		return
+	var cbcr_image: Image = null
+	if _desktop_camera_cbcr_texture != null:
+		cbcr_image = _desktop_camera_cbcr_texture.get_image()
+		if cbcr_image != null and cbcr_image.is_empty():
+			cbcr_image = null
+	_update_desktop_camera_feed_debug_text()
+	_desktop_camera_preview_texture = ImageTexture.create_from_image(_make_desktop_camera_preview_image(image, cbcr_image))
+	_desktop_camera_light_sample = _sample_camera_light_image(image, cbcr_image)
+
+func _ensure_desktop_camera_light_feed() -> bool:
+	if _desktop_camera_feed != null:
+		if not _desktop_camera_feed.is_active():
+			_desktop_camera_feed.set_active(true)
+		if _desktop_camera_texture != null:
+			_desktop_camera_texture.set_camera_active(true)
+		if _desktop_camera_cbcr_texture != null:
+			_desktop_camera_cbcr_texture.set_camera_active(true)
+		_desktop_camera_light_active = true
+		return true
+	var feed_count := CameraServer.get_feed_count()
+	if feed_count <= 0:
+		if not _desktop_camera_light_logged_no_feed:
+			print("[IPhoneWindowRuntime] desktop camera lighting requested, but no CameraServer feeds are available.")
+			_desktop_camera_light_logged_no_feed = true
+		_desktop_camera_light_active = false
+		return false
+	for index in range(feed_count):
+		var feed := CameraServer.get_feed(index)
+		if feed == null:
+			continue
+		_desktop_camera_feed = feed
+		_desktop_camera_feed.set_active(true)
+		_desktop_camera_texture = CameraTexture.new()
+		_desktop_camera_texture.set_camera_feed_id(feed.get_id())
+		_desktop_camera_texture.set_which_feed(CameraServer.FEED_RGBA_IMAGE)
+		_desktop_camera_texture.set_camera_active(true)
+		_desktop_camera_cbcr_texture = CameraTexture.new()
+		_desktop_camera_cbcr_texture.set_camera_feed_id(feed.get_id())
+		_desktop_camera_cbcr_texture.set_which_feed(CameraServer.FEED_CBCR_IMAGE)
+		_desktop_camera_cbcr_texture.set_camera_active(true)
+		_desktop_camera_light_active = true
+		_desktop_camera_light_logged_no_feed = false
+		_desktop_camera_light_sample_elapsed = 999.0
+		_update_desktop_camera_feed_debug_text()
+		print("[IPhoneWindowRuntime] desktop camera lighting feed='%s'" % [_desktop_camera_feed.get_name()])
+		return true
+	return false
+
+func _stop_desktop_camera_light_feed() -> void:
+	if _desktop_camera_cbcr_texture != null:
+		_desktop_camera_cbcr_texture.set_camera_active(false)
+	_desktop_camera_cbcr_texture = null
+	if _desktop_camera_texture != null:
+		_desktop_camera_texture.set_camera_active(false)
+	_desktop_camera_texture = null
+	_desktop_camera_preview_texture = null
+	if _desktop_camera_feed != null and _desktop_camera_feed.is_active():
+		_desktop_camera_feed.set_active(false)
+	_desktop_camera_feed = null
+	_desktop_camera_light_active = false
+	_desktop_camera_light_sample = {}
+	_desktop_camera_light_sample_elapsed = 999.0
+	_desktop_camera_light_logged_no_feed = false
+	_desktop_camera_feed_debug_text = ""
+	_set_desktop_camera_feed_monitoring(false)
+
+func _set_desktop_camera_feed_monitoring(enabled: bool) -> void:
+	if _desktop_camera_feed_monitoring_enabled == enabled:
+		return
+	_desktop_camera_feed_monitoring_enabled = enabled
+	CameraServer.set_monitoring_feeds(enabled)
+	if enabled:
+		_desktop_camera_light_logged_no_feed = false
+
+func _update_desktop_camera_feed_debug_text() -> void:
+	if _desktop_camera_feed == null:
+		_desktop_camera_feed_debug_text = ""
+		return
+	_desktop_camera_feed_debug_text = "type %d" % [_desktop_camera_feed.get_datatype()]
+
+func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dictionary:
+	var width := image.get_width()
+	var height := image.get_height()
+	var estimate := {"active": false}
+	if width <= 0 or height <= 0:
+		return estimate
+
+	const GRID_WIDTH := 3
+	const GRID_HEIGHT := 3
+	const SAMPLES_PER_AXIS := 6
+	var grid_luma := PackedFloat32Array()
+	var grid_colors := PackedColorArray()
+	var total_luma := 0.0
+	var total_color := Color(0.0, 0.0, 0.0, 0.0)
+	var total_cells := GRID_WIDTH * GRID_HEIGHT
+	var brightest_index := 0
+	var brightest_luma := -1.0
+
+	for gy in range(GRID_HEIGHT):
+		for gx in range(GRID_WIDTH):
+			var cell_luma := 0.0
+			var cell_color := Color(0.0, 0.0, 0.0, 0.0)
+			var sample_count := 0
+			var mapped_gx: int = GRID_WIDTH - 1 - gx if desktop_debug_camera_light_mirror_x else gx
+			var mapped_gy: int = GRID_HEIGHT - 1 - gy if desktop_debug_camera_light_flip_y else gy
+			for sy in range(SAMPLES_PER_AXIS):
+				for sx in range(SAMPLES_PER_AXIS):
+					var px := int(((float(mapped_gx) + (float(sx) + 0.5) / float(SAMPLES_PER_AXIS)) * float(width)) / float(GRID_WIDTH))
+					var py := int(((float(mapped_gy) + (float(sy) + 0.5) / float(SAMPLES_PER_AXIS)) * float(height)) / float(GRID_HEIGHT))
+					px = clampi(px, 0, width - 1)
+					py = clampi(py, 0, height - 1)
+					var color := _sample_desktop_camera_color(image, cbcr_image, px, py)
+					var luma := color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
+					cell_luma += luma
+					cell_color += color
+					sample_count += 1
+			var divisor := maxf(float(sample_count), 1.0)
+			var averaged_luma := cell_luma / divisor
+			var averaged_color := cell_color * (1.0 / divisor)
+			if averaged_luma > brightest_luma:
+				brightest_luma = averaged_luma
+				brightest_index = gy * GRID_WIDTH + gx
+			grid_luma.push_back(averaged_luma)
+			grid_colors.push_back(averaged_color)
+			total_luma += averaged_luma
+			total_color += averaged_color
+
+	var cell_divisor := maxf(float(total_cells), 1.0)
+	estimate["active"] = true
+	estimate["source"] = "desktop-camera"
+	estimate["grid_width"] = GRID_WIDTH
+	estimate["grid_height"] = GRID_HEIGHT
+	estimate["grid_luma"] = grid_luma
+	estimate["grid_colors"] = grid_colors
+	estimate["average_luma"] = total_luma / cell_divisor
+	estimate["average_color"] = total_color * (1.0 / cell_divisor)
+	estimate["brightest_index"] = brightest_index
+	estimate["brightest_luma"] = brightest_luma
+	estimate["ambient_intensity"] = 1000.0
+	estimate["ambient_color_temperature"] = 6500.0
+	if _desktop_camera_preview_texture != null:
+		estimate["projector_texture"] = _desktop_camera_preview_texture
+	return estimate
+
+func _make_desktop_camera_preview_image(image: Image, cbcr_image: Image = null) -> Image:
+	var source_width := image.get_width()
+	var source_height := image.get_height()
+	if source_width <= 0 or source_height <= 0:
+		return Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	var preview_width := 160
+	var preview_height := maxi(1, int(round(float(preview_width) * float(source_height) / float(source_width))))
+	var preview := Image.create(preview_width, preview_height, false, Image.FORMAT_RGBA8)
+	for y in range(preview_height):
+		for x in range(preview_width):
+			var source_x := clampi(int((float(x) + 0.5) * float(source_width) / float(preview_width)), 0, source_width - 1)
+			var source_y := clampi(int((float(y) + 0.5) * float(source_height) / float(preview_height)), 0, source_height - 1)
+			preview.set_pixel(x, y, _sample_desktop_camera_color(image, cbcr_image, source_x, source_y))
+	return preview
+
+func _sample_desktop_camera_color(image: Image, cbcr_image: Image, x: int, y: int) -> Color:
+	var raw := image.get_pixel(x, y)
+	if _desktop_camera_feed == null:
+		return raw
+	var datatype := _desktop_camera_feed.get_datatype()
+	if datatype == CameraFeed.FEED_RGB:
+		return raw
+	if datatype == CameraFeed.FEED_YCBCR_SEP and cbcr_image != null and not cbcr_image.is_empty():
+		var cbcr_width := cbcr_image.get_width()
+		var cbcr_height := cbcr_image.get_height()
+		if cbcr_width > 0 and cbcr_height > 0:
+			var cbcr_x := clampi(int(float(x) * float(cbcr_width) / float(maxi(image.get_width(), 1))), 0, cbcr_width - 1)
+			var cbcr_y := clampi(int(float(y) * float(cbcr_height) / float(maxi(image.get_height(), 1))), 0, cbcr_height - 1)
+			var cbcr := cbcr_image.get_pixel(cbcr_x, cbcr_y)
+			return _convert_ycbcr_to_rgb(raw.r, cbcr.r, cbcr.g)
+	var luma := raw.r
+	return Color(luma, luma, luma, raw.a)
+
+func _convert_ycbcr_to_rgb(y: float, cb_raw: float, cr_raw: float) -> Color:
+	var cb := cb_raw - 0.5
+	var cr := cr_raw - 0.5
+	var red := y + 1.402 * cr
+	var green := y - 0.344136 * cb - 0.714136 * cr
+	var blue := y + 1.772 * cb
+	return Color(clampf(red, 0.0, 1.0), clampf(green, 0.0, 1.0), clampf(blue, 0.0, 1.0), 1.0)
+
+func _variant_to_color(value: Variant, fallback: Color = Color.WHITE) -> Color:
+	if value is Color:
+		return value
+	return fallback
 
 func _update_head_plane_debug_dot(local_head_position: Vector3) -> void:
 	if _head_plane_debug_dot == null:
@@ -1155,7 +1494,7 @@ func _update_status_label(provider_active: bool, local_head_position: Vector3) -
 		state_text = "tracking-lost"
 		detail_text += " | inertial fallback"
 	if camera_reactive_lighting_enabled:
-		detail_text += " | cam-light"
+		detail_text += " | cam-light:%s" % [_get_camera_light_source_text()]
 	var estimated_camera_offset := _get_estimated_front_camera_origin_offset_meters()
 	var camera_offset := _get_front_camera_origin_offset_meters()
 	_status_label.text = "%s | %s | %s | %.2f %.2f %.2f m | base %.0f %.0fmm | tweak %.0f %.0fmm | camOff %.0f %.0fmm | %s | %s%s" % [
@@ -1175,6 +1514,16 @@ func _update_status_label(provider_active: bool, local_head_position: Vector3) -
 		_get_view_status_text(),
 		detail_text,
 	]
+
+func _get_camera_light_source_text() -> String:
+	var sample := _get_camera_light_estimate()
+	if sample.has("source"):
+		return str(sample["source"])
+	if Engine.has_singleton("IPhoneARKitHeadTracker"):
+		return "arkit"
+	if _desktop_camera_light_active:
+		return "desktop-camera"
+	return "waiting"
 
 func _is_settings_panel_visible() -> bool:
 	return _settings_panel != null and _settings_panel.visible
