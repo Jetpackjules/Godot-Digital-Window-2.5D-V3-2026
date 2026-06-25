@@ -1,6 +1,12 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+/IPhoneWindowExport/
+/.DS_Store
+**/.DS_Store
+/extension_api.json
+/*.exe
+/realsense_shared_memory.dll
 /WEB_EXPORT/*.pck
 WEB_EXPORT/2.5D window V3.pck
 *.pck
