@@ -1,0 +1,20 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://drdpn5m1yg01p"]
+
+[ext_resource type="Texture2D" uid="uid://bqw7vdnvxnyu" path="res://Assets/Textures/Wood Flat/Wood_Floor_016_basecolor.png" id="1_basecolor"]
+[ext_resource type="Texture2D" uid="uid://c0hi4lfeupk7n" path="res://Assets/Textures/Wood Flat/Wood_Floor_016_roughness.png" id="2_roughness"]
+[ext_resource type="Texture2D" uid="uid://dhe7gfbgpka0e" path="res://Assets/Textures/Wood Flat/Wood_Floor_016_normal.png" id="3_normal"]
+[ext_resource type="Texture2D" uid="uid://7dsgcjtwi4q4" path="res://Assets/Textures/Wood Flat/Wood_Floor_016_height.png" id="4_height"]
+[ext_resource type="Texture2D" uid="uid://eciw1o65wydj" path="res://Assets/Textures/Wood Flat/Wood_Floor_016_ambientOcclusion.png" id="5_ao"]
+
+[resource]
+resource_name = "Wood_Floor_016"
+albedo_texture = ExtResource("1_basecolor")
+roughness_texture = ExtResource("2_roughness")
+roughness_texture_channel = 4
+normal_enabled = true
+normal_texture = ExtResource("3_normal")
+ao_enabled = true
+ao_texture = ExtResource("5_ao")
+ao_texture_channel = 4
+heightmap_enabled = true
+heightmap_texture = ExtResource("4_height")

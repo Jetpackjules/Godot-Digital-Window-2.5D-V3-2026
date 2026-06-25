@@ -1,6 +1,8 @@
 @tool
 extends Node3D
 
+const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Textures/Wood Flat/Wood_Floor_016.tres")
+
 @export var view_bounds_path: NodePath = NodePath("ViewBounds")
 
 @export_group("Mode")
@@ -38,6 +40,11 @@ extends Node3D
 @export var back_color: Color = Color(0.92, 0.94, 0.96, 1.0) :
 	set(value):
 		back_color = value
+		_box_piece_materials.clear()
+		_rebuild_if_ready(true)
+@export var box_wood_material: StandardMaterial3D = DEFAULT_BOX_WOOD_MATERIAL :
+	set(value):
+		box_wood_material = value
 		_box_piece_materials.clear()
 		_rebuild_if_ready(true)
 @export_range(0.05, 1.0, 0.01) var wood_plank_width_meters: float = 0.28 :
@@ -226,21 +233,6 @@ extends Node3D
 		cinematic_softbox_energy = value
 		_sync_lighting()
 
-@export_group("Camera Reactive Lighting")
-@export var camera_reactive_lighting_enabled: bool = false :
-	set(value):
-		camera_reactive_lighting_enabled = value
-		_sync_lighting()
-@export_range(0.0, 8.0, 0.05) var camera_reactive_lighting_energy: float = 3.2 :
-	set(value):
-		camera_reactive_lighting_energy = value
-		_sync_lighting()
-@export_range(0.0, 1.0, 0.01) var camera_reactive_lighting_ambient_floor: float = 0.08 :
-	set(value):
-		camera_reactive_lighting_ambient_floor = value
-		_sync_lighting()
-@export_range(0.0, 0.95, 0.01) var camera_reactive_lighting_smoothing: float = 0.18
-
 const GRAVITY_METERS_PER_SECOND_SQUARED := 9.80665
 const MODE_SANDBOX := 0
 const MODE_MAZE := 1
@@ -261,22 +253,17 @@ const _FILL_LIGHT_NAME := "SoftFillLight"
 const _RIM_LIGHT_NAME := "SoftRimLight"
 const _FRONT_SOFTBOX_LIGHT_NAME := "CinematicFrontSoftbox"
 const _SKY_BOUNCE_LIGHT_NAME := "CinematicSkyBounce"
-const _CAMERA_REACTIVE_LIGHT_ROOT_NAME := "CameraReactiveLights"
-const _CAMERA_REACTIVE_GRID_WIDTH := 3
-const _CAMERA_REACTIVE_GRID_HEIGHT := 3
 
 var _geometry_root: Node3D
 var _corner_root: Node3D
 var _maze_root: Node3D
 var _ball_root: Node3D
-var _camera_reactive_light_root: Node3D
 var _world_environment: WorldEnvironment
 var _key_light: DirectionalLight3D
 var _fill_light: DirectionalLight3D
 var _rim_light: DirectionalLight3D
 var _front_softbox_light: OmniLight3D
 var _sky_bounce_light: OmniLight3D
-var _camera_reactive_lights: Array[OmniLight3D] = []
 var _balls: Array[RigidBody3D] = []
 var _last_bounds_size: Vector2 = Vector2.ZERO
 var _box_piece_materials: Dictionary = {}
@@ -292,9 +279,6 @@ var _generated_maze_goal_position: Vector2 = Vector2.ZERO
 var _maze_runtime_ball_radius_override: float = -1.0
 var _last_haptic_msec: int = -10000
 var _logged_missing_native_haptics: bool = false
-var _camera_reactive_light_sample: Dictionary = {}
-var _camera_reactive_luma: Array[float] = []
-var _camera_reactive_colors: Array[Color] = []
 
 func _enter_tree() -> void:
 	set_process(true)
@@ -411,13 +395,6 @@ func _ensure_roots() -> void:
 		add_child(_ball_root)
 		_set_scene_owner(_ball_root)
 
-	_camera_reactive_light_root = get_node_or_null(_CAMERA_REACTIVE_LIGHT_ROOT_NAME) as Node3D
-	if _camera_reactive_light_root == null:
-		_camera_reactive_light_root = Node3D.new()
-		_camera_reactive_light_root.name = _CAMERA_REACTIVE_LIGHT_ROOT_NAME
-		add_child(_camera_reactive_light_root)
-		_set_scene_owner(_camera_reactive_light_root)
-
 func _sync_lighting() -> void:
 	if not is_inside_tree():
 		return
@@ -428,15 +405,12 @@ func _sync_lighting() -> void:
 	_rim_light = _get_or_create_directional_light(_RIM_LIGHT_NAME)
 	_front_softbox_light = _get_or_create_omni_light(_FRONT_SOFTBOX_LIGHT_NAME)
 	_sky_bounce_light = _get_or_create_omni_light(_SKY_BOUNCE_LIGHT_NAME)
-	_ensure_camera_reactive_lights()
 
 	_key_light.visible = soft_scene_lighting_enabled
 	_fill_light.visible = soft_scene_lighting_enabled
 	_rim_light.visible = soft_scene_lighting_enabled
 	_front_softbox_light.visible = soft_scene_lighting_enabled and cinematic_quality_lighting_enabled
 	_sky_bounce_light.visible = soft_scene_lighting_enabled and cinematic_quality_lighting_enabled
-	if _camera_reactive_light_root != null:
-		_camera_reactive_light_root.visible = soft_scene_lighting_enabled and camera_reactive_lighting_enabled
 	if not soft_scene_lighting_enabled:
 		_world_environment.environment = null
 		return
@@ -446,15 +420,6 @@ func _sync_lighting() -> void:
 		environment = Environment.new()
 	_world_environment.environment = environment
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-
-	if camera_reactive_lighting_enabled:
-		_key_light.visible = false
-		_fill_light.visible = false
-		_rim_light.visible = false
-		_front_softbox_light.visible = false
-		_sky_bounce_light.visible = false
-		_configure_camera_reactive_lighting(environment)
-		return
 
 	environment.ambient_light_color = ambient_light_color
 	environment.ambient_light_energy = ambient_light_energy * (_get_cinematic_ambient_multiplier() if cinematic_quality_lighting_enabled else 1.0)
@@ -481,116 +446,6 @@ func _sync_lighting() -> void:
 	_rim_light.light_energy = rim_light_energy * (_get_cinematic_rim_multiplier() if cinematic_quality_lighting_enabled else 1.0)
 	_rim_light.shadow_enabled = false
 	_configure_cinematic_omni_lights()
-
-func _ensure_camera_reactive_lights() -> void:
-	if _camera_reactive_light_root == null:
-		_camera_reactive_light_root = get_node_or_null(_CAMERA_REACTIVE_LIGHT_ROOT_NAME) as Node3D
-		if _camera_reactive_light_root == null:
-			_camera_reactive_light_root = Node3D.new()
-			_camera_reactive_light_root.name = _CAMERA_REACTIVE_LIGHT_ROOT_NAME
-			add_child(_camera_reactive_light_root)
-			_set_scene_owner(_camera_reactive_light_root)
-
-	var grid_count := _CAMERA_REACTIVE_GRID_WIDTH * _CAMERA_REACTIVE_GRID_HEIGHT
-	while _camera_reactive_lights.size() < grid_count:
-		var light := OmniLight3D.new()
-		light.name = "CameraReactiveLight%d" % [_camera_reactive_lights.size()]
-		_camera_reactive_light_root.add_child(light)
-		_set_scene_owner(light)
-		_camera_reactive_lights.append(light)
-
-	while _camera_reactive_luma.size() < grid_count:
-		_camera_reactive_luma.append(0.18)
-		_camera_reactive_colors.append(Color(1.0, 0.92, 0.78, 1.0))
-
-func _configure_camera_reactive_lighting(environment: Environment) -> void:
-	var bounds_size: Vector2 = _last_bounds_size if _last_bounds_size.x > 0.0 and _last_bounds_size.y > 0.0 else _get_bounds_size()
-	var width: float = maxf(bounds_size.x, 1.0)
-	var height: float = maxf(bounds_size.y, 1.0)
-	var average_color := _get_camera_reactive_average_color()
-	var average_luma := _get_camera_reactive_average_luma()
-
-	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.0, 0.0, 0.0, 1.0)
-	environment.ambient_light_color = average_color
-	environment.ambient_light_energy = camera_reactive_lighting_ambient_floor + average_luma * 0.28
-	environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
-	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 0.68
-	environment.tonemap_white = 2.2
-	environment.ssao_enabled = true
-	environment.ssao_radius = 1.15
-	environment.ssao_intensity = 0.9
-	environment.ssil_enabled = false
-	environment.glow_enabled = false
-	environment.adjustment_enabled = true
-	environment.adjustment_brightness = 0.92
-	environment.adjustment_contrast = 1.06
-	environment.adjustment_saturation = 1.04
-
-	var light_z := maxf(0.18, box_depth_meters * 0.18)
-	var light_range := maxf(width, height) * 0.48
-	for gy in range(_CAMERA_REACTIVE_GRID_HEIGHT):
-		for gx in range(_CAMERA_REACTIVE_GRID_WIDTH):
-			var index := gy * _CAMERA_REACTIVE_GRID_WIDTH + gx
-			if index >= _camera_reactive_lights.size():
-				continue
-			var light := _camera_reactive_lights[index]
-			var x := (((float(gx) + 0.5) / float(_CAMERA_REACTIVE_GRID_WIDTH)) - 0.5) * width
-			var y := (0.5 - ((float(gy) + 0.5) / float(_CAMERA_REACTIVE_GRID_HEIGHT))) * height
-			var luma := _camera_reactive_luma[index] if index < _camera_reactive_luma.size() else average_luma
-			var color := _camera_reactive_colors[index] if index < _camera_reactive_colors.size() else average_color
-			light.visible = true
-			light.position = Vector3(x, y, light_z)
-			light.light_color = color
-			light.light_energy = pow(clampf(luma, 0.0, 1.0), 1.45) * camera_reactive_lighting_energy
-			light.omni_range = light_range
-			light.omni_attenuation = 1.55
-			light.shadow_enabled = false
-
-func _get_camera_reactive_average_luma() -> float:
-	if _camera_reactive_luma.is_empty():
-		return 0.18
-	var sum := 0.0
-	for luma in _camera_reactive_luma:
-		sum += luma
-	return sum / float(_camera_reactive_luma.size())
-
-func _get_camera_reactive_average_color() -> Color:
-	if _camera_reactive_colors.is_empty():
-		return Color(1.0, 0.92, 0.78, 1.0)
-	var color := Color(0.0, 0.0, 0.0, 0.0)
-	for sample_color in _camera_reactive_colors:
-		color += sample_color
-	return color * (1.0 / float(_camera_reactive_colors.size()))
-
-func _apply_camera_reactive_light_sample(sample: Dictionary) -> void:
-	_ensure_camera_reactive_lights()
-	if not bool(sample.get("active", false)):
-		return
-	var grid_luma: Variant = sample.get("grid_luma", [])
-	var grid_colors: Variant = sample.get("grid_colors", [])
-	var alpha := clampf(1.0 - camera_reactive_lighting_smoothing, 0.02, 1.0)
-	var grid_count := _CAMERA_REACTIVE_GRID_WIDTH * _CAMERA_REACTIVE_GRID_HEIGHT
-	for index in range(grid_count):
-		var target_luma := _read_float_array_value(grid_luma, index, _camera_reactive_luma[index])
-		var target_color := _read_color_array_value(grid_colors, index, _camera_reactive_colors[index])
-		_camera_reactive_luma[index] = lerpf(_camera_reactive_luma[index], clampf(target_luma, 0.0, 1.0), alpha)
-		_camera_reactive_colors[index] = _camera_reactive_colors[index].lerp(target_color, alpha)
-
-func _read_float_array_value(values: Variant, index: int, fallback: float) -> float:
-	if values is PackedFloat32Array and index < values.size():
-		return float(values[index])
-	if values is Array and index < values.size():
-		return float(values[index])
-	return fallback
-
-func _read_color_array_value(values: Variant, index: int, fallback: Color) -> Color:
-	if values is PackedColorArray and index < values.size():
-		return values[index]
-	if values is Array and index < values.size() and values[index] is Color:
-		return values[index]
-	return fallback
 
 func _configure_environment_quality(environment: Environment) -> void:
 	if cinematic_quality_lighting_enabled:
@@ -730,12 +585,7 @@ func _sync_box_piece_in_parent(parent: Node3D, piece_name: String, size: Vector3
 
 	var mesh_instance: MeshInstance3D = _get_or_create_mesh_instance(body, "Mesh")
 	mesh_instance.cast_shadow = _get_mesh_shadow_setting()
-	var mesh: BoxMesh = mesh_instance.mesh as BoxMesh
-	if mesh == null:
-		mesh = BoxMesh.new()
-	mesh.size = size
-	mesh.material = material
-	mesh_instance.mesh = mesh
+	mesh_instance.mesh = _make_textured_box_mesh(size, material)
 
 	var collision: CollisionShape3D = _get_or_create_collision_shape(body, "Collision")
 	var shape: BoxShape3D = collision.shape as BoxShape3D
@@ -743,6 +593,61 @@ func _sync_box_piece_in_parent(parent: Node3D, piece_name: String, size: Vector3
 		shape = BoxShape3D.new()
 	shape.size = size
 	collision.shape = shape
+
+func _make_textured_box_mesh(size: Vector3, material: Material) -> ArrayMesh:
+	var safe_size := Vector3(
+		maxf(size.x, 0.0001),
+		maxf(size.y, 0.0001),
+		maxf(size.z, 0.0001)
+	)
+	var half := safe_size * 0.5
+	var texture_tile_size := maxf(wood_plank_width_meters * 3.0, 0.05)
+	var uv_scale := 1.0 / texture_tile_size
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+
+	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, -half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, indices, Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, -half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, indices, Vector3(-half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, -half.z), safe_size.x, safe_size.z, uv_scale)
+	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, -half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), safe_size.x, safe_size.z, uv_scale)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, material)
+	return mesh
+
+func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, indices: PackedInt32Array, center: Vector3, u_axis: Vector3, v_axis: Vector3, u_length: float, v_length: float, uv_scale: float) -> void:
+	var base_index := vertices.size()
+	var normal := u_axis.cross(v_axis).normalized()
+	vertices.append(center - u_axis - v_axis)
+	vertices.append(center + u_axis - v_axis)
+	vertices.append(center + u_axis + v_axis)
+	vertices.append(center - u_axis + v_axis)
+	for _index in range(4):
+		normals.append(normal)
+	uvs.append(Vector2(0.0, 0.0))
+	uvs.append(Vector2(u_length * uv_scale, 0.0))
+	uvs.append(Vector2(u_length * uv_scale, v_length * uv_scale))
+	uvs.append(Vector2(0.0, v_length * uv_scale))
+	indices.append_array(PackedInt32Array([
+		base_index,
+		base_index + 1,
+		base_index + 2,
+		base_index,
+		base_index + 2,
+		base_index + 3,
+	]))
 
 func _build_rounded_corners(bounds_size: Vector2) -> void:
 	_clear_children(_corner_root)
@@ -1387,19 +1292,6 @@ func get_enhanced_graphics_quality() -> int:
 		_:
 			return ENHANCED_GRAPHICS_HIGH
 
-func set_camera_reactive_lighting_enabled(enabled: bool) -> void:
-	camera_reactive_lighting_enabled = enabled
-	_sync_lighting()
-
-func is_camera_reactive_lighting_enabled() -> bool:
-	return camera_reactive_lighting_enabled
-
-func set_camera_reactive_lighting_sample(sample: Dictionary) -> void:
-	_camera_reactive_light_sample = sample
-	_apply_camera_reactive_light_sample(sample)
-	if camera_reactive_lighting_enabled:
-		_sync_lighting()
-
 func _get_box_piece_material(piece_name: String, face_size: Vector2, is_back: bool) -> StandardMaterial3D:
 	var material_key: String = "%s:%.3f:%.3f:%.3f:%s" % [
 		piece_name,
@@ -1411,7 +1303,12 @@ func _get_box_piece_material(piece_name: String, face_size: Vector2, is_back: bo
 	if _box_piece_materials.has(material_key):
 		return _box_piece_materials[material_key] as StandardMaterial3D
 
-	var material: StandardMaterial3D = StandardMaterial3D.new()
+	var material: StandardMaterial3D = _make_box_wood_material(face_size)
+	if material != null:
+		_box_piece_materials[material_key] = material
+		return material
+
+	material = StandardMaterial3D.new()
 	var dark: Color = Color(0.48, 0.29, 0.14, 1.0) if is_back else Color(0.44, 0.25, 0.11, 1.0)
 	var light: Color = Color(0.9, 0.66, 0.38, 1.0) if is_back else Color(0.82, 0.55, 0.28, 1.0)
 	var insane_quality := _is_cinematic_insane()
@@ -1424,6 +1321,21 @@ func _get_box_piece_material(piece_name: String, face_size: Vector2, is_back: bo
 		material.normal_scale = 0.055 + cinematic_material_micro_detail * (0.18 if insane_quality else 0.12)
 		material.normal_texture = _get_micro_normal_texture("wood", Vector2(192.0, 192.0))
 	_box_piece_materials[material_key] = material
+	return material
+
+func _make_box_wood_material(face_size: Vector2) -> StandardMaterial3D:
+	if box_wood_material == null:
+		return null
+	var material := box_wood_material.duplicate(true) as StandardMaterial3D
+	if material == null:
+		return null
+	material.resource_local_to_scene = true
+	material.uv1_scale = Vector3.ONE
+	if cinematic_quality_lighting_enabled:
+		material.metallic = maxf(material.metallic, cinematic_reflection_strength * 0.04)
+		material.roughness = minf(material.roughness, 0.7)
+		if material.normal_texture != null:
+			material.normal_enabled = true
 	return material
 
 func _get_maze_goal_material() -> StandardMaterial3D:

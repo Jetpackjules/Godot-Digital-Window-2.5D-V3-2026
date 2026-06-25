@@ -1,35 +1,19 @@
 [gd_scene format=3 uid="uid://delrmijg0sq27"]
 
+[ext_resource type="Material" path="res://Assets/Textures/Wood Flat/Wood_Floor_016.tres" id="1_78cu8"]
 [ext_resource type="PackedScene" uid="uid://iyk13aa885oo" path="res://Assets/silly_dancing.tscn" id="1_fbf4e"]
-[ext_resource type="Texture2D" uid="uid://di7ipplfngb5j" path="res://Views/ALIGNMENT TEST/floor.jpg" id="1_g4rj8"]
-[ext_resource type="Texture2D" uid="uid://lgdbyik07l7h" path="res://Views/ALIGNMENT TEST/height_gemi.png" id="2_v3eet"]
-[ext_resource type="Texture2D" uid="uid://b67bdr8d1m11n" path="res://Views/ALIGNMENT TEST/floor_nomal.png" id="3_j0yre"]
 [ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="view_bounds_meta"]
 
 [sub_resource type="QuadMesh" id="QuadMesh_5y7sw"]
 lightmap_size_hint = Vector2i(42, 24)
+material = ExtResource("1_78cu8")
 size = Vector2(8, 4.5)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_78cu8"]
-albedo_texture = ExtResource("1_g4rj8")
-normal_enabled = true
-normal_scale = 2.93
-normal_texture = ExtResource("3_j0yre")
-heightmap_enabled = true
-heightmap_scale = 2.032
-heightmap_deep_parallax = true
-heightmap_min_layers = 8
-heightmap_max_layers = 32
-heightmap_texture = ExtResource("2_v3eet")
-billboard_keep_scale = true
-stencil_flags = 2
 
 [node name="Flat" type="Node3D" unique_id=783687752]
 transform = Transform3D(0.073, 0, 0, 0, 0.073, 0, 0, 0, 0.073, 0, 0, 0)
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=1395451366]
 mesh = SubResource("QuadMesh_5y7sw")
-surface_material_override/0 = SubResource("StandardMaterial3D_78cu8")
 
 [node name="Silly Dancing" parent="." unique_id=1605361915 instance=ExtResource("1_fbf4e")]
 transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0, 0)
@@ -38,4 +22,3 @@ transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0
 script = ExtResource("view_bounds_meta")
 bounds_width_meters = 8.0
 bounds_height_meters = 4.5
-black_fill_enabled = true
