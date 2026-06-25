@@ -3905,11 +3905,12 @@ class RealSenseCapture:
         self._fast_foundation_last_seq = -1
         self.pipeline = rs.pipeline()
         self.config = rs.config()
-        self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
         self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
         if self.fast_foundation_enabled:
             self.config.enable_stream(rs.stream.infrared, 1, self.depth_width, self.depth_height, rs.format.y8, self.fps)
             self.config.enable_stream(rs.stream.infrared, 2, self.depth_width, self.depth_height, rs.format.y8, self.fps)
+        else:
+            self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
         self.imu_enabled = bool(REALSENSE_IMU_FALLBACK_ENABLED and tracking_enabled)
         self.imu_available = False
         self.imu_translation_enabled = os.environ.get(
@@ -3932,18 +3933,19 @@ class RealSenseCapture:
             print(f">>> RealSense IMU streams failed; retrying depth/color only: {exc} <<<")
             self.pipeline = rs.pipeline()
             self.config = rs.config()
-            self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
             self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
             if self.fast_foundation_enabled:
                 self.config.enable_stream(rs.stream.infrared, 1, self.depth_width, self.depth_height, rs.format.y8, self.fps)
                 self.config.enable_stream(rs.stream.infrared, 2, self.depth_width, self.depth_height, rs.format.y8, self.fps)
+            else:
+                self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
             self.profile = self.pipeline.start(self.config)
             self.imu_enabled = False
             self.imu_available = False
         self.device = self.profile.get_device()
         if REALSENSE_APPLY_DEFAULT_SETTINGS:
             self._apply_advanced_settings_json(REALSENSE_DEFAULT_SETTINGS_JSON)
-        self.align_to_depth = rs.align(rs.stream.depth)
+        self.align_to_depth = None if self.fast_foundation_enabled else rs.align(rs.stream.depth)
         self.depth_filters_enabled = bool(REALSENSE_DEPTH_FILTERS_ENABLED)
         self.disparity_filters_enabled = bool(REALSENSE_DEPTH_DISPARITY_FILTERS)
         self.depth_to_disparity_filter = None
@@ -3971,10 +3973,7 @@ class RealSenseCapture:
         self._apply_initial_sensor_options()
         self.depth_scale = float(self.depth_sensor.get_depth_scale())
         color_profile = self.profile.get_stream(rs.stream.color).as_video_stream_profile()
-        depth_profile = self.profile.get_stream(rs.stream.depth).as_video_stream_profile()
         self.charuco_intrinsics = color_profile.get_intrinsics()
-        self.point_cloud_intrinsics = depth_profile.get_intrinsics()
-        self.intrinsics = self.point_cloud_intrinsics
         self.fast_stereo_baseline_m = 0.0
         self.fast_stereo_status = "off"
         if self.fast_foundation_enabled:
@@ -4016,6 +4015,10 @@ class RealSenseCapture:
                 except Exception:
                     pass
                 raise
+        else:
+            depth_profile = self.profile.get_stream(rs.stream.depth).as_video_stream_profile()
+            self.point_cloud_intrinsics = depth_profile.get_intrinsics()
+            self.intrinsics = self.point_cloud_intrinsics
         self.latest_depth_m = None
         self.latest_tracking_depth_m = None
         self.latest_color_bgr = None
@@ -4614,7 +4617,8 @@ class RealSenseCapture:
                 raw_frames = frames
                 self._process_imu_frames(frames)
                 color_frame_for_charuco = frames.get_color_frame()
-                frames = self.align_to_depth.process(frames)
+                if self.align_to_depth is not None:
+                    frames = self.align_to_depth.process(frames)
                 align_done = time.perf_counter()
             except Exception as exc:
                 if not self._stop_event.is_set():
@@ -4623,9 +4627,11 @@ class RealSenseCapture:
             self._profile_add("wait", wait_done - wait_start)
             self._profile_add("align", align_done - wait_done)
 
-            depth_frame = frames.get_depth_frame()
             color_frame = frames.get_color_frame()
-            if not depth_frame or not color_frame or not color_frame_for_charuco:
+            depth_frame = None if self.fast_foundation_enabled else frames.get_depth_frame()
+            if not color_frame or not color_frame_for_charuco:
+                continue
+            if not self.fast_foundation_enabled and not depth_frame:
                 continue
             left_ir_frame = None
             right_ir_frame = None
@@ -4637,40 +4643,48 @@ class RealSenseCapture:
                     if self.fast_stereo_status != "ir_frames_missing":
                         print(f">>> RealSense FastFoundation IR frames unavailable: {exc} <<<")
                     self.fast_stereo_status = "ir_frames_missing"
-            depth_np_start = time.perf_counter()
-            raw_depth_m = np.asanyarray(depth_frame.get_data()).astype(np.float32) * self.depth_scale
-            filtered_depth_frame = depth_frame
-            depth_np_done = time.perf_counter()
-            self._profile_add("depth_np", depth_np_done - depth_np_start)
-            filter_start = time.perf_counter()
-            if self.depth_filters_enabled:
-                try:
-                    if self.depth_to_disparity_filter is not None:
-                        filtered_depth_frame = self.depth_to_disparity_filter.process(filtered_depth_frame)
-                    if self.spatial_filter is not None:
-                        filtered_depth_frame = self.spatial_filter.process(filtered_depth_frame)
-                    if self.temporal_filter is not None:
-                        filtered_depth_frame = self.temporal_filter.process(filtered_depth_frame)
-                    if self.disparity_to_depth_filter is not None:
-                        filtered_depth_frame = self.disparity_to_depth_filter.process(filtered_depth_frame)
-                    if self.hole_filling_filter is not None:
-                        filtered_depth_frame = self.hole_filling_filter.process(filtered_depth_frame)
-                except Exception as exc:
-                    print(f">>> RealSense depth filter failed; using raw depth this frame: {exc} <<<")
-                    filtered_depth_frame = depth_frame
-            filter_done = time.perf_counter()
-            self._profile_add("filter", filter_done - filter_start)
 
             color_np_start = time.perf_counter()
             color = np.asanyarray(color_frame.get_data()).copy()
             charuco_color = np.asanyarray(color_frame_for_charuco.get_data()).copy()
-            filtered_depth_m = np.asanyarray(filtered_depth_frame.get_data()).astype(np.float32) * self.depth_scale
-            if self.filters_for_point_cloud_geometry:
-                point_cloud_depth_m = self._guard_filtered_geometry_depth(raw_depth_m, filtered_depth_m)
-            else:
-                point_cloud_depth_m = raw_depth_m
             color_np_done = time.perf_counter()
             self._profile_add("color_np", color_np_done - color_np_start)
+            if self.fast_foundation_enabled:
+                filtered_depth_m = None
+                point_cloud_depth_m = None
+                point_cloud_color = color
+                self._profile_add("depth_np", 0.0)
+                self._profile_add("filter", 0.0)
+            else:
+                depth_np_start = time.perf_counter()
+                raw_depth_m = np.asanyarray(depth_frame.get_data()).astype(np.float32) * self.depth_scale
+                filtered_depth_frame = depth_frame
+                depth_np_done = time.perf_counter()
+                self._profile_add("depth_np", depth_np_done - depth_np_start)
+                filter_start = time.perf_counter()
+                if self.depth_filters_enabled:
+                    try:
+                        if self.depth_to_disparity_filter is not None:
+                            filtered_depth_frame = self.depth_to_disparity_filter.process(filtered_depth_frame)
+                        if self.spatial_filter is not None:
+                            filtered_depth_frame = self.spatial_filter.process(filtered_depth_frame)
+                        if self.temporal_filter is not None:
+                            filtered_depth_frame = self.temporal_filter.process(filtered_depth_frame)
+                        if self.disparity_to_depth_filter is not None:
+                            filtered_depth_frame = self.disparity_to_depth_filter.process(filtered_depth_frame)
+                        if self.hole_filling_filter is not None:
+                            filtered_depth_frame = self.hole_filling_filter.process(filtered_depth_frame)
+                    except Exception as exc:
+                        print(f">>> RealSense depth filter failed; using raw depth this frame: {exc} <<<")
+                        filtered_depth_frame = depth_frame
+                filter_done = time.perf_counter()
+                self._profile_add("filter", filter_done - filter_start)
+                filtered_depth_m = np.asanyarray(filtered_depth_frame.get_data()).astype(np.float32) * self.depth_scale
+                if self.filters_for_point_cloud_geometry:
+                    point_cloud_depth_m = self._guard_filtered_geometry_depth(raw_depth_m, filtered_depth_m)
+                else:
+                    point_cloud_depth_m = raw_depth_m
+                point_cloud_color = color
             fast_start = time.perf_counter()
             if self.fast_foundation_enabled:
                 worker = self.fast_foundation_worker
@@ -4697,6 +4711,8 @@ class RealSenseCapture:
                     if result_depth is not None:
                         point_cloud_depth_m = result_depth
                         filtered_depth_m = result_depth
+                        if color.shape[:2] != result_depth.shape[:2]:
+                            point_cloud_color = cv2.resize(color, (result_depth.shape[1], result_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
                         self._fast_foundation_last_seq = int(seq)
                         self.fast_stereo_status = "active"
             self._profile_add("fast_foundation", time.perf_counter() - fast_start)
@@ -4711,10 +4727,10 @@ class RealSenseCapture:
             if self.tracking_enabled:
                 with self._tracker_lock:
                     tracker = self.head_tracker
-                    if tracker is not None:
-                        tracking_color = color
+                    if tracker is not None and filtered_depth_m is not None:
+                        tracking_color = point_cloud_color
                         if filtered_depth_m is not None and color.shape[:2] != filtered_depth_m.shape[:2]:
-                            tracking_color = cv2.resize(color, (filtered_depth_m.shape[1], filtered_depth_m.shape[0]), interpolation=cv2.INTER_LINEAR)
+                            tracking_color = cv2.resize(point_cloud_color, (filtered_depth_m.shape[1], filtered_depth_m.shape[0]), interpolation=cv2.INTER_LINEAR)
                         tracker.submit_frame(tracking_color, filtered_depth_m)
                         head_point, head_pixel = tracker.get_latest()
                         debug = tracker.get_debug()
@@ -4734,7 +4750,7 @@ class RealSenseCapture:
 
             store_start = time.perf_counter()
             with self._frame_lock:
-                self._latest_color_bgr = color
+                self._latest_color_bgr = point_cloud_color
                 self._latest_charuco_color_bgr = charuco_color
                 self._latest_depth_m = point_cloud_depth_m
                 self._latest_tracking_depth_m = filtered_depth_m
