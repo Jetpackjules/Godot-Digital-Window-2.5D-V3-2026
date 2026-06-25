@@ -86,6 +86,14 @@ public:
     bool get_direct_realsense_enabled() const;
     void set_direct_realsense_stream_profile(const godot::String &p_profile);
     godot::String get_direct_realsense_stream_profile() const;
+    void set_direct_realsense_depth_source(const godot::String &p_source);
+    godot::String get_direct_realsense_depth_source() const;
+    void set_direct_realsense_fast_foundation_backend(const godot::String &p_backend);
+    godot::String get_direct_realsense_fast_foundation_backend() const;
+    void set_direct_realsense_fast_foundation_profile(const godot::String &p_profile);
+    godot::String get_direct_realsense_fast_foundation_profile() const;
+    void set_direct_realsense_fast_foundation_model_path(const godot::String &p_path);
+    godot::String get_direct_realsense_fast_foundation_model_path() const;
     void set_direct_realsense_stride(int p_stride);
     int get_direct_realsense_stride() const;
     void set_direct_realsense_filter_config(const godot::Dictionary &p_config);
@@ -157,6 +165,10 @@ private:
     godot::Vector4 current_intrinsics;
     bool direct_realsense_enabled = false;
     godot::String direct_realsense_stream_profile = "viewer30";
+    godot::String direct_realsense_depth_source = "sdk_depth";
+    godot::String direct_realsense_fast_foundation_backend = "onnx_cuda";
+    godot::String direct_realsense_fast_foundation_profile = "fast_192x384_i2";
+    godot::String direct_realsense_fast_foundation_model_path;
     int direct_realsense_stride = 1;
     godot::String direct_realsense_status = "RealSense direct capture is disabled";
     bool direct_realsense_post_processing_enabled = false;

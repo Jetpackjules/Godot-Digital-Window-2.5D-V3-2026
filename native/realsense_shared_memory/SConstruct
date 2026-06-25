@@ -8,6 +8,15 @@ env.Append(CPPPATH=["src"])
 if env.get("platform") == "windows" or ARGUMENTS.get("platform") == "windows":
     env.Append(CXXFLAGS=["/EHsc"])
 
+onnxruntime_include_dir = os.path.join("thirdparty", "onnxruntime", "include")
+onnxruntime_c_api = os.path.join(onnxruntime_include_dir, "onnxruntime", "core", "session", "onnxruntime_c_api.h")
+if os.path.exists(onnxruntime_c_api):
+    env.Append(CPPPATH=[onnxruntime_include_dir])
+    env.Append(CPPDEFINES=["REALSENSE_FOUNDATION_STEREO_ENABLED"])
+    print("RealSense native Foundation Stereo enabled from ONNX Runtime C API header:", onnxruntime_c_api)
+else:
+    print("RealSense native Foundation Stereo disabled; ONNX Runtime C API header not found.")
+
 sdk_candidates = []
 if os.environ.get("REALSENSE2_SDK_DIR"):
     sdk_candidates.append(os.environ["REALSENSE2_SDK_DIR"])

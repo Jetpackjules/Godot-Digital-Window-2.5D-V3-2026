@@ -129,16 +129,16 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		_update_camera_renderers()
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and value)
 @export_multiline var realsense_status: String = ""
-## RealSense depth source. sdk_depth keeps the native RealSense SDK path; FastFoundation uses the IR stereo pair through the Python point-cloud publisher. Performance impact: high when FastFoundation is selected.
-@export_enum("sdk_depth", "fast_foundation") var realsense_depth_source: String = "sdk_depth":
+## RealSense depth source. sdk_depth keeps the native RealSense SDK path; fast_foundation_native runs ONNX in the native extension; fast_foundation keeps the Python publisher fallback. Performance impact: high when FastFoundation is selected.
+@export_enum("sdk_depth", "fast_foundation_native", "fast_foundation") var realsense_depth_source: String = "sdk_depth":
 	set(value):
-		if value not in ["sdk_depth", "fast_foundation"]:
+		if value not in ["sdk_depth", "fast_foundation_native", "fast_foundation"]:
 			value = "sdk_depth"
 		if realsense_depth_source == value:
 			return
 		var previous_source := realsense_depth_source
 		realsense_depth_source = value
-		if previous_source == "fast_foundation" and realsense_depth_source == "sdk_depth":
+		if previous_source == "fast_foundation" and _realsense_direct_capture_active():
 			_send_camera_stream_command(CAMERA_REALSENSE, false)
 		_update_camera_renderers()
 		_request_realsense_restart()
@@ -732,7 +732,7 @@ func _realsense_direct_renderer_available() -> bool:
 	return node != null and node.has_method("set_direct_realsense_enabled")
 
 func _realsense_direct_capture_active() -> bool:
-	return realsense_depth_source == "sdk_depth" and _realsense_direct_renderer_available()
+	return realsense_depth_source in ["sdk_depth", "fast_foundation_native"] and _realsense_direct_renderer_available()
 
 func _update_realsense_direct_status() -> void:
 	var node := _camera_nodes.get(CAMERA_REALSENSE) as Node
@@ -918,10 +918,17 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 		node.call("set_gpu_mesh_static_shader", _gpu_mesh_static_shader_enabled())
 	if camera_id == CAMERA_REALSENSE and node.has_method("set_direct_realsense_enabled"):
 		node.call("set_direct_realsense_stream_profile", realsense_stream_profile)
+		if node.has_method("set_direct_realsense_depth_source"):
+			var native_depth_source := "fast_foundation_native" if realsense_depth_source == "fast_foundation_native" else "sdk_depth"
+			node.call("set_direct_realsense_depth_source", native_depth_source)
+		if node.has_method("set_direct_realsense_fast_foundation_backend"):
+			node.call("set_direct_realsense_fast_foundation_backend", realsense_fast_backend)
+		if node.has_method("set_direct_realsense_fast_foundation_profile"):
+			node.call("set_direct_realsense_fast_foundation_profile", realsense_fast_profile)
 		node.call("set_direct_realsense_stride", realsense_stride)
 		if node.has_method("set_direct_realsense_filter_config"):
 			node.call("set_direct_realsense_filter_config", _direct_realsense_filter_config())
-		node.call("set_direct_realsense_enabled", editor_stream_enabled and realsense_enabled and realsense_depth_source == "sdk_depth")
+		node.call("set_direct_realsense_enabled", editor_stream_enabled and realsense_enabled and (realsense_depth_source in ["sdk_depth", "fast_foundation_native"]))
 		if node.has_method("get_direct_realsense_status"):
 			realsense_status = str(node.call("get_direct_realsense_status"))
 

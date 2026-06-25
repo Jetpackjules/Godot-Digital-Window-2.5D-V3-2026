@@ -5,6 +5,8 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/vector4.hpp>
 
+#include <vector>
+
 #ifdef REALSENSE_DIRECT_ENABLED
 #include <librealsense2/rs.hpp>
 #endif
@@ -22,6 +24,14 @@ public:
     int get_stride() const;
     void set_color_output_enabled(bool p_enabled);
     bool get_color_output_enabled() const;
+    void set_depth_source(const godot::String &p_source);
+    godot::String get_depth_source() const;
+    void set_fast_foundation_backend(const godot::String &p_backend);
+    godot::String get_fast_foundation_backend() const;
+    void set_fast_foundation_profile(const godot::String &p_profile);
+    godot::String get_fast_foundation_profile() const;
+    void set_fast_foundation_model_path(const godot::String &p_path);
+    godot::String get_fast_foundation_model_path() const;
     void set_post_processing_enabled(bool p_enabled);
     void set_decimation_filter_enabled(bool p_enabled);
     void set_decimation_magnitude(int p_magnitude);
@@ -101,13 +111,32 @@ private:
     godot::String status = "RealSense direct capture is closed";
     godot::String filter_status = "filters=off";
     int valid_depth_pixels = 0;
+    godot::String depth_source = "sdk_depth";
+    godot::String fast_foundation_backend = "onnx_cuda";
+    godot::String fast_foundation_profile = "fast_192x384_i2";
+    godot::String fast_foundation_model_path;
+    double fast_foundation_model_ms = 0.0;
+    double fast_foundation_pre_ms = 0.0;
+    double fast_foundation_depth_ms = 0.0;
 
     StreamSettings resolve_stream_settings() const;
     void clear_frame();
+    godot::String resolve_fast_foundation_model_path() const;
 
 #ifdef REALSENSE_DIRECT_ENABLED
     bool opened = false;
     float depth_scale = 0.001f;
+    bool fast_foundation_loaded = false;
+    int fast_foundation_input_width = 0;
+    int fast_foundation_input_height = 0;
+    float fast_foundation_baseline_m = 0.0f;
+    void *fast_foundation_session = nullptr;
+    void *fast_foundation_memory_info = nullptr;
+    std::vector<float> fast_foundation_left_input;
+    std::vector<float> fast_foundation_right_input;
+    std::vector<float> fast_foundation_disparity;
+    std::vector<uint8_t> fast_foundation_left_resized;
+    std::vector<uint8_t> fast_foundation_right_resized;
     rs2::pipeline pipeline;
     rs2::pipeline_profile pipeline_profile;
     rs2::align align_to_depth;
@@ -121,6 +150,11 @@ private:
     rs2::temporal_filter temporal_filter;
     rs2::hole_filling_filter hole_filling_filter;
     rs2::disparity_transform disparity_to_depth_filter;
+    bool is_fast_foundation_source() const;
+    void reset_fast_foundation_runtime();
+    bool initialize_fast_foundation_runtime();
+    bool poll_sdk_depth();
+    bool poll_fast_foundation();
 #else
     bool opened = false;
 #endif

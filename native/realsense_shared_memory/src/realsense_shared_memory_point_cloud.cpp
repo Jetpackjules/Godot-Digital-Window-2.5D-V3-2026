@@ -106,6 +106,14 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_direct_realsense_enabled"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_enabled);
     ClassDB::bind_method(D_METHOD("set_direct_realsense_stream_profile", "profile"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_stream_profile);
     ClassDB::bind_method(D_METHOD("get_direct_realsense_stream_profile"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_stream_profile);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_depth_source", "source"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_depth_source);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_depth_source"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_depth_source);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_fast_foundation_backend", "backend"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_fast_foundation_backend);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_fast_foundation_backend"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_fast_foundation_backend);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_fast_foundation_profile", "profile"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_fast_foundation_profile);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_fast_foundation_profile"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_fast_foundation_profile);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_fast_foundation_model_path", "path"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_fast_foundation_model_path);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_fast_foundation_model_path"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_fast_foundation_model_path);
     ClassDB::bind_method(D_METHOD("set_direct_realsense_stride", "stride"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_stride);
     ClassDB::bind_method(D_METHOD("get_direct_realsense_stride"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_stride);
     ClassDB::bind_method(D_METHOD("set_direct_realsense_filter_config", "config"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_filter_config);
@@ -146,6 +154,10 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "secondary_enabled"), "set_secondary_enabled", "get_secondary_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "direct_realsense_enabled"), "set_direct_realsense_enabled", "get_direct_realsense_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_stream_profile"), "set_direct_realsense_stream_profile", "get_direct_realsense_stream_profile");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_depth_source"), "set_direct_realsense_depth_source", "get_direct_realsense_depth_source");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_fast_foundation_backend"), "set_direct_realsense_fast_foundation_backend", "get_direct_realsense_fast_foundation_backend");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_fast_foundation_profile"), "set_direct_realsense_fast_foundation_profile", "get_direct_realsense_fast_foundation_profile");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_fast_foundation_model_path"), "set_direct_realsense_fast_foundation_model_path", "get_direct_realsense_fast_foundation_model_path");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "direct_realsense_stride"), "set_direct_realsense_stride", "get_direct_realsense_stride");
 }
 
@@ -156,6 +168,10 @@ void RealSenseSharedMemoryPointCloud::_ready() {
             direct_realsense.instantiate();
         }
         direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense->set_depth_source(direct_realsense_depth_source);
+        direct_realsense->set_fast_foundation_backend(direct_realsense_fast_foundation_backend);
+        direct_realsense->set_fast_foundation_profile(direct_realsense_fast_foundation_profile);
+        direct_realsense->set_fast_foundation_model_path(direct_realsense_fast_foundation_model_path);
         direct_realsense->set_stride(direct_realsense_stride);
         apply_direct_realsense_filter_settings();
     } else if (reader.is_null()) {
@@ -181,6 +197,10 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
             direct_realsense.instantiate();
         }
         direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense->set_depth_source(direct_realsense_depth_source);
+        direct_realsense->set_fast_foundation_backend(direct_realsense_fast_foundation_backend);
+        direct_realsense->set_fast_foundation_profile(direct_realsense_fast_foundation_profile);
+        direct_realsense->set_fast_foundation_model_path(direct_realsense_fast_foundation_model_path);
         direct_realsense->set_stride(direct_realsense_stride);
         direct_realsense->set_color_output_enabled(color_frame_required);
         if (!direct_realsense->is_open() && !direct_realsense->open()) {
@@ -682,6 +702,10 @@ void RealSenseSharedMemoryPointCloud::set_direct_realsense_enabled(bool p_enable
             direct_realsense.instantiate();
         }
         direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense->set_depth_source(direct_realsense_depth_source);
+        direct_realsense->set_fast_foundation_backend(direct_realsense_fast_foundation_backend);
+        direct_realsense->set_fast_foundation_profile(direct_realsense_fast_foundation_profile);
+        direct_realsense->set_fast_foundation_model_path(direct_realsense_fast_foundation_model_path);
         direct_realsense->set_stride(direct_realsense_stride);
         direct_realsense->set_color_output_enabled(color_enabled || cpu_project_points || (render_connected_mesh && !gpu_connected_mesh));
         apply_direct_realsense_filter_settings();
@@ -724,6 +748,80 @@ void RealSenseSharedMemoryPointCloud::set_direct_realsense_stream_profile(const 
 }
 
 String RealSenseSharedMemoryPointCloud::get_direct_realsense_stream_profile() const { return direct_realsense_stream_profile; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_depth_source(const String &p_source) {
+    String next = p_source.to_lower();
+    if (next != "sdk_depth" && next != "fast_foundation_native") {
+        next = "sdk_depth";
+    }
+    if (direct_realsense_depth_source == next) {
+        return;
+    }
+    direct_realsense_depth_source = next;
+    primary_history.clear();
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_depth_source(direct_realsense_depth_source);
+        direct_realsense_status = direct_realsense->get_status();
+    }
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_depth_source() const { return direct_realsense_depth_source; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_fast_foundation_backend(const String &p_backend) {
+    String next = p_backend.to_lower();
+    if (next != "onnx_trt" && next != "onnx_cuda" && next != "onnx_cpu") {
+        next = "onnx_cuda";
+    }
+    if (direct_realsense_fast_foundation_backend == next) {
+        return;
+    }
+    direct_realsense_fast_foundation_backend = next;
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_fast_foundation_backend(direct_realsense_fast_foundation_backend);
+        direct_realsense_status = direct_realsense->get_status();
+    }
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_fast_foundation_backend() const { return direct_realsense_fast_foundation_backend; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_fast_foundation_profile(const String &p_profile) {
+    String next = p_profile.to_lower();
+    if (next != "full_320x736_i4" && next != "rt_256x512_i2" && next != "fast_192x384_i2") {
+        next = "fast_192x384_i2";
+    }
+    if (direct_realsense_fast_foundation_profile == next) {
+        return;
+    }
+    direct_realsense_fast_foundation_profile = next;
+    primary_history.clear();
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_fast_foundation_profile(direct_realsense_fast_foundation_profile);
+        direct_realsense_status = direct_realsense->get_status();
+    }
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_fast_foundation_profile() const { return direct_realsense_fast_foundation_profile; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_fast_foundation_model_path(const String &p_path) {
+    if (direct_realsense_fast_foundation_model_path == p_path) {
+        return;
+    }
+    direct_realsense_fast_foundation_model_path = p_path;
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_fast_foundation_model_path(direct_realsense_fast_foundation_model_path);
+        direct_realsense_status = direct_realsense->get_status();
+    }
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_fast_foundation_model_path() const { return direct_realsense_fast_foundation_model_path; }
 
 void RealSenseSharedMemoryPointCloud::set_direct_realsense_stride(int p_stride) {
     const int next = std::max(1, p_stride);

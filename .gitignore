@@ -30,4 +30,8 @@ native/realsense_shared_memory/src/*.obj
 native/realsense_shared_memory/src/*.obj.import
 native/realsense_shared_memory/bin/*.exp
 native/realsense_shared_memory/bin/*.lib
+native/realsense_shared_memory/bin/*.ilk
+native/realsense_shared_memory/bin/*.pdb
+native/realsense_shared_memory/bin/~*.dll
+native/realsense_shared_memory/*.pdb
 native/realsense_shared_memory/godot-cpp/
