@@ -1,27 +1,32 @@
 [gd_scene format=3 uid="uid://dnghk8l0qx7rm"]
 
 [ext_resource type="Script" uid="uid://dtrcgdq8e01b7" path="res://Views/Unified Point Clouds/unified_point_cloud_view.gd" id="1_unified"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="2_46eh4"]
 
 [node name="Unified Point Clouds" type="Node3D" unique_id=267359055]
 script = ExtResource("1_unified")
-editor_stream_enabled = false
-render_mode = "shader_mesh"
-oakd_capture_preset = "30fps_low_latency"
-oakd_fast_profile = "rt_256x512_i2"
-oakd_fast_iters = 4
+editor_stream_enabled = true
+min_depth_m = 0.05
+render_mode = "points"
+point_pixel_size = 2.0
+realsense_status = "RealSense direct capture active: highres30
+filters=off src=1280x720 out=1280x720 valid=610912/921600 (66.3%)"
+realsense_stream_profile = "highres30"
+realsense_decimation_filter_enabled = false
+oakd_status = "OAK-D active none 0x0@0 | requested source depthai | requested 1024x576@30"
 calibration_status = "Big ArUco OK: 4 shared marker(s), depth rmse 0.021m"
-debug_text = "RealSense cap/pub/render 60.1/30.6/10.0, OAK-D cap/pub/render 30.0/29.0/10.0"
+debug_text = "RealSense cap/pub/render 24.0/24.0/23.5, OAK-D cap/pub/render 0.0/0.0/0.0"
 
 [node name="CameraClouds2" type="Node3D" parent="." unique_id=1373529331]
 
 [node name="DebugPanelAnchor" type="Node3D" parent="." unique_id=533157947]
 transform = Transform3D(1, 0, 0, 0, 0.906308, 0.422618, 0, -0.422618, 0.906308, -1.15, 0.95, -1.35)
 
-[node name="PreviewCamera" type="Camera3D" parent="." unique_id=215518306]
-transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 1.1, 2.4)
-current = true
-fov = 55.0
-
 [node name="PreviewLight" type="DirectionalLight3D" parent="." unique_id=1944190877]
 transform = Transform3D(0.707107, -0.353553, 0.612372, 0, 0.866025, 0.5, -0.707107, -0.353553, 0.612372, 0, 1.5, 0)
 light_energy = 0.45
+
+[node name="ViewBounds" type="Node3D" parent="." unique_id=258096863]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.44468057)
+script = ExtResource("2_46eh4")
+show_preview_in_game = true

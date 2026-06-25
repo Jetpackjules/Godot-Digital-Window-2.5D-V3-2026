@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
+[ext_resource type="PackedScene" uid="uid://dnghk8l0qx7rm" path="res://Views/Unified Point Clouds/View.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
 [ext_resource type="Script" uid="uid://dgllwkw8ksktv" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
@@ -31,6 +32,10 @@ albedo_texture = ExtResource("3_cm0pq")
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_a0tk4"]
 material = SubResource("StandardMaterial3D_3dxm6")
 height = 1.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fpfj3"]
+shading_mode = 0
+albedo_color = Color(1, 0, 0, 1)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_r0du0"]
 albedo_color = Color(1, 0, 0, 1)
@@ -92,18 +97,22 @@ border_depth_offset_meters = 0.0
 
 [node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=430316341]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.30382875, 0, 0)
+material_override = SubResource("StandardMaterial3D_fpfj3")
 mesh = SubResource("QuadMesh_cm0pq")
 
 [node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1990355786]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.30382875, 0, 0)
+material_override = SubResource("StandardMaterial3D_fpfj3")
 mesh = SubResource("QuadMesh_cm0pq")
 
 [node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1073289249]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.17549743, 0)
+material_override = SubResource("StandardMaterial3D_fpfj3")
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=441872831]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.17549743, 0)
+material_override = SubResource("StandardMaterial3D_fpfj3")
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
@@ -123,6 +132,7 @@ camera_node = NodePath("../Player/Head_Cam")
 player_node = NodePath("../Player")
 window_center = NodePath("../Player/MonitorFrame")
 screen_scaler = NodePath("../ScreenScaling")
+use_websocket = false
 websocket_url = "ws://127.0.0.1:8080"
 
 [node name="ScreenScaling" type="Node" parent="." unique_id=582618632]
@@ -137,6 +147,8 @@ script = ExtResource("9_vs123")
 fallback_directional_light_path = NodePath("../Light")
 fallback_world_environment_path = NodePath("../WorldEnvironment")
 window_center_path = NodePath("../Player/MonitorFrame")
+current_view_scene = ExtResource("9_j4qnp")
+explicit_view_scene_paths = PackedStringArray()
 current_view_name = "test_box.tscn"
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]

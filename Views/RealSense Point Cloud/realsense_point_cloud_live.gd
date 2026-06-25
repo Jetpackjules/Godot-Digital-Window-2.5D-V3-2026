@@ -388,6 +388,15 @@ const BIG_ARUCO_DICTIONARY := "4x4_50"
 @export_range(0.25, 5.0, 0.25, "suffix:s") var render_benchmark_settle_seconds: float = 1.0
 @export_multiline var render_benchmark_summary: String = ""
 @export_group("RealSense SDK")
+@export_enum("fast60", "viewer30", "highres30") var realsense_stream_profile: String = "viewer30":
+	set(value):
+		if value not in ["fast60", "viewer30", "highres30"]:
+			value = "viewer30"
+		if realsense_stream_profile == value:
+			return
+		realsense_stream_profile = value
+		_restart_realsense_stream()
+		_resend_stream_settings()
 @export var apply_default_settings_now: bool = false:
 	set(value):
 		apply_default_settings_now = false
@@ -698,6 +707,7 @@ func _send_stream_command(enabled: bool) -> void:
 	var payload := {
 		"type": "realsense_point_cloud",
 		"enabled": enabled,
+		"stream_profile": realsense_stream_profile,
 		"stats_path": _point_cloud_stats_path,
 		"console_stats": print_stream_stats_to_console,
 		"stride": maxi(1, stream_stride),
@@ -1262,21 +1272,32 @@ func _apply_realsense_default_settings() -> void:
 	_command_udp.put_packet(JSON.stringify(payload).to_utf8_buffer())
 	print("RealSense apply default_settings.json requested")
 
+func _restart_realsense_stream() -> void:
+	_command_udp.set_dest_address("127.0.0.1", tracker_control_port)
+	var payload := {
+		"type": "realsense_restart",
+		"enabled": auto_enable_stream,
+		"stream_profile": realsense_stream_profile,
+	}
+	_command_udp.put_packet(JSON.stringify(payload).to_utf8_buffer())
+	print("RealSense stream profile restart requested: %s" % realsense_stream_profile)
+
 func _apply_fusion_quality_preset() -> void:
+	realsense_stream_profile = "viewer30"
 	stream_stride = 2
 	sync_point_cloud_fps_to_slowest = false
 	point_cloud_delay_compensation_enabled = false
 	realsense_point_cloud_delay_ms = 0
 	oakd_point_cloud_delay_ms = 0
-	render_connected_mesh = false
-	live_mesh_mode = "gpu_grid"
+	render_connected_mesh = true
+	live_mesh_mode = "stereo_gpu"
 	combined_mesh_mode = "separate_meshes"
 	mesh_max_edge_m = 0.055
 	mesh_max_depth_delta_m = 0.055
 	mesh_min_triangle_area_m2 = 0.0
 	mesh_max_color_delta = 2.0
-	texture_map_mesh = false
-	depth_filters_enabled = true
+	texture_map_mesh = true
+	depth_filters_enabled = false
 	filters_for_point_cloud_geometry = false
 	filter_geometry_edge_guard_m = 0.045
 	disparity_filters_enabled = true

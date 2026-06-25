@@ -1,5 +1,6 @@
 #include "register_types.h"
 
+#include "realsense_direct_frame_source.h"
 #include "realsense_shared_memory_point_cloud.h"
 #include "realsense_shared_memory_reader.h"
 
@@ -12,6 +13,7 @@ void initialize_realsense_shared_memory_module(ModuleInitializationLevel p_level
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
         return;
     }
+    ClassDB::register_class<RealSenseDirectFrameSource>();
     ClassDB::register_class<RealSenseSharedMemoryReader>();
     ClassDB::register_class<RealSenseSharedMemoryPointCloud>();
 }

@@ -80,6 +80,13 @@ def main() -> int:
         default=None,
         help="Initial tracker camera source. Defaults to auto, which starts with RealSense when a device is present.",
     )
+    parser.add_argument(
+        "--realsense-stream-profile",
+        "--realsense-profile",
+        choices=("fast60", "viewer30", "highres30", "custom"),
+        default=None,
+        help="RealSense stream preset: fast60 uses 640x480 depth/color at 60fps; viewer30 matches RealSense Viewer with 848x480 depth plus 1280x720 color at 30fps; highres30 uses 1280x720 depth/color at 30fps. Use custom with REALSENSE_* env vars.",
+    )
     args = parser.parse_args()
 
     requested_camera_source = args.camera_source or os.environ.get("TRACKER_CAMERA_SOURCE", "auto")
@@ -93,6 +100,9 @@ def main() -> int:
         selected_camera_source = "realsense" if realsense_available() else "webcam"
     os.environ["TRACKER_CAMERA_SOURCE"] = selected_camera_source
     print(f"[stack] TRACKER_CAMERA_SOURCE={selected_camera_source}")
+    if args.realsense_stream_profile:
+        os.environ["REALSENSE_STREAM_PROFILE"] = args.realsense_stream_profile
+        print(f"[stack] REALSENSE_STREAM_PROFILE={args.realsense_stream_profile}")
 
     processes: list[tuple[str, subprocess.Popen]] = []
 

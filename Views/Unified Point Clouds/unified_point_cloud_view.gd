@@ -18,8 +18,8 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		if editor_stream_enabled == value:
 			return
 		editor_stream_enabled = value
-		_send_all_stream_commands()
 		_update_camera_renderers()
+		_send_all_stream_commands()
 ## Shows the in-world FPS table. Performance impact: low; it updates a small viewport texture four times per second.
 @export var show_debug_panel: bool = true:
 	set(value):
@@ -56,8 +56,8 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		sync_fps_to_slowest = value
 		_send_all_stream_commands()
-## points = native projected points, point_splats = larger round points, gpu_mesh = current sparse-index mesh, shader_mesh = static full-grid shader rejected mesh, cpu_mesh = CPU-built connected mesh fallback.
-@export_enum("points", "point_splats", "gpu_mesh", "shader_mesh", "cpu_mesh") var render_mode: String = "point_splats":
+## points = native projected points, point_splats = larger round points, gpu_mesh = sparse-index mesh rebuild, shader_mesh = indexed static shader mesh, cpu_mesh = CPU-built connected mesh fallback.
+@export_enum("points", "point_splats", "gpu_mesh", "shader_mesh", "cpu_mesh") var render_mode: String = "shader_mesh":
 	set(value):
 		if value not in ["points", "point_splats", "gpu_mesh", "shader_mesh", "cpu_mesh"]:
 			value = "point_splats"
@@ -126,12 +126,25 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 @export var realsense_enabled: bool = true:
 	set(value):
 		realsense_enabled = value
-		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and value)
 		_update_camera_renderers()
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and value)
+@export_multiline var realsense_status: String = ""
+## RealSense stream profile. Changing this restarts the RealSense pipeline because resolution/FPS are fixed at stream start.
+@export_enum("fast60", "viewer30", "highres30") var realsense_stream_profile: String = "viewer30":
+	set(value):
+		if value not in ["fast60", "viewer30", "highres30"]:
+			value = "viewer30"
+		if realsense_stream_profile == value:
+			return
+		realsense_stream_profile = value
+		_request_realsense_restart()
+		_update_camera_renderers()
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 ## RealSense grid sampling stride. 1 keeps maximum RealSense detail; 2 halves each axis and is much faster. Performance impact: high.
 @export_range(1, 8, 1) var realsense_stride: int = 1:
 	set(value):
 		realsense_stride = maxi(1, value)
+		_update_camera_renderers()
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 ## Shows RealSense RGB on its point cloud. Off renders RealSense as grayscale for easier depth debugging. Performance impact: low.
 @export var realsense_color_enabled: bool = true:
@@ -142,11 +155,59 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 @export var realsense_depth_filters_enabled: bool = false:
 	set(value):
 		realsense_depth_filters_enabled = value
+		_update_camera_renderers()
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+@export_subgroup("Post Processing")
+@export var realsense_decimation_filter_enabled: bool = true:
+	set(value):
+		realsense_decimation_filter_enabled = value
+		_update_camera_renderers()
+@export_range(2, 8, 1) var realsense_decimation_magnitude: int = 2:
+	set(value):
+		realsense_decimation_magnitude = clampi(value, 2, 8)
+		_update_camera_renderers()
+@export var realsense_rotation_filter_enabled: bool = false:
+	set(value):
+		realsense_rotation_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_hdr_merge_filter_enabled: bool = true:
+	set(value):
+		realsense_hdr_merge_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_sequence_id_filter_enabled: bool = false:
+	set(value):
+		realsense_sequence_id_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_threshold_filter_enabled: bool = false:
+	set(value):
+		realsense_threshold_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_depth_to_disparity_filter_enabled: bool = true:
+	set(value):
+		realsense_depth_to_disparity_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_spatial_filter_enabled: bool = true:
+	set(value):
+		realsense_spatial_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_temporal_filter_enabled: bool = true:
+	set(value):
+		realsense_temporal_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_hole_filling_filter_enabled: bool = false:
+	set(value):
+		realsense_hole_filling_filter_enabled = value
+		_update_camera_renderers()
+@export var realsense_disparity_to_depth_filter_enabled: bool = true:
+	set(value):
+		realsense_disparity_to_depth_filter_enabled = value
+		_update_camera_renderers()
+@export_subgroup("")
 ## Uses filtered depth for geometry, not only preview. Performance impact: high when combined with SDK filters; can stabilize depth but costs FPS.
 @export var realsense_filters_for_geometry: bool = false:
 	set(value):
 		realsense_filters_for_geometry = value
+		_update_camera_renderers()
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 ## Drops points near filtered RealSense edge changes. Performance impact: moderate; higher values clean edges but remove real geometry.
 @export_range(0.0, 0.30, 0.005, "suffix:m") var realsense_geometry_edge_guard_m: float = 0.04:
@@ -157,9 +218,10 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 @export_range(0, 2, 1) var realsense_hole_filling: int = 1:
 	set(value):
 		realsense_hole_filling = value
+		_update_camera_renderers()
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 ## Freezes tiny RealSense depth changes in the published grid. Performance impact: low; reduces floor shimmer without SDK filter cost.
-@export var realsense_stabilization_enabled: bool = true:
+@export var realsense_stabilization_enabled: bool = false:
 	set(value):
 		realsense_stabilization_enabled = value
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
@@ -354,10 +416,11 @@ func _process(_delta: float) -> void:
 	_poll_point_cloud_stats()
 	_poll_alignment_result(false)
 	_update_camera_renderers()
+	_update_realsense_direct_status()
 	_update_debug_panel(false)
 
 func _apply_clean_defaults() -> void:
-	render_mode = "point_splats"
+	render_mode = "shader_mesh"
 	point_pixel_size = 2.5
 	cleanup_enabled = false
 	cleanup_depth_delta_m = 0.055
@@ -365,13 +428,26 @@ func _apply_clean_defaults() -> void:
 	edge_feather_enabled = true
 	mesh_max_depth_delta_m = 0.12
 	mesh_max_edge_m = 0.15
+	texture_map_mesh = true
+	realsense_stream_profile = "viewer30"
 	realsense_stride = 1
 	oakd_stride = 1
 	realsense_depth_filters_enabled = false
+	realsense_decimation_filter_enabled = true
+	realsense_decimation_magnitude = 2
+	realsense_rotation_filter_enabled = false
+	realsense_hdr_merge_filter_enabled = true
+	realsense_sequence_id_filter_enabled = false
+	realsense_threshold_filter_enabled = false
+	realsense_depth_to_disparity_filter_enabled = true
+	realsense_spatial_filter_enabled = true
+	realsense_temporal_filter_enabled = true
+	realsense_hole_filling_filter_enabled = false
+	realsense_disparity_to_depth_filter_enabled = true
 	realsense_filters_for_geometry = false
-	realsense_stabilization_enabled = true
-	realsense_stabilization_deadband_m = 0.012
-	realsense_stabilization_hold_frames = 1
+	realsense_stabilization_enabled = false
+	realsense_stabilization_deadband_m = 0.0
+	realsense_stabilization_hold_frames = 0
 	oakd_capture_preset = "30fps_low_latency"
 	oakd_depth_source = "fast_foundation"
 	oakd_color_enabled = false
@@ -462,6 +538,24 @@ func _tracker_mesh_mode() -> String:
 		return "stereo_cpu"
 	return "gpu_points"
 
+func _direct_realsense_filter_config() -> Dictionary:
+	var native_filters_enabled := realsense_depth_filters_enabled or realsense_filters_for_geometry
+	return {
+		"post_processing_enabled": native_filters_enabled,
+		"decimation_filter_enabled": realsense_decimation_filter_enabled,
+		"decimation_magnitude": realsense_decimation_magnitude,
+		"rotation_filter_enabled": realsense_rotation_filter_enabled,
+		"hdr_merge_filter_enabled": realsense_hdr_merge_filter_enabled,
+		"sequence_id_filter_enabled": realsense_sequence_id_filter_enabled,
+		"threshold_filter_enabled": realsense_threshold_filter_enabled,
+		"depth_to_disparity_filter_enabled": realsense_depth_to_disparity_filter_enabled,
+		"spatial_filter_enabled": realsense_spatial_filter_enabled,
+		"temporal_filter_enabled": realsense_temporal_filter_enabled,
+		"hole_filling_filter_enabled": realsense_hole_filling_filter_enabled,
+		"disparity_to_depth_filter_enabled": realsense_disparity_to_depth_filter_enabled,
+		"hole_filling_mode": realsense_hole_filling,
+	}
+
 func _effective_oakd_color_mode() -> String:
 	return oakd_color_mode if oakd_color_enabled else "gray"
 
@@ -526,6 +620,7 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 	if camera_id == CAMERA_REALSENSE:
 		payload.merge({
 			"type": "realsense_point_cloud",
+			"stream_profile": realsense_stream_profile,
 			"max_points": 0,
 			"mesh_enabled": _mesh_enabled(),
 			"mesh_mode": _tracker_mesh_mode(),
@@ -539,6 +634,11 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 			"rs_stabilization_deadband_m": realsense_stabilization_deadband_m,
 			"rs_stabilization_hold_frames": realsense_stabilization_hold_frames,
 		}, true)
+		if _realsense_direct_renderer_available():
+			if enabled:
+				payload["enabled"] = false
+				_send_udp(payload)
+			return
 	elif camera_id == CAMERA_OAKD:
 		var oakd_capture := _oakd_capture_settings()
 		payload.merge({
@@ -575,6 +675,19 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 		return
 	_send_udp(payload)
 
+func _realsense_direct_renderer_available() -> bool:
+	var node := _camera_nodes.get(CAMERA_REALSENSE) as Node
+	if node == null or not is_instance_valid(node):
+		node = _find_camera_renderer(CAMERA_REALSENSE)
+	return node != null and node.has_method("set_direct_realsense_enabled")
+
+func _update_realsense_direct_status() -> void:
+	var node := _camera_nodes.get(CAMERA_REALSENSE) as Node
+	if node == null or not is_instance_valid(node):
+		node = _find_camera_renderer(CAMERA_REALSENSE)
+	if node != null and node.has_method("get_direct_realsense_status"):
+		realsense_status = str(node.call("get_direct_realsense_status"))
+
 func _request_oakd_restart() -> void:
 	if _point_cloud_stats_path.is_empty():
 		_point_cloud_stats_path = ProjectSettings.globalize_path("user://point_cloud_stream_stats.json")
@@ -607,6 +720,16 @@ func _request_oakd_restart() -> void:
 		"oakd_fast_stereo_torch_compile": false,
 	}
 	oakd_status = "OAK-D restart requested..."
+	_send_udp(payload)
+
+func _request_realsense_restart() -> void:
+	if _realsense_direct_renderer_available():
+		return
+	var payload := {
+		"type": "realsense_restart",
+		"enabled": editor_stream_enabled and realsense_enabled,
+		"stream_profile": realsense_stream_profile,
+	}
 	_send_udp(payload)
 
 func _ensure_scene_anchors() -> void:
@@ -687,6 +810,8 @@ func _free_camera_renderer(camera_id: String) -> void:
 	if node == null or not is_instance_valid(node):
 		node = _find_camera_renderer(camera_id)
 	if node != null:
+		if camera_id == CAMERA_REALSENSE and node.has_method("set_direct_realsense_enabled"):
+			node.call("set_direct_realsense_enabled", false)
 		node.queue_free()
 	_camera_nodes.erase(camera_id)
 
@@ -732,6 +857,14 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 		node.call("set_gpu_mesh_compute_indices", _gpu_mesh_compute_enabled())
 	if node.has_method("set_gpu_mesh_static_shader"):
 		node.call("set_gpu_mesh_static_shader", _gpu_mesh_static_shader_enabled())
+	if camera_id == CAMERA_REALSENSE and node.has_method("set_direct_realsense_enabled"):
+		node.call("set_direct_realsense_stream_profile", realsense_stream_profile)
+		node.call("set_direct_realsense_stride", realsense_stride)
+		if node.has_method("set_direct_realsense_filter_config"):
+			node.call("set_direct_realsense_filter_config", _direct_realsense_filter_config())
+		node.call("set_direct_realsense_enabled", editor_stream_enabled and realsense_enabled)
+		if node.has_method("get_direct_realsense_status"):
+			realsense_status = str(node.call("get_direct_realsense_status"))
 
 func _request_big_aruco_alignment() -> void:
 	if _alignment_result_path.is_empty():
@@ -1033,10 +1166,31 @@ func _camera_debug_values(camera_id: String) -> Dictionary:
 	var model_age := float(fast_timing.get("model", 0.0))
 	for key in fast_timing.keys():
 		work_age += float(fast_timing.get(key, 0.0))
+	var native_render_fps := _native_stat(camera_id, "get_render_fps")
+	var native_direct_capture_fps := 0.0
+	if camera_id == CAMERA_REALSENSE and _realsense_direct_renderer_available():
+		native_direct_capture_fps = _native_stat(camera_id, "get_direct_realsense_capture_fps")
+		var direct_cap := native_direct_capture_fps if native_direct_capture_fps > 0.01 else native_render_fps
+		return {
+			"cap": direct_cap,
+			"pub": direct_cap,
+			"render": native_render_fps,
+			"points": int(_native_stat(camera_id, "get_last_point_count")),
+			"render_points": int(_native_stat(camera_id, "get_last_point_count")),
+			"render_tris": int(_native_stat(camera_id, "get_last_triangle_count")),
+			"held_age": float(_native_stat(camera_id, "get_display_frame_age_ms")),
+			"sensor_age": 0.0,
+			"color_age": 0.0,
+			"sensor_host_age": 0.0,
+			"color_host_age": 0.0,
+			"work_age": 0.0,
+			"model_age": 0.0,
+			"frame_age": 0.0,
+		}
 	return {
 		"cap": float(stats.get("capture_fps", 0.0)),
 		"pub": float(stats.get("publish_fps", 0.0)),
-		"render": _native_stat(camera_id, "get_render_fps"),
+		"render": native_render_fps,
 		"points": int(stats.get("points", 0)),
 		"render_points": int(_native_stat(camera_id, "get_last_point_count")),
 		"render_tris": int(_native_stat(camera_id, "get_last_triangle_count")),

@@ -155,12 +155,65 @@ PREFERRED_CAMERA_MODES = [
     (1280, 720),
 ]
 PREFERRED_CAMERA_FPS = 60
-REALSENSE_CAMERA_FPS = int(os.environ.get("REALSENSE_CAMERA_FPS", "60"))
-REALSENSE_DEPTH_WIDTH = int(os.environ.get("REALSENSE_DEPTH_WIDTH", "640"))
-REALSENSE_DEPTH_HEIGHT = int(os.environ.get("REALSENSE_DEPTH_HEIGHT", "480"))
-REALSENSE_COLOR_WIDTH = int(os.environ.get("REALSENSE_COLOR_WIDTH", "1280"))
-REALSENSE_COLOR_HEIGHT = int(os.environ.get("REALSENSE_COLOR_HEIGHT", "720"))
-REALSENSE_COLOR_FPS = int(os.environ.get("REALSENSE_COLOR_FPS", str(REALSENSE_CAMERA_FPS)))
+REALSENSE_STREAM_PROFILE = os.environ.get("REALSENSE_STREAM_PROFILE", "fast60").strip().lower()
+REALSENSE_STREAM_PROFILE_PRESETS = {
+    "fast60": {
+        "depth_width": 640,
+        "depth_height": 480,
+        "depth_fps": 60,
+        "color_width": 640,
+        "color_height": 480,
+        "color_fps": 60,
+    },
+    "highres30": {
+        "depth_width": 1280,
+        "depth_height": 720,
+        "depth_fps": 30,
+        "color_width": 1280,
+        "color_height": 720,
+        "color_fps": 30,
+    },
+    "viewer30": {
+        "depth_width": 848,
+        "depth_height": 480,
+        "depth_fps": 30,
+        "color_width": 1280,
+        "color_height": 720,
+        "color_fps": 30,
+    },
+}
+if REALSENSE_STREAM_PROFILE not in REALSENSE_STREAM_PROFILE_PRESETS and REALSENSE_STREAM_PROFILE != "custom":
+    print(f">>> Unknown REALSENSE_STREAM_PROFILE={REALSENSE_STREAM_PROFILE!r}; using fast60. <<<")
+    REALSENSE_STREAM_PROFILE = "fast60"
+_REALSENSE_STREAM_DEFAULTS = REALSENSE_STREAM_PROFILE_PRESETS.get(
+    REALSENSE_STREAM_PROFILE,
+    REALSENSE_STREAM_PROFILE_PRESETS["fast60"],
+)
+
+def resolve_realsense_stream_settings(profile=None):
+    profile_name = (profile or REALSENSE_STREAM_PROFILE or "fast60").strip().lower()
+    if profile_name not in REALSENSE_STREAM_PROFILE_PRESETS and profile_name != "custom":
+        print(f">>> Unknown RealSense stream profile {profile_name!r}; using fast60. <<<")
+        profile_name = "fast60"
+    defaults = REALSENSE_STREAM_PROFILE_PRESETS.get(
+        profile_name,
+        REALSENSE_STREAM_PROFILE_PRESETS["fast60"],
+    )
+    return profile_name, {
+        "depth_width": int(os.environ.get("REALSENSE_DEPTH_WIDTH", str(defaults["depth_width"]))),
+        "depth_height": int(os.environ.get("REALSENSE_DEPTH_HEIGHT", str(defaults["depth_height"]))),
+        "depth_fps": int(os.environ.get("REALSENSE_CAMERA_FPS", str(defaults["depth_fps"]))),
+        "color_width": int(os.environ.get("REALSENSE_COLOR_WIDTH", str(defaults["color_width"]))),
+        "color_height": int(os.environ.get("REALSENSE_COLOR_HEIGHT", str(defaults["color_height"]))),
+        "color_fps": int(os.environ.get("REALSENSE_COLOR_FPS", str(defaults["color_fps"]))),
+    }
+
+REALSENSE_CAMERA_FPS = int(os.environ.get("REALSENSE_CAMERA_FPS", str(_REALSENSE_STREAM_DEFAULTS["depth_fps"])))
+REALSENSE_DEPTH_WIDTH = int(os.environ.get("REALSENSE_DEPTH_WIDTH", str(_REALSENSE_STREAM_DEFAULTS["depth_width"])))
+REALSENSE_DEPTH_HEIGHT = int(os.environ.get("REALSENSE_DEPTH_HEIGHT", str(_REALSENSE_STREAM_DEFAULTS["depth_height"])))
+REALSENSE_COLOR_WIDTH = int(os.environ.get("REALSENSE_COLOR_WIDTH", str(_REALSENSE_STREAM_DEFAULTS["color_width"])))
+REALSENSE_COLOR_HEIGHT = int(os.environ.get("REALSENSE_COLOR_HEIGHT", str(_REALSENSE_STREAM_DEFAULTS["color_height"])))
+REALSENSE_COLOR_FPS = int(os.environ.get("REALSENSE_COLOR_FPS", str(_REALSENSE_STREAM_DEFAULTS["color_fps"])))
 FUSION_CHARUCO_MIN_CORNERS = int(os.environ.get("FUSION_CHARUCO_MIN_CORNERS", "12"))
 FUSION_CHARUCO_SAMPLE_FRAMES = int(os.environ.get("FUSION_CHARUCO_SAMPLE_FRAMES", "12"))
 WORLD_ANCHOR_MARKER_IDS = [45, 46, 47, 48, 49]
@@ -3816,7 +3869,7 @@ class RealSenseCapture:
         self.config = rs.config()
         self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
         self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
-        self.imu_enabled = bool(REALSENSE_IMU_FALLBACK_ENABLED)
+        self.imu_enabled = bool(REALSENSE_IMU_FALLBACK_ENABLED and tracking_enabled)
         self.imu_available = False
         self.imu_translation_enabled = os.environ.get(
             "REALSENSE_IMU_FALLBACK_TRANSLATION",
@@ -4542,7 +4595,8 @@ class RealSenseCapture:
 
     def read(self):
         if self._latest_color_bgr is None and self._latest_charuco_color_bgr is None:
-            self._frame_event.wait(0.5)
+            timeout = 5.0 if self._last_read_frame_id < 0 else 0.5
+            self._frame_event.wait(timeout)
         read_copy_start = time.perf_counter()
         with self._frame_lock:
             if self._latest_color_bgr is None and self._latest_charuco_color_bgr is None:
@@ -4896,6 +4950,7 @@ def main():
     realsense_point_cloud_waiting_warned = False
     realsense_point_cloud_send_counter = 0
     realsense_point_cloud_last_fps_print_time = time.time()
+    active_realsense_stream_profile = REALSENSE_STREAM_PROFILE
     oakd_capture = None
     oakd_point_cloud_enabled = False
     oakd_point_cloud_stride = max(1, OAKD_POINT_CLOUD_DEFAULT_STRIDE)
@@ -5291,7 +5346,10 @@ def main():
 
         rows = np.arange(0, depth_m.shape[0], stride, dtype=np.int32)
         cols = np.arange(0, depth_m.shape[1], stride, dtype=np.int32)
-        sampled_depth = depth_m[np.ix_(rows, cols)]
+        if stride == 1:
+            sampled_depth = depth_m
+        else:
+            sampled_depth = depth_m[np.ix_(rows, cols)]
         valid = np.isfinite(sampled_depth) & (sampled_depth >= min_depth) & (sampled_depth <= max_depth)
         sampled_depth, valid = stabilize_point_cloud_depth(
             "realsense",
@@ -5314,9 +5372,14 @@ def main():
             )
         )
         if uses_grid_transport:
-            grid_depth = sampled_depth.astype("<f4", copy=True)
-            grid_depth[~valid] = 0.0
-            sampled_color_grid = color[np.ix_(rows, cols)]
+            grid_depth = np.ascontiguousarray(sampled_depth, dtype="<f4")
+            if not bool(valid.all()):
+                grid_depth = grid_depth.copy()
+                grid_depth[~valid] = 0.0
+            if stride == 1 and color.shape[:2] == sampled_depth.shape:
+                sampled_color_grid = color
+            else:
+                sampled_color_grid = color[np.ix_(rows, cols)]
             grid_h, grid_w = grid_depth.shape
             tri_mask = None
             needs_triangle_mask = (
@@ -5385,6 +5448,7 @@ def main():
                     enabled=True,
                     publish_fps=float(publish_fps),
                     capture_fps=float(getattr(capture, "capture_fps", 0.0)),
+                    stream_profile=str(active_realsense_stream_profile),
                     points=int(valid_count),
                     valid_pct=float(valid_pct),
                     width=int(grid_w),
@@ -5436,6 +5500,7 @@ def main():
                 enabled=True,
                 publish_fps=float(publish_fps),
                 capture_fps=float(getattr(capture, "capture_fps", 0.0)),
+                stream_profile=str(active_realsense_stream_profile),
                 points=int(valid_count),
                 valid_pct=float(valid_pct),
                 width=int(grid_w),
@@ -5461,7 +5526,10 @@ def main():
         # RealSense/OpenCV is X right, Y down, Z forward. Godot view space here is
         # X right, Y up, -Z forward so the live cloud appears in front of the window.
         positions = np.stack([x[valid], -y[valid], -z[valid]], axis=1).astype("<f4", copy=False)
-        sampled_color = color[np.ix_(rows, cols)][valid]
+        if stride == 1 and color.shape[:2] == sampled_depth.shape:
+            sampled_color = color[valid]
+        else:
+            sampled_color = color[np.ix_(rows, cols)][valid]
         rgba = np.empty((sampled_color.shape[0], 4), dtype=np.uint8)
         rgba[:, 0] = sampled_color[:, 2]
         rgba[:, 1] = sampled_color[:, 1]
@@ -6897,40 +6965,47 @@ def main():
                 return None
             capture = None
             last_exc = None
+            profile_name, stream_settings = resolve_realsense_stream_settings(active_realsense_stream_profile)
+            depth_width = stream_settings["depth_width"]
+            depth_height = stream_settings["depth_height"]
+            depth_fps = stream_settings["depth_fps"]
+            color_width = stream_settings["color_width"]
+            color_height = stream_settings["color_height"]
+            color_fps = stream_settings["color_fps"]
             candidates = [
                 (
-                    REALSENSE_DEPTH_WIDTH,
-                    REALSENSE_DEPTH_HEIGHT,
-                    REALSENSE_CAMERA_FPS,
-                    REALSENSE_COLOR_WIDTH,
-                    REALSENSE_COLOR_HEIGHT,
-                    REALSENSE_COLOR_FPS,
-                    "requested",
+                    depth_width,
+                    depth_height,
+                    depth_fps,
+                    color_width,
+                    color_height,
+                    color_fps,
+                    profile_name,
                 ),
                 (
-                    REALSENSE_DEPTH_WIDTH,
-                    REALSENSE_DEPTH_HEIGHT,
-                    REALSENSE_CAMERA_FPS,
-                    REALSENSE_DEPTH_WIDTH,
-                    REALSENSE_DEPTH_HEIGHT,
-                    REALSENSE_CAMERA_FPS,
-                    "same-res 60fps fallback",
+                    depth_width,
+                    depth_height,
+                    depth_fps,
+                    depth_width,
+                    depth_height,
+                    depth_fps,
+                    f"{profile_name} same-res fallback",
                 ),
                 (
-                    REALSENSE_DEPTH_WIDTH,
-                    REALSENSE_DEPTH_HEIGHT,
+                    depth_width,
+                    depth_height,
                     30,
-                    REALSENSE_COLOR_WIDTH,
-                    REALSENSE_COLOR_HEIGHT,
-                    min(REALSENSE_COLOR_FPS, 30),
+                    color_width,
+                    color_height,
+                    min(color_fps, 30),
                     "30fps high-color fallback",
                 ),
                 (
-                    REALSENSE_DEPTH_WIDTH,
-                    REALSENSE_DEPTH_HEIGHT,
+                    depth_width,
+                    depth_height,
                     30,
-                    REALSENSE_DEPTH_WIDTH,
-                    REALSENSE_DEPTH_HEIGHT,
+                    depth_width,
+                    depth_height,
                     30,
                     "30fps same-res fallback",
                 ),
@@ -6975,7 +7050,8 @@ def main():
             print(
                 f">>> RealSense RGB+depth source active at {active_capture_width}x{active_capture_height}"
                 f" color, depth {capture.depth_width}x{capture.depth_height}"
-                f" @ depth {capture.fps}fps color {capture.color_fps}fps. Head tracking: {'ON' if capture.tracking_enabled else 'OFF'}. <<<"
+                f" @ depth {capture.fps}fps color {capture.color_fps}fps"
+                f" profile={active_realsense_stream_profile}. Head tracking: {'ON' if capture.tracking_enabled else 'OFF'}. <<<"
             )
             return capture
 
@@ -7290,11 +7366,47 @@ def main():
                         cap.set_imu_translation_enabled(requested)
                     else:
                         print(f">>> RealSense IMU translation fallback default set to {'ON' if requested else 'OFF'} for the next RealSense capture. <<<")
+                elif cmd_type == "realsense_restart":
+                    requested_profile = str(cmd_json.get("stream_profile", active_realsense_stream_profile)).strip().lower()
+                    if requested_profile not in REALSENSE_STREAM_PROFILE_PRESETS and requested_profile != "custom":
+                        print(f">>> RealSense restart ignored: unknown stream_profile={requested_profile!r} <<<")
+                    else:
+                        active_realsense_stream_profile = requested_profile
+                        os.environ["REALSENSE_STREAM_PROFILE"] = active_realsense_stream_profile
+                        if bool(cmd_json.get("enabled", True)):
+                            active_camera_source = CAMERA_SOURCE_REALSENSE
+                            os.environ[CAMERA_SOURCE_ENV] = active_camera_source
+                        release_camera()
+                        if active_camera_source == CAMERA_SOURCE_REALSENSE:
+                            cap = open_camera()
+                            camera_paused = cap is None
+                            point_cloud_stabilizer_state.pop("realsense", None)
+                            realsense_point_cloud_waiting_warned = False
+                            print(
+                                f">>> RealSense stream profile switched to {active_realsense_stream_profile}; "
+                                f"capture {'active' if cap is not None else 'unavailable'}. <<<"
+                            )
+                        else:
+                            camera_paused = True
+                            print(f">>> RealSense stream profile set to {active_realsense_stream_profile} for next RealSense capture. <<<")
                 elif cmd_type == "realsense_point_cloud":
                     point_cloud_stats_path = str(cmd_json.get("stats_path", point_cloud_stats_path)).strip()
                     point_cloud_console_stats = bool(cmd_json.get("console_stats", point_cloud_console_stats))
                     point_cloud_sync_to_slowest = bool(cmd_json.get("sync_to_slowest", point_cloud_sync_to_slowest))
                     realsense_point_cloud_enabled = bool(cmd_json.get("enabled", False))
+                    requested_profile = str(cmd_json.get("stream_profile", active_realsense_stream_profile)).strip().lower()
+                    if requested_profile in REALSENSE_STREAM_PROFILE_PRESETS or requested_profile == "custom":
+                        if requested_profile != active_realsense_stream_profile:
+                            active_realsense_stream_profile = requested_profile
+                            os.environ["REALSENSE_STREAM_PROFILE"] = active_realsense_stream_profile
+                            if active_camera_source == CAMERA_SOURCE_REALSENSE:
+                                release_camera()
+                                cap = open_camera()
+                                camera_paused = cap is None
+                                point_cloud_stabilizer_state.pop("realsense", None)
+                                print(f">>> RealSense stream profile switched to {active_realsense_stream_profile} from point-cloud request. <<<")
+                    else:
+                        print(f">>> Ignoring unknown RealSense stream_profile={requested_profile!r} in point-cloud request. <<<")
                     realsense_point_cloud_stride = max(1, int(cmd_json.get("stride", realsense_point_cloud_stride)))
                     realsense_point_cloud_min_depth = float(cmd_json.get("min_depth", realsense_point_cloud_min_depth))
                     realsense_point_cloud_max_depth = float(cmd_json.get("max_depth", realsense_point_cloud_max_depth))
@@ -7569,8 +7681,11 @@ def main():
         else:
             ret, frame = cap.read()
             if not ret:
-                print(">>> Camera read failed. Releasing capture but keeping tracker alive. Press 'v' to retry. <<<")
-                set_camera_paused(True)
+                if isinstance(cap, RealSenseCapture):
+                    print(">>> RealSense frame not ready yet; keeping capture open. <<<")
+                else:
+                    print(">>> Camera read failed. Releasing capture but keeping tracker alive. Press 'v' to retry. <<<")
+                    set_camera_paused(True)
                 frame = build_status_frame(
                     "CAMERA UNAVAILABLE",
                     [

@@ -23,6 +23,7 @@ Globals="*res://Views/Spaceship/Scripts/Globals.gd"
 
 [display]
 
+window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 

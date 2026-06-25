@@ -34,6 +34,9 @@ RealSenseSharedMemoryPointCloud::RealSenseSharedMemoryPointCloud() {
 
 RealSenseSharedMemoryPointCloud::~RealSenseSharedMemoryPointCloud() {
     release_gpu_mesh_compute_resources();
+    if (direct_realsense.is_valid()) {
+        direct_realsense->close();
+    }
     if (reader.is_valid()) {
         reader->close();
     }
@@ -99,6 +102,15 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_secondary_enabled"), &RealSenseSharedMemoryPointCloud::get_secondary_enabled);
     ClassDB::bind_method(D_METHOD("set_secondary_transform", "transform"), &RealSenseSharedMemoryPointCloud::set_secondary_transform);
     ClassDB::bind_method(D_METHOD("get_secondary_transform"), &RealSenseSharedMemoryPointCloud::get_secondary_transform);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_enabled", "enabled"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_enabled);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_enabled"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_enabled);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_stream_profile", "profile"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_stream_profile);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_stream_profile"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_stream_profile);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_stride", "stride"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_stride);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_stride"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_stride);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_filter_config", "config"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_filter_config);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_status"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_status);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_capture_fps"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_capture_fps);
     ClassDB::bind_method(D_METHOD("is_connected"), &RealSenseSharedMemoryPointCloud::is_connected);
     ClassDB::bind_method(D_METHOD("get_render_fps"), &RealSenseSharedMemoryPointCloud::get_render_fps);
     ClassDB::bind_method(D_METHOD("get_display_frame_age_ms"), &RealSenseSharedMemoryPointCloud::get_display_frame_age_ms);
@@ -132,56 +144,108 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "secondary_delay_ms"), "set_secondary_delay_ms", "get_secondary_delay_ms");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "secondary_shared_memory_name"), "set_secondary_shared_memory_name", "get_secondary_shared_memory_name");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "secondary_enabled"), "set_secondary_enabled", "get_secondary_enabled");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "direct_realsense_enabled"), "set_direct_realsense_enabled", "get_direct_realsense_enabled");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_stream_profile"), "set_direct_realsense_stream_profile", "get_direct_realsense_stream_profile");
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "direct_realsense_stride"), "set_direct_realsense_stride", "get_direct_realsense_stride");
 }
 
 void RealSenseSharedMemoryPointCloud::_ready() {
     ensure_material();
-    if (reader.is_null()) {
+    if (direct_realsense_enabled) {
+        if (direct_realsense.is_null()) {
+            direct_realsense.instantiate();
+        }
+        direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense->set_stride(direct_realsense_stride);
+        apply_direct_realsense_filter_settings();
+    } else if (reader.is_null()) {
         reader.instantiate();
     }
-    if (!reader->is_open()) {
+    if (!direct_realsense_enabled && !reader->is_open()) {
         reader->open(shared_memory_name);
     }
     set_process(true);
 }
 
 void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
-    if (reader.is_null()) {
-        reader.instantiate();
-    }
-    if (!reader->is_open()) {
-        reader->open(shared_memory_name);
-        if (!reader->is_open()) {
+    Ref<Image> depth_image;
+    Ref<Image> color_image;
+    FrameSnapshot latest_frame;
+    const bool cpu_surface_config = cpu_project_points || (render_connected_mesh && !gpu_connected_mesh);
+    const bool color_frame_required = color_enabled || cpu_surface_config;
+    if (direct_realsense_enabled) {
+        if (reader.is_valid() && reader->is_open()) {
+            reader->close();
+        }
+        if (direct_realsense.is_null()) {
+            direct_realsense.instantiate();
+        }
+        direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense->set_stride(direct_realsense_stride);
+        direct_realsense->set_color_output_enabled(color_frame_required);
+        if (!direct_realsense->is_open() && !direct_realsense->open()) {
+            direct_realsense_status = direct_realsense->get_status();
             return;
         }
-    }
-    if (!reader->poll()) {
-        return;
+        if (!direct_realsense->poll()) {
+            direct_realsense_status = direct_realsense->get_status();
+            return;
+        }
+        direct_realsense_status = direct_realsense->get_status();
+        depth_image = direct_realsense->get_depth_image();
+        color_image = direct_realsense->get_color_image();
+        latest_frame = make_direct_snapshot(direct_realsense, depth_image, color_image);
+    } else {
+        if (direct_realsense.is_valid() && direct_realsense->is_open()) {
+            direct_realsense->close();
+            direct_realsense_status = direct_realsense->get_status();
+        }
+        if (reader.is_null()) {
+            reader.instantiate();
+        }
+        if (!reader->is_open()) {
+            reader->open(shared_memory_name);
+            if (!reader->is_open()) {
+                return;
+            }
+        }
+        if (!reader->poll()) {
+            return;
+        }
+        depth_image = reader->get_depth_image();
+        color_image = reader->get_color_image();
+        latest_frame = make_reader_snapshot(reader, depth_image, color_image);
     }
     last_display_frame_seconds = now_seconds();
 
-    int width = reader->get_width();
-    int height = reader->get_height();
-    int stride = reader->get_stride();
+    int width = latest_frame.width;
+    int height = latest_frame.height;
+    int stride = latest_frame.stride;
     if (width <= 1 || height <= 1) {
         return;
     }
+    current_width = width;
+    current_height = height;
+    current_stride = stride;
+    current_intrinsics = latest_frame.intrinsics;
     const bool cpu_built_surface = cpu_project_points || (render_connected_mesh && !gpu_connected_mesh);
     const bool static_gpu_mesh_surface = render_connected_mesh && gpu_connected_mesh && gpu_mesh_static_shader;
     if (!cpu_built_surface && (!gpu_connected_mesh || static_gpu_mesh_surface) && (width != grid_width || height != grid_height || stride != grid_stride || get_mesh().is_null())) {
         rebuild_mesh(width, height, stride);
     }
 
-    Ref<Image> depth_image = reader->get_depth_image();
-    Ref<Image> color_image = reader->get_color_image();
-    if (depth_image.is_null() || color_image.is_null()) {
+    if (depth_image.is_null() || (color_frame_required && color_image.is_null())) {
         return;
     }
-    push_frame_history(primary_history, reader, depth_image, color_image);
-    FrameSnapshot primary_frame = select_frame_for_delay(primary_history, primary_delay_ms, reader, depth_image, color_image);
-    if (primary_frame.depth_image.is_null() || primary_frame.color_image.is_null()) {
+    push_frame_history(primary_history, latest_frame);
+    FrameSnapshot primary_frame = select_frame_for_delay(primary_history, primary_delay_ms, latest_frame);
+    if (primary_frame.depth_image.is_null() || (color_frame_required && primary_frame.color_image.is_null())) {
         return;
     }
+    current_width = primary_frame.width;
+    current_height = primary_frame.height;
+    current_stride = primary_frame.stride;
+    current_intrinsics = primary_frame.intrinsics;
     if (render_connected_mesh && !gpu_connected_mesh) {
         if (secondary_enabled) {
             if (secondary_reader.is_null()) {
@@ -192,7 +256,7 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
             }
             if (secondary_reader->is_open()) {
                 if (secondary_reader->poll()) {
-                    push_frame_history(secondary_history, secondary_reader, secondary_reader->get_depth_image(), secondary_reader->get_color_image());
+                    push_reader_frame_history(secondary_history, secondary_reader, secondary_reader->get_depth_image(), secondary_reader->get_color_image());
                 }
             }
             last_triangle_count = rebuild_cpu_combined_mesh(primary_frame.depth_image, primary_frame.color_image);
@@ -220,12 +284,29 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
         }
         return;
     }
-    if (depth_texture.is_null() || color_texture.is_null()) {
+    if (
+        depth_texture.is_null() ||
+        depth_texture_width != primary_frame.depth_image->get_width() ||
+        depth_texture_height != primary_frame.depth_image->get_height()
+    ) {
         depth_texture = ImageTexture::create_from_image(primary_frame.depth_image);
-        color_texture = ImageTexture::create_from_image(primary_frame.color_image);
+        depth_texture_width = primary_frame.depth_image->get_width();
+        depth_texture_height = primary_frame.depth_image->get_height();
     } else {
         depth_texture->update(primary_frame.depth_image);
-        color_texture->update(primary_frame.color_image);
+    }
+    if (color_enabled && primary_frame.color_image.is_valid()) {
+        if (
+            color_texture.is_null() ||
+            color_texture_width != primary_frame.color_image->get_width() ||
+            color_texture_height != primary_frame.color_image->get_height()
+        ) {
+            color_texture = ImageTexture::create_from_image(primary_frame.color_image);
+            color_texture_width = primary_frame.color_image->get_width();
+            color_texture_height = primary_frame.color_image->get_height();
+        } else {
+            color_texture->update(primary_frame.color_image);
+        }
     }
     ensure_material();
     set_material_override(Ref<Material>());
@@ -341,6 +422,9 @@ void RealSenseSharedMemoryPointCloud::set_min_depth(double p_depth) {
     }
     min_depth = p_depth;
     update_material_params();
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_filter_depth_range(float(min_depth), float(max_depth));
+    }
 }
 
 double RealSenseSharedMemoryPointCloud::get_min_depth() const { return min_depth; }
@@ -351,6 +435,9 @@ void RealSenseSharedMemoryPointCloud::set_max_depth(double p_depth) {
     }
     max_depth = p_depth;
     update_material_params();
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_filter_depth_range(float(min_depth), float(max_depth));
+    }
 }
 
 double RealSenseSharedMemoryPointCloud::get_max_depth() const { return max_depth; }
@@ -573,7 +660,178 @@ void RealSenseSharedMemoryPointCloud::set_secondary_transform(const Transform3D 
 
 Transform3D RealSenseSharedMemoryPointCloud::get_secondary_transform() const { return secondary_transform; }
 
-bool RealSenseSharedMemoryPointCloud::is_connected() const { return reader.is_valid() && reader->is_open(); }
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_enabled(bool p_enabled) {
+    if (direct_realsense_enabled == p_enabled) {
+        return;
+    }
+    direct_realsense_enabled = p_enabled;
+    primary_history.clear();
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    current_width = 0;
+    current_height = 0;
+    current_stride = 1;
+    current_intrinsics = Vector4();
+    if (direct_realsense_enabled) {
+        if (reader.is_valid() && reader->is_open()) {
+            reader->close();
+        }
+        if (direct_realsense.is_null()) {
+            direct_realsense.instantiate();
+        }
+        direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense->set_stride(direct_realsense_stride);
+        direct_realsense->set_color_output_enabled(color_enabled || cpu_project_points || (render_connected_mesh && !gpu_connected_mesh));
+        apply_direct_realsense_filter_settings();
+        if (direct_realsense->open()) {
+            direct_realsense_status = direct_realsense->get_status();
+        } else {
+            direct_realsense_status = direct_realsense->get_status();
+        }
+    } else {
+        if (direct_realsense.is_valid() && direct_realsense->is_open()) {
+            direct_realsense->close();
+        }
+        direct_realsense_status = direct_realsense.is_valid() ? direct_realsense->get_status() : String("RealSense direct capture is disabled");
+        if (reader.is_valid() && !reader->is_open()) {
+            reader->open(shared_memory_name);
+        }
+    }
+}
+
+bool RealSenseSharedMemoryPointCloud::get_direct_realsense_enabled() const { return direct_realsense_enabled; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_stream_profile(const String &p_profile) {
+    String next = p_profile.to_lower();
+    if (next != "fast60" && next != "viewer30" && next != "highres30") {
+        next = "viewer30";
+    }
+    if (direct_realsense_stream_profile == next) {
+        return;
+    }
+    direct_realsense_stream_profile = next;
+    primary_history.clear();
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_stream_profile(direct_realsense_stream_profile);
+        direct_realsense_status = direct_realsense->get_status();
+    }
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_stream_profile() const { return direct_realsense_stream_profile; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_stride(int p_stride) {
+    const int next = std::max(1, p_stride);
+    if (direct_realsense_stride == next) {
+        return;
+    }
+    direct_realsense_stride = next;
+    primary_history.clear();
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_stride(direct_realsense_stride);
+    }
+}
+
+int RealSenseSharedMemoryPointCloud::get_direct_realsense_stride() const { return direct_realsense_stride; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_filter_config(const Dictionary &p_config) {
+    const bool next_post_processing = p_config.has("post_processing_enabled") ? bool(p_config["post_processing_enabled"]) : direct_realsense_post_processing_enabled;
+    const bool next_decimation = p_config.has("decimation_filter_enabled") ? bool(p_config["decimation_filter_enabled"]) : direct_realsense_decimation_filter_enabled;
+    const int next_decimation_magnitude = p_config.has("decimation_magnitude") ? std::max(2, std::min(8, int(p_config["decimation_magnitude"]))) : direct_realsense_decimation_magnitude;
+    const bool next_rotation = p_config.has("rotation_filter_enabled") ? bool(p_config["rotation_filter_enabled"]) : direct_realsense_rotation_filter_enabled;
+    const bool next_hdr_merge = p_config.has("hdr_merge_filter_enabled") ? bool(p_config["hdr_merge_filter_enabled"]) : direct_realsense_hdr_merge_filter_enabled;
+    const bool next_sequence_id = p_config.has("sequence_id_filter_enabled") ? bool(p_config["sequence_id_filter_enabled"]) : direct_realsense_sequence_id_filter_enabled;
+    const bool next_threshold = p_config.has("threshold_filter_enabled") ? bool(p_config["threshold_filter_enabled"]) : direct_realsense_threshold_filter_enabled;
+    const bool next_depth_to_disparity = p_config.has("depth_to_disparity_filter_enabled") ? bool(p_config["depth_to_disparity_filter_enabled"]) : direct_realsense_depth_to_disparity_filter_enabled;
+    const bool next_spatial = p_config.has("spatial_filter_enabled") ? bool(p_config["spatial_filter_enabled"]) : direct_realsense_spatial_filter_enabled;
+    const bool next_temporal = p_config.has("temporal_filter_enabled") ? bool(p_config["temporal_filter_enabled"]) : direct_realsense_temporal_filter_enabled;
+    const bool next_hole_filling = p_config.has("hole_filling_filter_enabled") ? bool(p_config["hole_filling_filter_enabled"]) : direct_realsense_hole_filling_filter_enabled;
+    const bool next_disparity_to_depth = p_config.has("disparity_to_depth_filter_enabled") ? bool(p_config["disparity_to_depth_filter_enabled"]) : direct_realsense_disparity_to_depth_filter_enabled;
+    const int next_hole_filling_mode = p_config.has("hole_filling_mode") ? std::max(0, std::min(2, int(p_config["hole_filling_mode"]))) : direct_realsense_hole_filling_mode;
+
+    const bool changed =
+        direct_realsense_post_processing_enabled != next_post_processing ||
+        direct_realsense_decimation_filter_enabled != next_decimation ||
+        direct_realsense_decimation_magnitude != next_decimation_magnitude ||
+        direct_realsense_rotation_filter_enabled != next_rotation ||
+        direct_realsense_hdr_merge_filter_enabled != next_hdr_merge ||
+        direct_realsense_sequence_id_filter_enabled != next_sequence_id ||
+        direct_realsense_threshold_filter_enabled != next_threshold ||
+        direct_realsense_depth_to_disparity_filter_enabled != next_depth_to_disparity ||
+        direct_realsense_spatial_filter_enabled != next_spatial ||
+        direct_realsense_temporal_filter_enabled != next_temporal ||
+        direct_realsense_hole_filling_filter_enabled != next_hole_filling ||
+        direct_realsense_disparity_to_depth_filter_enabled != next_disparity_to_depth ||
+        direct_realsense_hole_filling_mode != next_hole_filling_mode;
+
+    if (!changed) {
+        return;
+    }
+
+    direct_realsense_post_processing_enabled = next_post_processing;
+    direct_realsense_decimation_filter_enabled = next_decimation;
+    direct_realsense_decimation_magnitude = next_decimation_magnitude;
+    direct_realsense_rotation_filter_enabled = next_rotation;
+    direct_realsense_hdr_merge_filter_enabled = next_hdr_merge;
+    direct_realsense_sequence_id_filter_enabled = next_sequence_id;
+    direct_realsense_threshold_filter_enabled = next_threshold;
+    direct_realsense_depth_to_disparity_filter_enabled = next_depth_to_disparity;
+    direct_realsense_spatial_filter_enabled = next_spatial;
+    direct_realsense_temporal_filter_enabled = next_temporal;
+    direct_realsense_hole_filling_filter_enabled = next_hole_filling;
+    direct_realsense_disparity_to_depth_filter_enabled = next_disparity_to_depth;
+    direct_realsense_hole_filling_mode = next_hole_filling_mode;
+
+    depth_texture.unref();
+    color_texture.unref();
+    depth_texture_width = 0;
+    depth_texture_height = 0;
+    color_texture_width = 0;
+    color_texture_height = 0;
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    current_width = 0;
+    current_height = 0;
+    current_stride = 1;
+    current_intrinsics = Vector4();
+
+    if (direct_realsense.is_valid()) {
+        direct_realsense->reset_post_processing_filters();
+    }
+    apply_direct_realsense_filter_settings();
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_status() const {
+    if (direct_realsense.is_valid()) {
+        return direct_realsense_status + String("\n") + direct_realsense->get_filter_status();
+    }
+    return direct_realsense_status;
+}
+
+double RealSenseSharedMemoryPointCloud::get_direct_realsense_capture_fps() const {
+    if (direct_realsense.is_null()) {
+        return 0.0;
+    }
+    return direct_realsense->get_capture_fps();
+}
+
+bool RealSenseSharedMemoryPointCloud::is_connected() const {
+    if (direct_realsense_enabled) {
+        return direct_realsense.is_valid() && direct_realsense->is_open();
+    }
+    return reader.is_valid() && reader->is_open();
+}
 
 double RealSenseSharedMemoryPointCloud::get_render_fps() const { return render_fps; }
 
@@ -618,6 +876,9 @@ uniform vec2 texel_size = vec2(0.01, 0.01);
 uniform float grid_stride = 1.0;
 uniform float max_depth_delta = 0.08;
 uniform float max_mesh_edge = 0.08;
+uniform bool point_cleanup_enabled = false;
+uniform float point_cleanup_depth_delta = 0.06;
+uniform float point_cleanup_min_neighbors = 2.0;
 uniform bool color_enabled = true;
 uniform bool edge_feather_enabled = false;
 uniform float edge_feather_width = 0.035;
@@ -643,6 +904,54 @@ bool depth_in_range(float d) {
     return d >= depth_range.x && d <= depth_range.y;
 }
 
+float fill_ring_depth(vec2 uv, float radius, float required_count) {
+    vec2 step_uv = texel_size * radius;
+    float d0 = texture(depth_tex, uv + vec2(-step_uv.x, 0.0)).r;
+    float d1 = texture(depth_tex, uv + vec2(step_uv.x, 0.0)).r;
+    float d2 = texture(depth_tex, uv + vec2(0.0, -step_uv.y)).r;
+    float d3 = texture(depth_tex, uv + vec2(0.0, step_uv.y)).r;
+    float d4 = texture(depth_tex, uv + vec2(-step_uv.x, -step_uv.y)).r;
+    float d5 = texture(depth_tex, uv + vec2(step_uv.x, -step_uv.y)).r;
+    float d6 = texture(depth_tex, uv + vec2(-step_uv.x, step_uv.y)).r;
+    float d7 = texture(depth_tex, uv + vec2(step_uv.x, step_uv.y)).r;
+    float sum = 0.0;
+    float count = 0.0;
+    float min_d = depth_range.y;
+    float max_d = depth_range.x;
+    if (depth_in_range(d0)) { sum += d0; count += 1.0; min_d = min(min_d, d0); max_d = max(max_d, d0); }
+    if (depth_in_range(d1)) { sum += d1; count += 1.0; min_d = min(min_d, d1); max_d = max(max_d, d1); }
+    if (depth_in_range(d2)) { sum += d2; count += 1.0; min_d = min(min_d, d2); max_d = max(max_d, d2); }
+    if (depth_in_range(d3)) { sum += d3; count += 1.0; min_d = min(min_d, d3); max_d = max(max_d, d3); }
+    if (depth_in_range(d4)) { sum += d4; count += 1.0; min_d = min(min_d, d4); max_d = max(max_d, d4); }
+    if (depth_in_range(d5)) { sum += d5; count += 1.0; min_d = min(min_d, d5); max_d = max(max_d, d5); }
+    if (depth_in_range(d6)) { sum += d6; count += 1.0; min_d = min(min_d, d6); max_d = max(max_d, d6); }
+    if (depth_in_range(d7)) { sum += d7; count += 1.0; min_d = min(min_d, d7); max_d = max(max_d, d7); }
+    if (count >= required_count && max_d - min_d <= max_depth_delta * 1.5) {
+        return sum / count;
+    }
+    return 0.0;
+}
+
+float resolved_depth(vec2 uv) {
+    float d = texture(depth_tex, uv).r;
+    if (depth_in_range(d)) {
+        return d;
+    }
+    float r1 = fill_ring_depth(uv, 1.0, 3.0);
+    if (depth_in_range(r1)) {
+        return r1;
+    }
+    float r2 = fill_ring_depth(uv, 2.0, 4.0);
+    if (depth_in_range(r2)) {
+        return r2;
+    }
+    float r3 = fill_ring_depth(uv, 3.0, 5.0);
+    if (depth_in_range(r3)) {
+        return r3;
+    }
+    return d;
+}
+
 bool triangle_depth_ok(float da, float db, float dc) {
     return depth_in_range(da)
         && depth_in_range(db)
@@ -660,14 +969,27 @@ bool triangle_edge_ok(vec3 pa, vec3 pb, vec3 pc) {
     return eab <= max_edge_sq && ebc <= max_edge_sq && eca <= max_edge_sq;
 }
 
+float close_neighbor_count(vec2 uv, float d) {
+    float dl = texture(depth_tex, uv + vec2(-texel_size.x, 0.0)).r;
+    float dr = texture(depth_tex, uv + vec2(texel_size.x, 0.0)).r;
+    float du = texture(depth_tex, uv + vec2(0.0, -texel_size.y)).r;
+    float dd = texture(depth_tex, uv + vec2(0.0, texel_size.y)).r;
+    float close_neighbors = 0.0;
+    close_neighbors += (depth_in_range(dl) && abs(d - dl) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(dr) && abs(d - dr) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(du) && abs(d - du) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(dd) && abs(d - dd) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    return close_neighbors;
+}
+
 void vertex() {
     point_uv = UV;
     tri_uv_a = UV2;
     tri_uv_b = CUSTOM0.xy;
     tri_uv_c = CUSTOM0.zw;
-    float da = texture(depth_tex, tri_uv_a).r;
-    float db = texture(depth_tex, tri_uv_b).r;
-    float dc = texture(depth_tex, tri_uv_c).r;
+    float da = resolved_depth(tri_uv_a);
+    float db = resolved_depth(tri_uv_b);
+    float dc = resolved_depth(tri_uv_c);
     vec3 pa = project_uv(tri_uv_a, da);
     vec3 pb = project_uv(tri_uv_b, db);
     vec3 pc = project_uv(tri_uv_c, dc);
@@ -677,7 +999,7 @@ void vertex() {
         float fallback_depth = depth_in_range(da) ? da : (depth_in_range(db) ? db : (depth_in_range(dc) ? dc : depth_range.y));
         VERTEX = project_uv((tri_uv_a + tri_uv_b + tri_uv_c) / 3.0, fallback_depth);
     } else {
-        float depth_m = texture(depth_tex, UV).r;
+        float depth_m = resolved_depth(UV);
         VERTEX = project_uv(UV, depth_m);
     }
 }
@@ -687,11 +1009,17 @@ void fragment() {
         discard;
     }
 
-    float da = texture(depth_tex, tri_uv_a).r;
-    float db = texture(depth_tex, tri_uv_b).r;
-    float dc = texture(depth_tex, tri_uv_c).r;
+    float da = resolved_depth(tri_uv_a);
+    float db = resolved_depth(tri_uv_b);
+    float dc = resolved_depth(tri_uv_c);
     if (!triangle_depth_ok(da, db, dc)) {
         discard;
+    }
+    if (point_cleanup_enabled) {
+        float center_depth = resolved_depth(point_uv);
+        if (!depth_in_range(center_depth) || close_neighbor_count(point_uv, center_depth) < point_cleanup_min_neighbors) {
+            discard;
+        }
     }
 
     vec3 pa = project_uv(tri_uv_a, da);
@@ -1025,57 +1353,80 @@ double RealSenseSharedMemoryPointCloud::now_seconds() const {
     return std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
 }
 
+RealSenseSharedMemoryPointCloud::FrameSnapshot RealSenseSharedMemoryPointCloud::make_reader_snapshot(
+    const Ref<RealSenseSharedMemoryReader> &p_reader,
+    const Ref<Image> &p_depth_image,
+    const Ref<Image> &p_color_image
+) const {
+    FrameSnapshot frame;
+    if (p_reader.is_valid()) {
+        frame.sequence = p_reader->get_sequence();
+        frame.width = p_reader->get_width();
+        frame.height = p_reader->get_height();
+        frame.stride = p_reader->get_stride();
+        frame.intrinsics = p_reader->get_intrinsics();
+    }
+    frame.depth_image = p_depth_image;
+    frame.color_image = p_color_image;
+    frame.timestamp_sec = now_seconds();
+    return frame;
+}
+
+RealSenseSharedMemoryPointCloud::FrameSnapshot RealSenseSharedMemoryPointCloud::make_direct_snapshot(
+    const Ref<RealSenseDirectFrameSource> &p_source,
+    const Ref<Image> &p_depth_image,
+    const Ref<Image> &p_color_image
+) const {
+    FrameSnapshot frame;
+    if (p_source.is_valid()) {
+        frame.sequence = p_source->get_sequence();
+        frame.width = p_source->get_width();
+        frame.height = p_source->get_height();
+        frame.stride = p_source->get_stride();
+        frame.intrinsics = p_source->get_intrinsics();
+    }
+    frame.depth_image = p_depth_image;
+    frame.color_image = p_color_image;
+    frame.timestamp_sec = now_seconds();
+    return frame;
+}
+
 void RealSenseSharedMemoryPointCloud::push_frame_history(
+    std::deque<FrameSnapshot> &p_history,
+    const FrameSnapshot &p_frame
+) {
+    if (!delay_enabled || p_frame.depth_image.is_null()) {
+        return;
+    }
+
+    if (!p_history.empty() && p_history.back().sequence == p_frame.sequence) {
+        p_history.back() = p_frame;
+    } else {
+        p_history.push_back(p_frame);
+    }
+
+    const double max_delay_sec = std::max(primary_delay_ms, secondary_delay_ms) * 0.001 + 2.0;
+    while (p_history.size() > 2 && p_frame.timestamp_sec - p_history.front().timestamp_sec > max_delay_sec) {
+        p_history.pop_front();
+    }
+}
+
+void RealSenseSharedMemoryPointCloud::push_reader_frame_history(
     std::deque<FrameSnapshot> &p_history,
     const Ref<RealSenseSharedMemoryReader> &p_reader,
     const Ref<Image> &p_depth_image,
     const Ref<Image> &p_color_image
 ) {
-    if (!delay_enabled || p_reader.is_null() || p_depth_image.is_null() || p_color_image.is_null()) {
-        return;
-    }
-    FrameSnapshot frame;
-    frame.sequence = p_reader->get_sequence();
-    frame.width = p_reader->get_width();
-    frame.height = p_reader->get_height();
-    frame.stride = p_reader->get_stride();
-    frame.intrinsics = p_reader->get_intrinsics();
-    frame.depth_image = p_depth_image;
-    frame.color_image = p_color_image;
-    frame.timestamp_sec = now_seconds();
-
-    if (!p_history.empty() && p_history.back().sequence == frame.sequence) {
-        p_history.back() = frame;
-    } else {
-        p_history.push_back(frame);
-    }
-
-    const double max_delay_sec = std::max(primary_delay_ms, secondary_delay_ms) * 0.001 + 2.0;
-    while (p_history.size() > 2 && frame.timestamp_sec - p_history.front().timestamp_sec > max_delay_sec) {
-        p_history.pop_front();
-    }
+    push_frame_history(p_history, make_reader_snapshot(p_reader, p_depth_image, p_color_image));
 }
 
 RealSenseSharedMemoryPointCloud::FrameSnapshot RealSenseSharedMemoryPointCloud::select_frame_for_delay(
     const std::deque<FrameSnapshot> &p_history,
     double p_delay_ms,
-    const Ref<RealSenseSharedMemoryReader> &p_reader,
-    const Ref<Image> &p_depth_image,
-    const Ref<Image> &p_color_image
+    const FrameSnapshot &p_latest
 ) const {
     if (!delay_enabled || p_delay_ms <= 0.0 || p_history.empty()) {
-        FrameSnapshot latest;
-        if (p_reader.is_valid()) {
-            latest.sequence = p_reader->get_sequence();
-            latest.width = p_reader->get_width();
-            latest.height = p_reader->get_height();
-            latest.stride = p_reader->get_stride();
-            latest.intrinsics = p_reader->get_intrinsics();
-        }
-        latest.depth_image = p_depth_image;
-        latest.color_image = p_color_image;
-        latest.timestamp_sec = now_seconds();
-        return latest;
+        return p_latest;
     }
 
     const double target_sec = now_seconds() - (p_delay_ms * 0.001);
@@ -1091,9 +1442,9 @@ RealSenseSharedMemoryPointCloud::FrameSnapshot RealSenseSharedMemoryPointCloud::
 }
 
 int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image> &p_depth_image, const Ref<Image> &p_color_image) {
-    int width = reader->get_width();
-    int height = reader->get_height();
-    int stride = reader->get_stride();
+    int width = current_width;
+    int height = current_height;
+    int stride = current_stride;
     if (width <= 1 || height <= 1) {
         set_mesh(Ref<Mesh>());
         return 0;
@@ -1107,7 +1458,7 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_connected_mesh(const Ref<Image>
         return 0;
     }
 
-    Vector4 intrinsics = reader->get_intrinsics();
+    Vector4 intrinsics = current_intrinsics;
     const double fx = MAX(0.000001, double(intrinsics.x));
     const double fy = MAX(0.000001, double(intrinsics.y));
     const double ppx = intrinsics.z;
@@ -1561,13 +1912,13 @@ bool RealSenseSharedMemoryPointCloud::rebuild_gpu_mesh_indices_compute(
 }
 
 int RealSenseSharedMemoryPointCloud::rebuild_gpu_connected_mesh(const Ref<Image> &p_depth_image) {
-    if (reader.is_null() || p_depth_image.is_null()) {
+    if (p_depth_image.is_null()) {
         set_mesh(Ref<Mesh>());
         return 0;
     }
-    const int width = reader->get_width();
-    const int height = reader->get_height();
-    const int stride = reader->get_stride();
+    const int width = current_width;
+    const int height = current_height;
+    const int stride = current_stride;
     if (width <= 1 || height <= 1) {
         set_mesh(Ref<Mesh>());
         return 0;
@@ -1580,7 +1931,7 @@ int RealSenseSharedMemoryPointCloud::rebuild_gpu_connected_mesh(const Ref<Image>
         return 0;
     }
 
-    Vector4 intrinsics = reader->get_intrinsics();
+    Vector4 intrinsics = current_intrinsics;
     const double fx = MAX(0.000001, double(intrinsics.x));
     const double fy = MAX(0.000001, double(intrinsics.y));
     const double ppx = intrinsics.z;
@@ -1692,13 +2043,13 @@ int RealSenseSharedMemoryPointCloud::rebuild_gpu_connected_mesh(const Ref<Image>
 }
 
 int RealSenseSharedMemoryPointCloud::rebuild_cpu_point_cloud(const Ref<Image> &p_depth_image, const Ref<Image> &p_color_image) {
-    if (reader.is_null() || p_depth_image.is_null() || p_color_image.is_null()) {
+    if (p_depth_image.is_null() || p_color_image.is_null()) {
         set_mesh(Ref<Mesh>());
         return 0;
     }
-    int width = reader->get_width();
-    int height = reader->get_height();
-    int stride = reader->get_stride();
+    int width = current_width;
+    int height = current_height;
+    int stride = current_stride;
     if (width <= 1 || height <= 1) {
         set_mesh(Ref<Mesh>());
         return 0;
@@ -1712,7 +2063,7 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_point_cloud(const Ref<Image> &p
         return 0;
     }
 
-    Vector4 intrinsics = reader->get_intrinsics();
+    Vector4 intrinsics = current_intrinsics;
     const double fx = MAX(0.000001, double(intrinsics.x));
     const double fy = MAX(0.000001, double(intrinsics.y));
     const double ppx = intrinsics.z;
@@ -1934,12 +2285,16 @@ int RealSenseSharedMemoryPointCloud::rebuild_cpu_combined_mesh(const Ref<Image> 
     Ref<ArrayMesh> mesh;
     mesh.instantiate();
     int point_count = 0;
-    int triangle_count = append_cpu_grid_surface(mesh, reader, p_depth_image, p_color_image, Transform3D(), point_count);
+    int triangle_count = 0;
+    if (!direct_realsense_enabled) {
+        triangle_count += append_cpu_grid_surface(mesh, reader, p_depth_image, p_color_image, Transform3D(), point_count);
+    }
 
     if (secondary_reader.is_valid() && secondary_reader->is_open()) {
         Ref<Image> secondary_depth_image = secondary_reader->get_depth_image();
         Ref<Image> secondary_color_image = secondary_reader->get_color_image();
-        FrameSnapshot secondary_frame = select_frame_for_delay(secondary_history, secondary_delay_ms, secondary_reader, secondary_depth_image, secondary_color_image);
+        FrameSnapshot secondary_latest = make_reader_snapshot(secondary_reader, secondary_depth_image, secondary_color_image);
+        FrameSnapshot secondary_frame = select_frame_for_delay(secondary_history, secondary_delay_ms, secondary_latest);
         triangle_count += append_cpu_grid_surface(mesh, secondary_reader, secondary_frame.depth_image, secondary_frame.color_image, secondary_transform, point_count);
     }
 
@@ -2004,7 +2359,7 @@ void RealSenseSharedMemoryPointCloud::update_material_params() {
     if (color_texture.is_valid()) {
         material->set_shader_parameter("color_tex", color_texture);
     }
-    material->set_shader_parameter("intrinsics", reader.is_valid() ? reader->get_intrinsics() : Vector4());
+    material->set_shader_parameter("intrinsics", current_intrinsics);
     material->set_shader_parameter("depth_range", Vector2(float(min_depth), float(max_depth)));
     material->set_shader_parameter("point_pixel_size", float(point_pixel_size));
     material->set_shader_parameter("circular_point_splats", circular_point_splats);
@@ -2020,4 +2375,24 @@ void RealSenseSharedMemoryPointCloud::update_material_params() {
     material->set_shader_parameter("edge_feather_width", float(edge_feather_width));
     material->set_shader_parameter("edge_feather_min_alpha", float(edge_feather_min_alpha));
     material->set_shader_parameter("color_enabled", color_enabled);
+}
+
+void RealSenseSharedMemoryPointCloud::apply_direct_realsense_filter_settings() {
+    if (direct_realsense.is_null()) {
+        return;
+    }
+    direct_realsense->set_post_processing_enabled(direct_realsense_post_processing_enabled);
+    direct_realsense->set_decimation_filter_enabled(direct_realsense_decimation_filter_enabled);
+    direct_realsense->set_decimation_magnitude(direct_realsense_decimation_magnitude);
+    direct_realsense->set_rotation_filter_enabled(direct_realsense_rotation_filter_enabled);
+    direct_realsense->set_hdr_merge_filter_enabled(direct_realsense_hdr_merge_filter_enabled);
+    direct_realsense->set_sequence_id_filter_enabled(direct_realsense_sequence_id_filter_enabled);
+    direct_realsense->set_threshold_filter_enabled(direct_realsense_threshold_filter_enabled);
+    direct_realsense->set_depth_to_disparity_filter_enabled(direct_realsense_depth_to_disparity_filter_enabled);
+    direct_realsense->set_spatial_filter_enabled(direct_realsense_spatial_filter_enabled);
+    direct_realsense->set_temporal_filter_enabled(direct_realsense_temporal_filter_enabled);
+    direct_realsense->set_hole_filling_filter_enabled(direct_realsense_hole_filling_filter_enabled);
+    direct_realsense->set_disparity_to_depth_filter_enabled(direct_realsense_disparity_to_depth_filter_enabled);
+    direct_realsense->set_filter_depth_range(float(min_depth), float(max_depth));
+    direct_realsense->set_hole_filling_mode(direct_realsense_hole_filling_mode);
 }

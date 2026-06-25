@@ -1,9 +1,48 @@
 #!/usr/bin/env python
 import os
+import shutil
 
 env = SConscript("godot-cpp/SConstruct")
 
 env.Append(CPPPATH=["src"])
+if env.get("platform") == "windows" or ARGUMENTS.get("platform") == "windows":
+    env.Append(CXXFLAGS=["/EHsc"])
+
+sdk_candidates = []
+if os.environ.get("REALSENSE2_SDK_DIR"):
+    sdk_candidates.append(os.environ["REALSENSE2_SDK_DIR"])
+sdk_candidates.extend([
+    os.path.join("thirdparty", "realsense2"),
+    r"C:\Program Files (x86)\Intel RealSense SDK 2.0",
+    r"C:\Program Files\Intel RealSense SDK 2.0",
+])
+
+for sdk_dir in sdk_candidates:
+    include_dir = os.path.join(sdk_dir, "include")
+    lib_dir = os.path.join(sdk_dir, "lib", "x64")
+    bin_dir = os.path.join(sdk_dir, "bin", "x64")
+    if not os.path.exists(os.path.join(lib_dir, "realsense2.lib")):
+        lib_dir = os.path.join(sdk_dir, "lib")
+    if not os.path.exists(os.path.join(bin_dir, "realsense2.dll")):
+        bin_dir = os.path.join(sdk_dir, "bin")
+    if os.path.exists(os.path.join(include_dir, "librealsense2", "rs.hpp")) and os.path.exists(os.path.join(lib_dir, "realsense2.lib")):
+        env.Append(CPPPATH=[include_dir])
+        env.Append(LIBPATH=[lib_dir])
+        env.Append(LIBS=["realsense2"])
+        env.Append(CPPDEFINES=["REALSENSE_DIRECT_ENABLED"])
+        dll_src = os.path.join(bin_dir, "realsense2.dll")
+        dll_dst = os.path.join("bin", "realsense2.dll")
+        if os.path.exists(dll_src):
+            os.makedirs("bin", exist_ok=True)
+            try:
+                if not os.path.exists(dll_dst) or os.path.getsize(dll_src) != os.path.getsize(dll_dst):
+                    shutil.copy2(dll_src, dll_dst)
+            except PermissionError:
+                print("RealSense runtime DLL is already present and locked; leaving existing bin/realsense2.dll in place.")
+        print("RealSense direct capture enabled from SDK:", sdk_dir)
+        break
+else:
+    print("RealSense direct capture SDK not found; building explicit stub.")
 
 sources = Glob("src/*.cpp")
 
