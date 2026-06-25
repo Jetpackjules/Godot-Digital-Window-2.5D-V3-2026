@@ -129,6 +129,20 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 		_update_camera_renderers()
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and value)
 @export_multiline var realsense_status: String = ""
+## RealSense depth source. sdk_depth keeps the native RealSense SDK path; FastFoundation uses the IR stereo pair through the Python point-cloud publisher. Performance impact: high when FastFoundation is selected.
+@export_enum("sdk_depth", "fast_foundation") var realsense_depth_source: String = "sdk_depth":
+	set(value):
+		if value not in ["sdk_depth", "fast_foundation"]:
+			value = "sdk_depth"
+		if realsense_depth_source == value:
+			return
+		var previous_source := realsense_depth_source
+		realsense_depth_source = value
+		if previous_source == "fast_foundation" and realsense_depth_source == "sdk_depth":
+			_send_camera_stream_command(CAMERA_REALSENSE, false)
+		_update_camera_renderers()
+		_request_realsense_restart()
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
 ## RealSense stream profile. Changing this restarts the RealSense pipeline because resolution/FPS are fixed at stream start.
 @export_enum("fast60", "viewer30", "highres30") var realsense_stream_profile: String = "viewer30":
 	set(value):
@@ -235,6 +249,32 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		realsense_stabilization_hold_frames = maxi(0, value)
 		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+@export_subgroup("FastFoundation")
+## RealSense FastFoundation backend. Matches the OAK-D options; sdk_depth ignores this setting.
+@export_enum("onnx_cuda", "onnx_trt", "pytorch", "trt_engine") var realsense_fast_backend: String = "onnx_cuda":
+	set(value):
+		if value not in ["pytorch", "onnx_trt", "onnx_cuda", "trt_engine"]:
+			value = "onnx_cuda"
+		realsense_fast_backend = value
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## RealSense FastFoundation model profile. Matches the OAK-D FastFoundation profiles.
+@export_enum("rt_256x512_i2", "fast_192x384_i2", "full_320x736_i4") var realsense_fast_profile: String = "rt_256x512_i2":
+	set(value):
+		if value not in ["full_320x736_i4", "rt_256x512_i2", "fast_192x384_i2"]:
+			value = "rt_256x512_i2"
+		realsense_fast_profile = value
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## RealSense FastFoundation solver iterations. sdk_depth ignores this setting.
+@export_range(1, 32, 1) var realsense_fast_iters: int = 4:
+	set(value):
+		realsense_fast_iters = clampi(value, 1, 32)
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+## RealSense FastFoundation input scaling. sdk_depth ignores this setting.
+@export_range(0.25, 1.0, 0.05) var realsense_fast_scale: float = 0.5:
+	set(value):
+		realsense_fast_scale = clampf(value, 0.25, 1.0)
+		_send_camera_stream_command(CAMERA_REALSENSE, editor_stream_enabled and realsense_enabled)
+@export_subgroup("")
 
 @export_group("OAK-D Camera")
 ## Enables the OAK-D camera in this view. Performance impact: high when on, especially with FastFoundation depth.
@@ -429,6 +469,7 @@ func _apply_clean_defaults() -> void:
 	mesh_max_depth_delta_m = 0.12
 	mesh_max_edge_m = 0.15
 	texture_map_mesh = true
+	realsense_depth_source = "sdk_depth"
 	realsense_stream_profile = "viewer30"
 	realsense_stride = 1
 	oakd_stride = 1
@@ -448,6 +489,10 @@ func _apply_clean_defaults() -> void:
 	realsense_stabilization_enabled = false
 	realsense_stabilization_deadband_m = 0.0
 	realsense_stabilization_hold_frames = 0
+	realsense_fast_backend = "onnx_cuda"
+	realsense_fast_profile = "rt_256x512_i2"
+	realsense_fast_iters = 4
+	realsense_fast_scale = 0.5
 	oakd_capture_preset = "30fps_low_latency"
 	oakd_depth_source = "fast_foundation"
 	oakd_color_enabled = false
@@ -620,6 +665,7 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 	if camera_id == CAMERA_REALSENSE:
 		payload.merge({
 			"type": "realsense_point_cloud",
+			"depth_source": realsense_depth_source,
 			"stream_profile": realsense_stream_profile,
 			"max_points": 0,
 			"mesh_enabled": _mesh_enabled(),
@@ -633,11 +679,15 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 			"rs_stabilization_enabled": realsense_stabilization_enabled,
 			"rs_stabilization_deadband_m": realsense_stabilization_deadband_m,
 			"rs_stabilization_hold_frames": realsense_stabilization_hold_frames,
+			"rs_fast_stereo_backend": realsense_fast_backend,
+			"rs_fast_stereo_model_profile": realsense_fast_profile,
+			"rs_fast_stereo_iters": realsense_fast_iters,
+			"rs_fast_stereo_scale": realsense_fast_scale,
+			"rs_fast_stereo_torch_compile": false,
 		}, true)
-		if _realsense_direct_renderer_available():
-			if enabled:
-				payload["enabled"] = false
-				_send_udp(payload)
+		if _realsense_direct_capture_active():
+			payload["enabled"] = false
+			_send_udp(payload)
 			return
 	elif camera_id == CAMERA_OAKD:
 		var oakd_capture := _oakd_capture_settings()
@@ -681,6 +731,9 @@ func _realsense_direct_renderer_available() -> bool:
 		node = _find_camera_renderer(CAMERA_REALSENSE)
 	return node != null and node.has_method("set_direct_realsense_enabled")
 
+func _realsense_direct_capture_active() -> bool:
+	return realsense_depth_source == "sdk_depth" and _realsense_direct_renderer_available()
+
 func _update_realsense_direct_status() -> void:
 	var node := _camera_nodes.get(CAMERA_REALSENSE) as Node
 	if node == null or not is_instance_valid(node):
@@ -723,12 +776,18 @@ func _request_oakd_restart() -> void:
 	_send_udp(payload)
 
 func _request_realsense_restart() -> void:
-	if _realsense_direct_renderer_available():
+	if _realsense_direct_capture_active():
 		return
 	var payload := {
 		"type": "realsense_restart",
 		"enabled": editor_stream_enabled and realsense_enabled,
 		"stream_profile": realsense_stream_profile,
+		"depth_source": realsense_depth_source,
+		"rs_fast_stereo_backend": realsense_fast_backend,
+		"rs_fast_stereo_model_profile": realsense_fast_profile,
+		"rs_fast_stereo_iters": realsense_fast_iters,
+		"rs_fast_stereo_scale": realsense_fast_scale,
+		"rs_fast_stereo_torch_compile": false,
 	}
 	_send_udp(payload)
 
@@ -862,7 +921,7 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 		node.call("set_direct_realsense_stride", realsense_stride)
 		if node.has_method("set_direct_realsense_filter_config"):
 			node.call("set_direct_realsense_filter_config", _direct_realsense_filter_config())
-		node.call("set_direct_realsense_enabled", editor_stream_enabled and realsense_enabled)
+		node.call("set_direct_realsense_enabled", editor_stream_enabled and realsense_enabled and realsense_depth_source == "sdk_depth")
 		if node.has_method("get_direct_realsense_status"):
 			realsense_status = str(node.call("get_direct_realsense_status"))
 
@@ -1168,7 +1227,7 @@ func _camera_debug_values(camera_id: String) -> Dictionary:
 		work_age += float(fast_timing.get(key, 0.0))
 	var native_render_fps := _native_stat(camera_id, "get_render_fps")
 	var native_direct_capture_fps := 0.0
-	if camera_id == CAMERA_REALSENSE and _realsense_direct_renderer_available():
+	if camera_id == CAMERA_REALSENSE and _realsense_direct_capture_active():
 		native_direct_capture_fps = _native_stat(camera_id, "get_direct_realsense_capture_fps")
 		var direct_cap := native_direct_capture_fps if native_direct_capture_fps > 0.01 else native_render_fps
 		return {

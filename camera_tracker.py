@@ -214,6 +214,13 @@ REALSENSE_DEPTH_HEIGHT = int(os.environ.get("REALSENSE_DEPTH_HEIGHT", str(_REALS
 REALSENSE_COLOR_WIDTH = int(os.environ.get("REALSENSE_COLOR_WIDTH", str(_REALSENSE_STREAM_DEFAULTS["color_width"])))
 REALSENSE_COLOR_HEIGHT = int(os.environ.get("REALSENSE_COLOR_HEIGHT", str(_REALSENSE_STREAM_DEFAULTS["color_height"])))
 REALSENSE_COLOR_FPS = int(os.environ.get("REALSENSE_COLOR_FPS", str(_REALSENSE_STREAM_DEFAULTS["color_fps"])))
+REALSENSE_DEPTH_SOURCE_SDK = "sdk_depth"
+REALSENSE_DEPTH_SOURCE_FAST_FOUNDATION = "fast_foundation"
+REALSENSE_DEPTH_SOURCES = (REALSENSE_DEPTH_SOURCE_SDK, REALSENSE_DEPTH_SOURCE_FAST_FOUNDATION)
+REALSENSE_DEPTH_SOURCE = os.environ.get("REALSENSE_DEPTH_SOURCE", REALSENSE_DEPTH_SOURCE_SDK).strip().lower()
+if REALSENSE_DEPTH_SOURCE not in REALSENSE_DEPTH_SOURCES:
+    print(f">>> Unknown REALSENSE_DEPTH_SOURCE={REALSENSE_DEPTH_SOURCE!r}; using sdk_depth. <<<")
+    REALSENSE_DEPTH_SOURCE = REALSENSE_DEPTH_SOURCE_SDK
 FUSION_CHARUCO_MIN_CORNERS = int(os.environ.get("FUSION_CHARUCO_MIN_CORNERS", "12"))
 FUSION_CHARUCO_SAMPLE_FRAMES = int(os.environ.get("FUSION_CHARUCO_SAMPLE_FRAMES", "12"))
 WORLD_ANCHOR_MARKER_IDS = [45, 46, 47, 48, 49]
@@ -3856,7 +3863,23 @@ class DemoRealSenseHeadTrackerAdapter:
             self.worker.smoothed_pixel = None
 
 class RealSenseCapture:
-    def __init__(self, width=640, height=480, fps=30, tracking_mode=None, tracking_enabled=True, color_width=None, color_height=None, color_fps=None):
+    def __init__(
+        self,
+        width=640,
+        height=480,
+        fps=30,
+        tracking_mode=None,
+        tracking_enabled=True,
+        color_width=None,
+        color_height=None,
+        color_fps=None,
+        depth_source=None,
+        fast_stereo_backend="onnx_cuda",
+        fast_stereo_model_profile="rt_256x512_i2",
+        fast_stereo_iters=4,
+        fast_stereo_scale=0.5,
+        fast_stereo_torch_compile=False,
+    ):
         if rs is None:
             raise RuntimeError("pyrealsense2 is not installed")
         self.depth_width = int(width)
@@ -3865,10 +3888,28 @@ class RealSenseCapture:
         self.height = int(color_height or height)
         self.fps = int(fps)
         self.color_fps = int(color_fps or fps)
+        self.depth_source = str(depth_source or REALSENSE_DEPTH_SOURCE_SDK).strip().lower()
+        if self.depth_source not in REALSENSE_DEPTH_SOURCES:
+            self.depth_source = REALSENSE_DEPTH_SOURCE_SDK
+        self.fast_foundation_enabled = self.depth_source == REALSENSE_DEPTH_SOURCE_FAST_FOUNDATION
+        self.fast_stereo_backend = str(fast_stereo_backend or "onnx_cuda").strip().lower()
+        if self.fast_stereo_backend not in ("pytorch", "onnx_trt", "onnx_cuda", "trt_engine"):
+            self.fast_stereo_backend = "onnx_cuda"
+        self.fast_stereo_model_profile = str(fast_stereo_model_profile or "rt_256x512_i2").strip().lower()
+        if self.fast_stereo_model_profile not in FAST_FOUNDATION_MODEL_PROFILES:
+            self.fast_stereo_model_profile = "rt_256x512_i2"
+        self.fast_stereo_iters = max(1, min(32, int(fast_stereo_iters)))
+        self.fast_stereo_scale = max(0.25, min(1.0, float(fast_stereo_scale)))
+        self.fast_stereo_torch_compile = bool(fast_stereo_torch_compile)
+        self.fast_foundation_worker = None
+        self._fast_foundation_last_seq = -1
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
         self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
+        if self.fast_foundation_enabled:
+            self.config.enable_stream(rs.stream.infrared, 1, self.depth_width, self.depth_height, rs.format.y8, self.fps)
+            self.config.enable_stream(rs.stream.infrared, 2, self.depth_width, self.depth_height, rs.format.y8, self.fps)
         self.imu_enabled = bool(REALSENSE_IMU_FALLBACK_ENABLED and tracking_enabled)
         self.imu_available = False
         self.imu_translation_enabled = os.environ.get(
@@ -3893,6 +3934,9 @@ class RealSenseCapture:
             self.config = rs.config()
             self.config.enable_stream(rs.stream.depth, self.depth_width, self.depth_height, rs.format.z16, self.fps)
             self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.color_fps)
+            if self.fast_foundation_enabled:
+                self.config.enable_stream(rs.stream.infrared, 1, self.depth_width, self.depth_height, rs.format.y8, self.fps)
+                self.config.enable_stream(rs.stream.infrared, 2, self.depth_width, self.depth_height, rs.format.y8, self.fps)
             self.profile = self.pipeline.start(self.config)
             self.imu_enabled = False
             self.imu_available = False
@@ -3931,6 +3975,47 @@ class RealSenseCapture:
         self.charuco_intrinsics = color_profile.get_intrinsics()
         self.point_cloud_intrinsics = depth_profile.get_intrinsics()
         self.intrinsics = self.point_cloud_intrinsics
+        self.fast_stereo_baseline_m = 0.0
+        self.fast_stereo_status = "off"
+        if self.fast_foundation_enabled:
+            try:
+                left_profile = self._get_video_stream_profile(rs.stream.infrared, 1)
+                right_profile = self._get_video_stream_profile(rs.stream.infrared, 2)
+                left_intrinsics = left_profile.get_intrinsics()
+                baseline = self._stereo_baseline_m(left_profile, right_profile)
+                if baseline <= 1e-4:
+                    raise RuntimeError("RealSense FastFoundation needs valid IR1->IR2 stereo baseline")
+                self.point_cloud_intrinsics = left_intrinsics
+                self.intrinsics = self.point_cloud_intrinsics
+                self.fast_stereo_baseline_m = baseline
+                self.fast_foundation_worker = FastFoundationDepthWorker(
+                    self.depth_width,
+                    self.depth_height,
+                    self.point_cloud_intrinsics,
+                    self.fast_stereo_baseline_m,
+                    scale=self.fast_stereo_scale,
+                    iters=self.fast_stereo_iters,
+                    torch_compile=self.fast_stereo_torch_compile,
+                    backend=self.fast_stereo_backend,
+                    model_profile=self.fast_stereo_model_profile,
+                )
+                self.fast_stereo_status = "active"
+                print(
+                    f">>> RealSense FastFoundation stereo active: "
+                    f"{self.depth_width}x{self.depth_height}@{self.fps} baseline={self.fast_stereo_baseline_m:.4f}m "
+                    f"backend={self.fast_stereo_backend} profile={self.fast_stereo_model_profile} "
+                    f"iters={self.fast_stereo_iters} scale={self.fast_stereo_scale:.2f} <<<",
+                    flush=True,
+                )
+            except Exception:
+                if self.fast_foundation_worker is not None:
+                    self.fast_foundation_worker.stop()
+                    self.fast_foundation_worker = None
+                try:
+                    self.pipeline.stop()
+                except Exception:
+                    pass
+                raise
         self.latest_depth_m = None
         self.latest_tracking_depth_m = None
         self.latest_color_bgr = None
@@ -4041,6 +4126,32 @@ class RealSenseCapture:
         except Exception as exc:
             print(f">>> Failed to apply RealSense advanced default settings {resolved_path}: {exc} <<<")
             return False
+
+    def _get_video_stream_profile(self, stream_type, index=None):
+        try:
+            if index is None:
+                return self.profile.get_stream(stream_type).as_video_stream_profile()
+            return self.profile.get_stream(stream_type, int(index)).as_video_stream_profile()
+        except Exception as first_exc:
+            for stream_profile in self.profile.get_streams():
+                try:
+                    if stream_profile.stream_type() != stream_type:
+                        continue
+                    if index is not None and stream_profile.stream_index() != int(index):
+                        continue
+                    return stream_profile.as_video_stream_profile()
+                except Exception:
+                    continue
+            raise first_exc
+
+    def _stereo_baseline_m(self, left_profile, right_profile):
+        try:
+            extrinsics = left_profile.get_extrinsics_to(right_profile)
+            translation = np.asarray(getattr(extrinsics, "translation", [0.0, 0.0, 0.0]), dtype=np.float32)
+            return float(np.linalg.norm(translation))
+        except Exception as exc:
+            print(f">>> RealSense IR stereo baseline unavailable: {exc} <<<")
+            return 0.0
 
     def _configure_depth_filters(self):
         if not self.depth_filters_enabled:
@@ -4208,6 +4319,9 @@ class RealSenseCapture:
             if self.head_tracker is not None:
                 self.head_tracker.close()
                 self.head_tracker = None
+        if self.fast_foundation_worker is not None:
+            self.fast_foundation_worker.stop()
+            self.fast_foundation_worker = None
         self.pipeline.stop()
 
     def get_camera_matrix(self):
@@ -4497,6 +4611,7 @@ class RealSenseCapture:
             try:
                 frames = self.pipeline.wait_for_frames()
                 wait_done = time.perf_counter()
+                raw_frames = frames
                 self._process_imu_frames(frames)
                 color_frame_for_charuco = frames.get_color_frame()
                 frames = self.align_to_depth.process(frames)
@@ -4512,6 +4627,16 @@ class RealSenseCapture:
             color_frame = frames.get_color_frame()
             if not depth_frame or not color_frame or not color_frame_for_charuco:
                 continue
+            left_ir_frame = None
+            right_ir_frame = None
+            if self.fast_foundation_enabled:
+                try:
+                    left_ir_frame = raw_frames.get_infrared_frame(1)
+                    right_ir_frame = raw_frames.get_infrared_frame(2)
+                except Exception as exc:
+                    if self.fast_stereo_status != "ir_frames_missing":
+                        print(f">>> RealSense FastFoundation IR frames unavailable: {exc} <<<")
+                    self.fast_stereo_status = "ir_frames_missing"
             depth_np_start = time.perf_counter()
             raw_depth_m = np.asanyarray(depth_frame.get_data()).astype(np.float32) * self.depth_scale
             filtered_depth_frame = depth_frame
@@ -4546,6 +4671,35 @@ class RealSenseCapture:
                 point_cloud_depth_m = raw_depth_m
             color_np_done = time.perf_counter()
             self._profile_add("color_np", color_np_done - color_np_start)
+            fast_start = time.perf_counter()
+            if self.fast_foundation_enabled:
+                worker = self.fast_foundation_worker
+                if worker is not None and left_ir_frame and right_ir_frame:
+                    try:
+                        left_ir = np.asanyarray(left_ir_frame.get_data()).copy()
+                        right_ir = np.asanyarray(right_ir_frame.get_data()).copy()
+                        worker.submit(
+                            left_ir,
+                            right_ir,
+                            None,
+                            left_ir_frame.get_timestamp(),
+                            right_ir_frame.get_timestamp(),
+                            time.perf_counter(),
+                            time.perf_counter(),
+                        )
+                    except Exception as exc:
+                        if self.fast_stereo_status != "submit_failed":
+                            print(f">>> RealSense FastFoundation submit failed: {exc} <<<")
+                        self.fast_stereo_status = "submit_failed"
+                result = worker.get_latest() if worker is not None else None
+                if result is not None:
+                    seq, _result_color, result_depth, _left_ts, _right_ts, _left_perf, _right_perf = result
+                    if result_depth is not None:
+                        point_cloud_depth_m = result_depth
+                        filtered_depth_m = result_depth
+                        self._fast_foundation_last_seq = int(seq)
+                        self.fast_stereo_status = "active"
+            self._profile_add("fast_foundation", time.perf_counter() - fast_start)
             head_point = None
             head_pixel = None
             head_raw_pixel = None
@@ -4558,7 +4712,10 @@ class RealSenseCapture:
                 with self._tracker_lock:
                     tracker = self.head_tracker
                     if tracker is not None:
-                        tracker.submit_frame(color, filtered_depth_m)
+                        tracking_color = color
+                        if filtered_depth_m is not None and color.shape[:2] != filtered_depth_m.shape[:2]:
+                            tracking_color = cv2.resize(color, (filtered_depth_m.shape[1], filtered_depth_m.shape[0]), interpolation=cv2.INTER_LINEAR)
+                        tracker.submit_frame(tracking_color, filtered_depth_m)
                         head_point, head_pixel = tracker.get_latest()
                         debug = tracker.get_debug()
                         head_raw_pixel = debug.get("raw_pixel")
@@ -4951,6 +5108,14 @@ def main():
     realsense_point_cloud_send_counter = 0
     realsense_point_cloud_last_fps_print_time = time.time()
     active_realsense_stream_profile = REALSENSE_STREAM_PROFILE
+    active_realsense_depth_source = REALSENSE_DEPTH_SOURCE
+    active_realsense_fast_settings = {
+        "backend": "onnx_cuda",
+        "model_profile": "rt_256x512_i2",
+        "iters": 4,
+        "scale": 0.5,
+        "torch_compile": False,
+    }
     oakd_capture = None
     oakd_point_cloud_enabled = False
     oakd_point_cloud_stride = max(1, OAKD_POINT_CLOUD_DEFAULT_STRIDE)
@@ -5449,6 +5614,10 @@ def main():
                     publish_fps=float(publish_fps),
                     capture_fps=float(getattr(capture, "capture_fps", 0.0)),
                     stream_profile=str(active_realsense_stream_profile),
+                    depth_source=str(getattr(capture, "depth_source", active_realsense_depth_source)),
+                    fast_backend=str(getattr(capture, "fast_stereo_backend", "")),
+                    fast_profile=str(getattr(capture, "fast_stereo_model_profile", "")),
+                    fast_timing_ms=dict(getattr(getattr(capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
                     points=int(valid_count),
                     valid_pct=float(valid_pct),
                     width=int(grid_w),
@@ -5501,6 +5670,10 @@ def main():
                 publish_fps=float(publish_fps),
                 capture_fps=float(getattr(capture, "capture_fps", 0.0)),
                 stream_profile=str(active_realsense_stream_profile),
+                depth_source=str(getattr(capture, "depth_source", active_realsense_depth_source)),
+                fast_backend=str(getattr(capture, "fast_stereo_backend", "")),
+                fast_profile=str(getattr(capture, "fast_stereo_model_profile", "")),
+                fast_timing_ms=dict(getattr(getattr(capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
                 points=int(valid_count),
                 valid_pct=float(valid_pct),
                 width=int(grid_w),
@@ -5635,8 +5808,26 @@ def main():
                 frame_payload.extend(mesh_indices.tobytes())
             if point_cloud_tcp_server is not None:
                 point_cloud_tcp_server.publish(realsense_point_cloud_frame_id, frame_payload)
+            publish_fps = 1.0 / max(0.001, now - last_realsense_point_cloud_send_time)
             last_realsense_point_cloud_send_time = now
             realsense_point_cloud_send_counter += 1
+            valid_pct = 100.0 * float(valid_count) / max(1.0, float(valid.size))
+            update_point_cloud_stats(
+                "realsense",
+                enabled=True,
+                publish_fps=float(publish_fps),
+                capture_fps=float(getattr(capture, "capture_fps", 0.0)),
+                stream_profile=str(active_realsense_stream_profile),
+                depth_source=str(getattr(capture, "depth_source", active_realsense_depth_source)),
+                fast_backend=str(getattr(capture, "fast_stereo_backend", "")),
+                fast_profile=str(getattr(capture, "fast_stereo_model_profile", "")),
+                fast_timing_ms=dict(getattr(getattr(capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
+                points=int(point_count),
+                valid_pct=float(valid_pct),
+                width=int(sampled_depth.shape[1]),
+                height=int(sampled_depth.shape[0]),
+                stride=int(stride),
+            )
             if point_cloud_console_stats and now - realsense_point_cloud_last_fps_print_time >= 2.0:
                 elapsed = now - realsense_point_cloud_last_fps_print_time
                 print(f">>> RealSense point cloud tcp publish: {realsense_point_cloud_send_counter / max(0.001, elapsed):.1f}fps, {point_count} points, {int(mesh_indices.size / 3)} tris, mesh {mesh_build_msec:.1f}ms <<<")
@@ -5665,8 +5856,26 @@ def main():
             )
             payload.extend(point_records[start:end].tobytes())
             point_cloud_sock.sendto(payload, ("127.0.0.1", REALSENSE_POINT_CLOUD_PORT))
+        publish_fps = 1.0 / max(0.001, now - last_realsense_point_cloud_send_time)
         last_realsense_point_cloud_send_time = now
         realsense_point_cloud_send_counter += 1
+        valid_pct = 100.0 * float(valid_count) / max(1.0, float(valid.size))
+        update_point_cloud_stats(
+            "realsense",
+            enabled=True,
+            publish_fps=float(publish_fps),
+            capture_fps=float(getattr(capture, "capture_fps", 0.0)),
+            stream_profile=str(active_realsense_stream_profile),
+            depth_source=str(getattr(capture, "depth_source", active_realsense_depth_source)),
+            fast_backend=str(getattr(capture, "fast_stereo_backend", "")),
+            fast_profile=str(getattr(capture, "fast_stereo_model_profile", "")),
+            fast_timing_ms=dict(getattr(getattr(capture, "fast_foundation_worker", None), "timing_ms", {}) or {}),
+            points=int(point_count),
+            valid_pct=float(valid_pct),
+            width=int(sampled_depth.shape[1]),
+            height=int(sampled_depth.shape[0]),
+            stride=int(stride),
+        )
         if point_cloud_console_stats and now - realsense_point_cloud_last_fps_print_time >= 2.0:
             elapsed = now - realsense_point_cloud_last_fps_print_time
             print(f">>> RealSense point cloud send: {realsense_point_cloud_send_counter / max(0.001, elapsed):.1f}fps, {point_count} points <<<")
@@ -7026,6 +7235,12 @@ def main():
                         color_width=color_w,
                         color_height=color_h,
                         color_fps=color_fps,
+                        depth_source=active_realsense_depth_source,
+                        fast_stereo_backend=active_realsense_fast_settings["backend"],
+                        fast_stereo_model_profile=active_realsense_fast_settings["model_profile"],
+                        fast_stereo_iters=active_realsense_fast_settings["iters"],
+                        fast_stereo_scale=active_realsense_fast_settings["scale"],
+                        fast_stereo_torch_compile=active_realsense_fast_settings["torch_compile"],
                     )
                     if label != "requested":
                         print(
@@ -7051,7 +7266,8 @@ def main():
                 f">>> RealSense RGB+depth source active at {active_capture_width}x{active_capture_height}"
                 f" color, depth {capture.depth_width}x{capture.depth_height}"
                 f" @ depth {capture.fps}fps color {capture.color_fps}fps"
-                f" profile={active_realsense_stream_profile}. Head tracking: {'ON' if capture.tracking_enabled else 'OFF'}. <<<"
+                f" profile={active_realsense_stream_profile} depth_source={capture.depth_source}. "
+                f"Head tracking: {'ON' if capture.tracking_enabled else 'OFF'}. <<<"
             )
             return capture
 
@@ -7371,6 +7587,22 @@ def main():
                     if requested_profile not in REALSENSE_STREAM_PROFILE_PRESETS and requested_profile != "custom":
                         print(f">>> RealSense restart ignored: unknown stream_profile={requested_profile!r} <<<")
                     else:
+                        requested_depth_source = str(cmd_json.get("depth_source", active_realsense_depth_source)).strip().lower()
+                        if requested_depth_source not in REALSENSE_DEPTH_SOURCES:
+                            requested_depth_source = REALSENSE_DEPTH_SOURCE_SDK
+                        active_realsense_depth_source = requested_depth_source
+                        os.environ["REALSENSE_DEPTH_SOURCE"] = active_realsense_depth_source
+                        active_realsense_fast_settings = {
+                            "backend": str(cmd_json.get("rs_fast_stereo_backend", active_realsense_fast_settings["backend"])).strip().lower(),
+                            "model_profile": str(cmd_json.get("rs_fast_stereo_model_profile", active_realsense_fast_settings["model_profile"])).strip().lower(),
+                            "iters": max(1, min(32, int(cmd_json.get("rs_fast_stereo_iters", active_realsense_fast_settings["iters"])))),
+                            "scale": max(0.25, min(1.0, float(cmd_json.get("rs_fast_stereo_scale", active_realsense_fast_settings["scale"])))),
+                            "torch_compile": bool(cmd_json.get("rs_fast_stereo_torch_compile", active_realsense_fast_settings["torch_compile"])),
+                        }
+                        if active_realsense_fast_settings["backend"] not in ("pytorch", "onnx_trt", "onnx_cuda", "trt_engine"):
+                            active_realsense_fast_settings["backend"] = "onnx_cuda"
+                        if active_realsense_fast_settings["model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
+                            active_realsense_fast_settings["model_profile"] = "rt_256x512_i2"
                         active_realsense_stream_profile = requested_profile
                         os.environ["REALSENSE_STREAM_PROFILE"] = active_realsense_stream_profile
                         if bool(cmd_json.get("enabled", True)):
@@ -7384,6 +7616,7 @@ def main():
                             realsense_point_cloud_waiting_warned = False
                             print(
                                 f">>> RealSense stream profile switched to {active_realsense_stream_profile}; "
+                                f"depth_source={active_realsense_depth_source}; "
                                 f"capture {'active' if cap is not None else 'unavailable'}. <<<"
                             )
                         else:
@@ -7394,17 +7627,53 @@ def main():
                     point_cloud_console_stats = bool(cmd_json.get("console_stats", point_cloud_console_stats))
                     point_cloud_sync_to_slowest = bool(cmd_json.get("sync_to_slowest", point_cloud_sync_to_slowest))
                     realsense_point_cloud_enabled = bool(cmd_json.get("enabled", False))
+                    requested_depth_source = str(cmd_json.get("depth_source", active_realsense_depth_source)).strip().lower()
+                    if requested_depth_source not in REALSENSE_DEPTH_SOURCES:
+                        print(f">>> Ignoring unknown RealSense depth_source={requested_depth_source!r}; using sdk_depth. <<<")
+                        requested_depth_source = REALSENSE_DEPTH_SOURCE_SDK
+                    requested_fast_settings = {
+                        "backend": str(cmd_json.get("rs_fast_stereo_backend", active_realsense_fast_settings["backend"])).strip().lower(),
+                        "model_profile": str(cmd_json.get("rs_fast_stereo_model_profile", active_realsense_fast_settings["model_profile"])).strip().lower(),
+                        "iters": max(1, min(32, int(cmd_json.get("rs_fast_stereo_iters", active_realsense_fast_settings["iters"])))),
+                        "scale": max(0.25, min(1.0, float(cmd_json.get("rs_fast_stereo_scale", active_realsense_fast_settings["scale"])))),
+                        "torch_compile": bool(cmd_json.get("rs_fast_stereo_torch_compile", active_realsense_fast_settings["torch_compile"])),
+                    }
+                    if requested_fast_settings["backend"] not in ("pytorch", "onnx_trt", "onnx_cuda", "trt_engine"):
+                        requested_fast_settings["backend"] = "onnx_cuda"
+                    if requested_fast_settings["model_profile"] not in FAST_FOUNDATION_MODEL_PROFILES:
+                        requested_fast_settings["model_profile"] = "rt_256x512_i2"
+                    realsense_depth_config_changed = (
+                        requested_depth_source != active_realsense_depth_source
+                        or requested_fast_settings != active_realsense_fast_settings
+                    )
+                    active_realsense_depth_source = requested_depth_source
+                    active_realsense_fast_settings = requested_fast_settings
+                    os.environ["REALSENSE_DEPTH_SOURCE"] = active_realsense_depth_source
                     requested_profile = str(cmd_json.get("stream_profile", active_realsense_stream_profile)).strip().lower()
                     if requested_profile in REALSENSE_STREAM_PROFILE_PRESETS or requested_profile == "custom":
-                        if requested_profile != active_realsense_stream_profile:
+                        if requested_profile != active_realsense_stream_profile or realsense_depth_config_changed:
                             active_realsense_stream_profile = requested_profile
                             os.environ["REALSENSE_STREAM_PROFILE"] = active_realsense_stream_profile
-                            if active_camera_source == CAMERA_SOURCE_REALSENSE:
+                            if realsense_point_cloud_enabled:
+                                active_camera_source = CAMERA_SOURCE_REALSENSE
+                                os.environ[CAMERA_SOURCE_ENV] = active_camera_source
                                 release_camera()
                                 cap = open_camera()
                                 camera_paused = cap is None
                                 point_cloud_stabilizer_state.pop("realsense", None)
-                                print(f">>> RealSense stream profile switched to {active_realsense_stream_profile} from point-cloud request. <<<")
+                                print(
+                                    f">>> RealSense stream switched to profile={active_realsense_stream_profile} "
+                                    f"depth_source={active_realsense_depth_source} from point-cloud request. <<<"
+                                )
+                            elif active_camera_source == CAMERA_SOURCE_REALSENSE:
+                                release_camera()
+                                cap = None
+                                camera_paused = True
+                                point_cloud_stabilizer_state.pop("realsense", None)
+                                print(
+                                    f">>> RealSense Python capture released for disabled point-cloud stream "
+                                    f"profile={active_realsense_stream_profile} depth_source={active_realsense_depth_source}. <<<"
+                                )
                     else:
                         print(f">>> Ignoring unknown RealSense stream_profile={requested_profile!r} in point-cloud request. <<<")
                     realsense_point_cloud_stride = max(1, int(cmd_json.get("stride", realsense_point_cloud_stride)))
@@ -7461,6 +7730,7 @@ def main():
                         f"sync_to_slowest={'on' if point_cloud_sync_to_slowest else 'off'} "
                         f"packet_points={realsense_point_cloud_packet_points} "
                         f"transport={realsense_point_cloud_transport} "
+                        f"depth_source={active_realsense_depth_source} "
                         f"stabilize={'on' if realsense_point_cloud_stabilization_enabled else 'off'}:{realsense_point_cloud_stabilization_deadband_m:.3f}m hold={realsense_point_cloud_stabilization_hold_frames} "
                         f"shm_color={realsense_point_cloud_shm_color_format} <<<"
                     )
