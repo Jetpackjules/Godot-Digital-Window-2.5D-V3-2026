@@ -193,7 +193,7 @@ func _ready() -> void:
 	set_process_unhandled_input(true)
 	
 	for child in get_children():
-		if child is Node3D and not child.name.begins_with("Red_Border"):
+		if child is Node3D and not _is_switcher_internal_child(child):
 			_instantiated_view = child
 			break
 
@@ -416,6 +416,21 @@ func _instantiate_view(packed_scene: PackedScene) -> void:
 	_sync_enhanced_graphics()
 	_sync_shared_camera_reactive_lighting()
 	_sync_fallback_world_environment()
+
+func _is_switcher_internal_child(node: Node) -> bool:
+	var child_name := String(node.name)
+	return (
+		child_name.begins_with("Red_Border")
+		or child_name == _ENHANCED_GRAPHICS_ENVIRONMENT_NAME
+		or child_name == _ENHANCED_GRAPHICS_KEY_LIGHT_NAME
+		or child_name == _ENHANCED_GRAPHICS_FILL_LIGHT_NAME
+		or child_name == _ENHANCED_GRAPHICS_RIM_LIGHT_NAME
+		or child_name == _CAMERA_REACTIVE_ENVIRONMENT_NAME
+		or child_name == _CAMERA_REACTIVE_LIGHT_ROOT_NAME
+		or child_name == _CAMERA_REACTIVE_PROJECTOR_LIGHT_NAME
+		or child_name == _CAMERA_REACTIVE_PREVIEW_PLANE_NAME
+		or child_name == "_ScreenPlaneReference"
+	)
 
 func set_view_scale_mode(mode: int) -> void:
 	view_scale_mode = clampi(mode, VIEW_SCALE_FIT_HEIGHT, VIEW_SCALE_NO_SCALING)

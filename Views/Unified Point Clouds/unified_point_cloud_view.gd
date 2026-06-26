@@ -8,6 +8,12 @@ const BIG_ARUCO_MARKER_SIZE_M := 0.15
 const BIG_ARUCO_DICTIONARY := "4x4_50"
 const CAMERA_CLOUDS_NODE := "CameraClouds"
 const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
+const REALSENSE_VIEWER_MESH_DEPTH_DELTA := 0.05
+const REALSENSE_VIEWER_MESH_EDGE_M := 0.08
+const RUNTIME_STREAM_OWNER_PATH := "user://godot_realsense_runtime_owner.json"
+const RUNTIME_STREAM_OWNER_TIMEOUT_MSEC := 2000
+const RUNTIME_STREAM_OWNER_WRITE_INTERVAL_MSEC := 250
+const RUNTIME_STREAM_OWNER_CHECK_INTERVAL_MSEC := 150
 
 @export_group("Workflow")
 ## UDP control port used by launch_web_stack.py. Performance impact: none unless changed to the wrong port.
@@ -69,13 +75,13 @@ const DEBUG_PANEL_ANCHOR_NODE := "DebugPanelAnchor"
 	set(value):
 		point_pixel_size = value
 		_update_camera_renderers()
-## Depth jump tolerance used by GPU mesh edge rejection and feathering. Performance impact: low; visual impact high. Too low makes mesh disappear.
-@export_range(0.01, 0.30, 0.005, "suffix:m") var mesh_max_depth_delta_m: float = 0.12:
+## Depth jump tolerance used by mesh edge rejection and feathering. 0.05 matches RealSense Viewer's filled point-cloud cutoff.
+@export_range(0.01, 0.30, 0.005) var mesh_max_depth_delta_m: float = REALSENSE_VIEWER_MESH_DEPTH_DELTA:
 	set(value):
 		mesh_max_depth_delta_m = value
 		_update_camera_renderers()
 ## Maximum connected edge length sent to mesh-aware publisher paths. Performance impact: low in SHM GPU mesh, moderate in CPU/TCP mesh paths.
-@export_range(0.01, 0.40, 0.005, "suffix:m") var mesh_max_edge_m: float = 0.15:
+@export_range(0.01, 0.40, 0.005, "suffix:m") var mesh_max_edge_m: float = REALSENSE_VIEWER_MESH_EDGE_M:
 	set(value):
 		mesh_max_edge_m = value
 		_update_camera_renderers()
@@ -435,27 +441,39 @@ var _debug_cells: Dictionary = {}
 var _last_debug_update_msec: int = 0
 var _native_missing_warned := false
 var _stream_commands_active := false
+var _runtime_stream_owner_path: String = ""
+var _last_runtime_owner_write_msec: int = 0
+var _last_runtime_owner_check_msec: int = -1000000
+var _runtime_stream_owner_blocks_editor_cached := false
 
 func _ready() -> void:
 	_point_cloud_stats_path = ProjectSettings.globalize_path("user://point_cloud_stream_stats.json")
 	_alignment_result_path = ProjectSettings.globalize_path("user://oakd_realsense_alignment.json")
+	_runtime_stream_owner_path = ProjectSettings.globalize_path(RUNTIME_STREAM_OWNER_PATH)
+	if Engine.is_editor_hint():
+		_update_runtime_stream_owner_cache(true)
+	else:
+		_write_runtime_stream_owner(true)
 	_ensure_scene_anchors()
 	if auto_apply_alignment_file:
 		_poll_alignment_result(true)
 	_update_camera_renderers()
 	if editor_stream_enabled and not _editor_live_stream_allowed():
-		realsense_status = "Editor live streaming is suppressed while Unified Point Clouds is nested inside another edited scene. Open the Unified Point Clouds scene directly to preview live cameras."
+		realsense_status = _editor_live_stream_block_reason()
 		oakd_status = realsense_status
 	if _streams_enabled():
 		_send_all_stream_commands()
 	_update_debug_panel(true)
 
 func _exit_tree() -> void:
+	if not Engine.is_editor_hint():
+		_clear_runtime_stream_owner()
 	if _stream_commands_active:
 		_send_all_stream_commands(false)
 	_free_debug_panel()
 
 func _process(_delta: float) -> void:
+	_update_runtime_stream_owner_state()
 	_poll_point_cloud_stats()
 	_poll_alignment_result(false)
 	_update_camera_renderers()
@@ -469,8 +487,8 @@ func _apply_clean_defaults() -> void:
 	cleanup_depth_delta_m = 0.055
 	cleanup_min_close_neighbors = 2.0
 	edge_feather_enabled = true
-	mesh_max_depth_delta_m = 0.12
-	mesh_max_edge_m = 0.15
+	mesh_max_depth_delta_m = REALSENSE_VIEWER_MESH_DEPTH_DELTA
+	mesh_max_edge_m = REALSENSE_VIEWER_MESH_EDGE_M
 	texture_map_mesh = true
 	realsense_depth_source = "sdk_depth"
 	realsense_stream_profile = "viewer30"
@@ -523,12 +541,123 @@ func _camera_enabled(camera_id: String) -> bool:
 func _editor_live_stream_allowed() -> bool:
 	if not Engine.is_editor_hint():
 		return true
+	if _runtime_stream_owner_blocks_editor():
+		return false
 	if get_tree() == null:
 		return false
-	return get_tree().edited_scene_root == self
+	var edited_root := get_tree().edited_scene_root
+	if edited_root == self:
+		return true
+	return _is_nested_editor_preview_under_view_switcher(edited_root)
+
+func _editor_live_stream_block_reason() -> String:
+	if Engine.is_editor_hint() and _runtime_stream_owner_blocks_editor():
+		return "Editor live streaming is paused because the running game owns the Godot RealSense stream."
+	return "Editor live streaming is suppressed while Unified Point Clouds is nested inside another edited scene. Open the Unified Point Clouds scene directly to preview live cameras."
+
+func _is_nested_editor_preview_under_view_switcher(edited_root: Node) -> bool:
+	if edited_root == null:
+		return false
+	var node := get_parent()
+	while node != null:
+		if _node_is_view_switcher(node):
+			return node == edited_root or edited_root.is_ancestor_of(node)
+		if node == edited_root:
+			break
+		node = node.get_parent()
+	return false
+
+func _node_is_view_switcher(node: Node) -> bool:
+	if node == null:
+		return false
+	var script := node.get_script() as Script
+	return script != null and script.resource_path == "res://view_switcher.gd"
 
 func _streams_enabled() -> bool:
 	return editor_stream_enabled and _editor_live_stream_allowed()
+
+func _update_runtime_stream_owner_state() -> void:
+	if Engine.is_editor_hint():
+		var was_blocked := _runtime_stream_owner_blocks_editor_cached
+		_update_runtime_stream_owner_cache(false)
+		if _runtime_stream_owner_blocks_editor_cached == was_blocked:
+			return
+		_update_camera_renderers()
+		if _runtime_stream_owner_blocks_editor_cached:
+			_send_all_stream_commands(false)
+			var blocked_status := _editor_live_stream_block_reason()
+			realsense_status = blocked_status
+			oakd_status = blocked_status
+		elif _streams_enabled():
+			_send_all_stream_commands()
+		return
+
+	_write_runtime_stream_owner(false)
+
+func _runtime_stream_owner_blocks_editor() -> bool:
+	if not Engine.is_editor_hint():
+		return false
+	_update_runtime_stream_owner_cache(false)
+	return _runtime_stream_owner_blocks_editor_cached
+
+func _update_runtime_stream_owner_cache(force: bool) -> void:
+	if not Engine.is_editor_hint():
+		_runtime_stream_owner_blocks_editor_cached = false
+		return
+	var now_msec := Time.get_ticks_msec()
+	if not force and now_msec - _last_runtime_owner_check_msec < RUNTIME_STREAM_OWNER_CHECK_INTERVAL_MSEC:
+		return
+	_last_runtime_owner_check_msec = now_msec
+	_runtime_stream_owner_blocks_editor_cached = _read_runtime_stream_owner_active()
+
+func _read_runtime_stream_owner_active() -> bool:
+	if _runtime_stream_owner_path.is_empty():
+		_runtime_stream_owner_path = ProjectSettings.globalize_path(RUNTIME_STREAM_OWNER_PATH)
+	if _runtime_stream_owner_path.is_empty() or not FileAccess.file_exists(_runtime_stream_owner_path):
+		return false
+	var file := FileAccess.open(_runtime_stream_owner_path, FileAccess.READ)
+	if file == null:
+		return false
+	var parsed = JSON.parse_string(file.get_as_text())
+	if not (parsed is Dictionary):
+		return false
+	var owner := parsed as Dictionary
+	if str(owner.get("owner", "")) != "runtime":
+		return false
+	var timestamp_msec := int(owner.get("timestamp_msec", 0))
+	var now_unix_msec := int(Time.get_unix_time_from_system() * 1000.0)
+	return timestamp_msec > 0 and now_unix_msec - timestamp_msec <= RUNTIME_STREAM_OWNER_TIMEOUT_MSEC
+
+func _write_runtime_stream_owner(force: bool) -> void:
+	if Engine.is_editor_hint():
+		return
+	var now_msec := Time.get_ticks_msec()
+	if not force and now_msec - _last_runtime_owner_write_msec < RUNTIME_STREAM_OWNER_WRITE_INTERVAL_MSEC:
+		return
+	_last_runtime_owner_write_msec = now_msec
+	if _runtime_stream_owner_path.is_empty():
+		_runtime_stream_owner_path = ProjectSettings.globalize_path(RUNTIME_STREAM_OWNER_PATH)
+	var file := FileAccess.open(_runtime_stream_owner_path, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify({
+		"owner": "runtime",
+		"pid": OS.get_process_id(),
+		"timestamp_msec": int(Time.get_unix_time_from_system() * 1000.0),
+		"scene": scene_file_path,
+	}))
+
+func _clear_runtime_stream_owner() -> void:
+	if _runtime_stream_owner_path.is_empty():
+		_runtime_stream_owner_path = ProjectSettings.globalize_path(RUNTIME_STREAM_OWNER_PATH)
+	if _runtime_stream_owner_path.is_empty() or not FileAccess.file_exists(_runtime_stream_owner_path):
+		return
+	var file := FileAccess.open(_runtime_stream_owner_path, FileAccess.READ)
+	if file != null:
+		var parsed = JSON.parse_string(file.get_as_text())
+		if parsed is Dictionary and int((parsed as Dictionary).get("pid", -1)) != OS.get_process_id():
+			return
+	DirAccess.remove_absolute(_runtime_stream_owner_path)
 
 func _camera_stride(camera_id: String) -> int:
 	if camera_id == CAMERA_REALSENSE:
@@ -845,7 +974,7 @@ func _assign_editor_owner(node: Node) -> void:
 	if not Engine.is_editor_hint() or get_tree() == null:
 		return
 	var scene_root := get_tree().edited_scene_root
-	if scene_root != null and (node == scene_root or scene_root.is_ancestor_of(node)):
+	if scene_root == self and (node == scene_root or scene_root.is_ancestor_of(node)):
 		node.owner = scene_root
 
 func _update_camera_renderers() -> void:

@@ -11,12 +11,14 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
 #if defined(REALSENSE_FOUNDATION_STEREO_ENABLED) && defined(_WIN32)
 #include <windows.h>
+#include <librealsense2/rsutil.h>
 #include <onnxruntime/core/session/onnxruntime_c_api.h>
 #endif
 
@@ -60,6 +62,32 @@ struct OrtRuntime {
         return true;
     }
 
+    void add_dependency_dir_if_exists(const std::filesystem::path &p_dir) const {
+        if (!p_dir.empty() && std::filesystem::is_directory(p_dir)) {
+            AddDllDirectory(p_dir.wstring().c_str());
+        }
+    }
+
+    void add_python_dependency_dirs() const {
+        std::vector<std::filesystem::path> roots;
+        const wchar_t *appdata = _wgetenv(L"APPDATA");
+        if (appdata && appdata[0]) {
+            roots.push_back(std::filesystem::path(appdata) / L"Python/Python312/site-packages");
+            roots.push_back(std::filesystem::path(appdata) / L"Python/Python311/site-packages");
+            roots.push_back(std::filesystem::path(appdata) / L"Python/Python310/site-packages");
+        }
+        const wchar_t *localappdata = _wgetenv(L"LOCALAPPDATA");
+        if (localappdata && localappdata[0]) {
+            roots.push_back(std::filesystem::path(localappdata) / L"Programs/Python/Python312/Lib/site-packages");
+            roots.push_back(std::filesystem::path(localappdata) / L"Programs/Python/Python311/Lib/site-packages");
+            roots.push_back(std::filesystem::path(localappdata) / L"Programs/Python/Python310/Lib/site-packages");
+        }
+        for (const std::filesystem::path &root : roots) {
+            add_dependency_dir_if_exists(root / L"torch/lib");
+            add_dependency_dir_if_exists(root / L"tensorrt_libs");
+        }
+    }
+
     bool load(String &r_error) {
         if (api && env) {
             return true;
@@ -91,6 +119,7 @@ struct OrtRuntime {
             r_error = "ONNX Runtime DLL not found. Set ONNXRUNTIME_DLL_DIR to the directory containing onnxruntime.dll.";
             return false;
         }
+        add_python_dependency_dirs();
         auto get_api_base = reinterpret_cast<const OrtApiBase *(ORT_API_CALL *)()>(GetProcAddress(module, "OrtGetApiBase"));
         if (!get_api_base) {
             r_error = "ONNX Runtime DLL does not export OrtGetApiBase.";
@@ -285,10 +314,19 @@ int RealSenseDirectFrameSource::get_stride() const {
 }
 
 void RealSenseDirectFrameSource::set_color_output_enabled(bool p_enabled) {
+    if (color_output_enabled == p_enabled) {
+        return;
+    }
     color_output_enabled = p_enabled;
     if (!color_output_enabled) {
         color_image.unref();
     }
+#ifdef REALSENSE_DIRECT_ENABLED
+    if (opened) {
+        close();
+        open();
+    }
+#endif
 }
 
 bool RealSenseDirectFrameSource::get_color_output_enabled() const {
@@ -458,6 +496,7 @@ bool RealSenseDirectFrameSource::is_fast_foundation_source() const {
 
 void RealSenseDirectFrameSource::reset_fast_foundation_runtime() {
 #if defined(REALSENSE_FOUNDATION_STEREO_ENABLED) && defined(_WIN32)
+    stop_fast_foundation_worker();
     release_ort_session(fast_foundation_session);
     release_ort_memory_info(fast_foundation_memory_info);
 #else
@@ -472,6 +511,10 @@ void RealSenseDirectFrameSource::reset_fast_foundation_runtime() {
     fast_foundation_disparity.clear();
     fast_foundation_left_resized.clear();
     fast_foundation_right_resized.clear();
+    fast_foundation_applied_sequence = 0;
+    fast_foundation_next_job_sequence = 0;
+    fast_foundation_pending_ready = false;
+    fast_foundation_latest_ready = false;
 }
 
 bool RealSenseDirectFrameSource::initialize_fast_foundation_runtime() {
@@ -496,6 +539,9 @@ bool RealSenseDirectFrameSource::initialize_fast_foundation_runtime() {
     api->SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL);
     api->SetSessionLogSeverityLevel(options, 3);
     const std::string backend = to_utf8(fast_foundation_backend);
+    fast_foundation_provider_status = "cpu";
+    bool trt_provider_attached = false;
+    bool cuda_provider_attached = false;
     if (backend == "onnx_trt") {
         OrtTensorRTProviderOptionsV2 *trt_options = nullptr;
         if (!check_ort(api->CreateTensorRTProviderOptions(&trt_options), error)) {
@@ -511,6 +557,8 @@ bool RealSenseDirectFrameSource::initialize_fast_foundation_runtime() {
             check_ort(api->UpdateTensorRTProviderOptions(trt_options, keys, values, 4), error);
             if (!check_ort(api->SessionOptionsAppendExecutionProvider_TensorRT_V2(options, trt_options), error)) {
                 UtilityFunctions::push_warning(String("RealSense native FastFoundation TensorRT provider unavailable: ") + error);
+            } else {
+                trt_provider_attached = true;
             }
             api->ReleaseTensorRTProviderOptions(trt_options);
         }
@@ -520,11 +568,18 @@ bool RealSenseDirectFrameSource::initialize_fast_foundation_runtime() {
         if (check_ort(api->CreateCUDAProviderOptions(&cuda_options), error)) {
             if (!check_ort(api->SessionOptionsAppendExecutionProvider_CUDA_V2(options, cuda_options), error)) {
                 UtilityFunctions::push_warning(String("RealSense native FastFoundation CUDA provider unavailable: ") + error);
+            } else {
+                cuda_provider_attached = true;
             }
             api->ReleaseCUDAProviderOptions(cuda_options);
         } else {
             UtilityFunctions::push_warning(String("RealSense native FastFoundation CUDA options unavailable: ") + error);
         }
+    }
+    if (trt_provider_attached) {
+        fast_foundation_provider_status = cuda_provider_attached ? "tensorrt+cuda" : "tensorrt";
+    } else if (cuda_provider_attached) {
+        fast_foundation_provider_status = "cuda";
     }
     const std::string model_path_utf8 = to_utf8(resolve_fast_foundation_model_path());
     const std::wstring model_path = widen_path(model_path_utf8);
@@ -581,6 +636,7 @@ bool RealSenseDirectFrameSource::initialize_fast_foundation_runtime() {
     fast_foundation_loaded = true;
     UtilityFunctions::print(
         String("RealSense native FastFoundation loaded: backend=") + fast_foundation_backend +
+        " provider=" + fast_foundation_provider_status +
         " profile=" + fast_foundation_profile + " input=" + String::num_int64(fast_foundation_input_width) +
         "x" + String::num_int64(fast_foundation_input_height) + " model=" + String(model_path_utf8.c_str())
     );
@@ -607,7 +663,9 @@ bool RealSenseDirectFrameSource::open() {
         } else {
             config.enable_stream(RS2_STREAM_DEPTH, settings.depth_width, settings.depth_height, RS2_FORMAT_Z16, settings.depth_fps);
         }
-        config.enable_stream(RS2_STREAM_COLOR, settings.color_width, settings.color_height, RS2_FORMAT_BGR8, settings.color_fps);
+        if (color_output_enabled) {
+            config.enable_stream(RS2_STREAM_COLOR, settings.color_width, settings.color_height, RS2_FORMAT_BGR8, settings.color_fps);
+        }
         pipeline_profile = pipeline.start(config);
         if (is_fast_foundation_source()) {
             rs2::video_stream_profile left_profile = pipeline_profile.get_stream(RS2_STREAM_INFRARED, 1).as<rs2::video_stream_profile>();
@@ -678,10 +736,15 @@ bool RealSenseDirectFrameSource::poll_sdk_depth() {
         if (!pipeline.poll_for_frames(&frames)) {
             return false;
         }
-        frames = align_to_depth.process(frames);
+        if (color_output_enabled) {
+            frames = align_to_depth.process(frames);
+        }
         rs2::depth_frame depth_frame = frames.get_depth_frame();
-        rs2::video_frame color_frame = frames.get_color_frame();
-        if (!depth_frame || !color_frame) {
+        rs2::frame color_frame_raw;
+        if (color_output_enabled) {
+            color_frame_raw = frames.get_color_frame();
+        }
+        if (!depth_frame || (color_output_enabled && !color_frame_raw)) {
             return false;
         }
 
@@ -792,8 +855,9 @@ bool RealSenseDirectFrameSource::poll_sdk_depth() {
 
         const int src_w = depth_frame.get_width();
         const int src_h = depth_frame.get_height();
-        const int color_w = color_frame.get_width();
-        const int color_h = color_frame.get_height();
+        rs2::video_frame color_frame = color_output_enabled ? color_frame_raw.as<rs2::video_frame>() : rs2::video_frame(color_frame_raw);
+        const int color_w = color_output_enabled ? color_frame.get_width() : 0;
+        const int color_h = color_output_enabled ? color_frame.get_height() : 0;
         const int grid_stride = std::max(1, stride);
         const int grid_w = (src_w + grid_stride - 1) / grid_stride;
         const int grid_h = (src_h + grid_stride - 1) / grid_stride;
@@ -805,17 +869,31 @@ bool RealSenseDirectFrameSource::poll_sdk_depth() {
         next_depth.resize(grid_w * grid_h * 4);
         PackedByteArray next_color;
         if (color_output_enabled) {
-            next_color.resize(grid_w * grid_h * 4);
+            next_color.resize(color_w * color_h * 4);
         }
 
         const uint16_t *depth_data = static_cast<const uint16_t *>(depth_frame.get_data());
         float *depth_out = reinterpret_cast<float *>(next_depth.ptrw());
         const uint8_t *color_data = color_output_enabled ? static_cast<const uint8_t *>(color_frame.get_data()) : nullptr;
         uint8_t *color_out = color_output_enabled ? next_color.ptrw() : nullptr;
-        const int color_bpp = color_frame.get_bytes_per_pixel();
-        const int color_stride = color_frame.get_stride_in_bytes();
+        const int color_bpp = color_output_enabled ? color_frame.get_bytes_per_pixel() : 0;
+        const int color_stride = color_output_enabled ? color_frame.get_stride_in_bytes() : 0;
         const float active_depth_units = depth_frame.get_units();
         int next_valid_depth_pixels = 0;
+
+        if (color_output_enabled) {
+            for (int cy = 0; cy < color_h; ++cy) {
+                const uint8_t *src_row = color_data + cy * color_stride;
+                for (int cx = 0; cx < color_w; ++cx) {
+                    const uint8_t *bgr = src_row + cx * color_bpp;
+                    const int dst_offset = (cy * color_w + cx) * 4;
+                    color_out[dst_offset + 0] = color_bpp >= 3 ? bgr[2] : bgr[0];
+                    color_out[dst_offset + 1] = color_bpp >= 2 ? bgr[1] : bgr[0];
+                    color_out[dst_offset + 2] = bgr[0];
+                    color_out[dst_offset + 3] = 255;
+                }
+            }
+        }
 
         for (int y = 0; y < grid_h; ++y) {
             const int sy = std::min(y * grid_stride, src_h - 1);
@@ -827,16 +905,6 @@ bool RealSenseDirectFrameSource::poll_sdk_depth() {
                 depth_out[dst_index] = depth_m;
                 if (depth_m >= filter_min_depth && depth_m <= filter_max_depth) {
                     next_valid_depth_pixels++;
-                }
-
-                if (color_output_enabled) {
-                    const int cx = std::min(std::max(0, int((float(sx) + 0.5f) * float(color_w) / float(std::max(1, src_w)))), std::max(0, color_w - 1));
-                    const int cy = std::min(std::max(0, int((float(sy) + 0.5f) * float(color_h) / float(std::max(1, src_h)))), std::max(0, color_h - 1));
-                    const uint8_t *bgr = color_data + cy * color_stride + cx * color_bpp;
-                    color_out[dst_index * 4 + 0] = color_bpp >= 3 ? bgr[2] : bgr[0];
-                    color_out[dst_index * 4 + 1] = color_bpp >= 2 ? bgr[1] : bgr[0];
-                    color_out[dst_index * 4 + 2] = bgr[0];
-                    color_out[dst_index * 4 + 3] = 255;
                 }
             }
         }
@@ -865,7 +933,7 @@ bool RealSenseDirectFrameSource::poll_sdk_depth() {
         }
         depth_image = Image::create_from_data(width, height, false, Image::FORMAT_RF, next_depth);
         if (color_output_enabled) {
-            color_image = Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, next_color);
+            color_image = Image::create_from_data(color_w, color_h, false, Image::FORMAT_RGBA8, next_color);
         } else {
             color_image.unref();
         }
@@ -887,6 +955,322 @@ bool RealSenseDirectFrameSource::poll_sdk_depth() {
         close();
         return false;
     }
+}
+
+void RealSenseDirectFrameSource::ensure_fast_foundation_worker() {
+#if defined(REALSENSE_FOUNDATION_STEREO_ENABLED) && defined(_WIN32)
+    if (fast_foundation_worker_running) {
+        return;
+    }
+    fast_foundation_worker_stop = false;
+    fast_foundation_pending_ready = false;
+    fast_foundation_latest_ready = false;
+    fast_foundation_worker_running = true;
+    fast_foundation_worker = std::thread(&RealSenseDirectFrameSource::fast_foundation_worker_loop, this);
+#endif
+}
+
+void RealSenseDirectFrameSource::stop_fast_foundation_worker() {
+#if defined(REALSENSE_FOUNDATION_STEREO_ENABLED) && defined(_WIN32)
+    {
+        std::lock_guard<std::mutex> lock(fast_foundation_mutex);
+        fast_foundation_worker_stop = true;
+        fast_foundation_pending_ready = false;
+    }
+    fast_foundation_cv.notify_all();
+    if (fast_foundation_worker.joinable()) {
+        fast_foundation_worker.join();
+    }
+    fast_foundation_worker_running = false;
+    fast_foundation_worker_stop = false;
+    fast_foundation_pending_ready = false;
+    fast_foundation_latest_ready = false;
+#endif
+}
+
+void RealSenseDirectFrameSource::fast_foundation_worker_loop() {
+#if defined(REALSENSE_FOUNDATION_STEREO_ENABLED) && defined(_WIN32)
+    while (true) {
+        FastFoundationJob job;
+        {
+            std::unique_lock<std::mutex> lock(fast_foundation_mutex);
+            fast_foundation_cv.wait(lock, [&]() { return fast_foundation_worker_stop || fast_foundation_pending_ready; });
+            if (fast_foundation_worker_stop) {
+                return;
+            }
+            job = std::move(fast_foundation_pending_job);
+            fast_foundation_pending_ready = false;
+        }
+
+        FastFoundationResult result;
+        if (process_fast_foundation_job(job, result)) {
+            std::lock_guard<std::mutex> lock(fast_foundation_mutex);
+            fast_foundation_latest_result = std::move(result);
+            fast_foundation_latest_ready = true;
+        }
+    }
+#endif
+}
+
+bool RealSenseDirectFrameSource::process_fast_foundation_job(const FastFoundationJob &p_job, FastFoundationResult &r_result) {
+#if defined(REALSENSE_FOUNDATION_STEREO_ENABLED) && defined(_WIN32)
+    try {
+        const int src_w = p_job.src_width;
+        const int src_h = p_job.src_height;
+        const int target_w = fast_foundation_input_width;
+        const int target_h = fast_foundation_input_height;
+        if (src_w <= 0 || src_h <= 0 || target_w <= 0 || target_h <= 0) {
+            return false;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+
+        std::vector<uint8_t> left_resized(size_t(target_w * target_h));
+        std::vector<uint8_t> right_resized(size_t(target_w * target_h));
+        auto resize_gray = [](const std::vector<uint8_t> &p_src, int p_src_w, int p_src_h, int p_src_stride, std::vector<uint8_t> &r_dst, int p_dst_w, int p_dst_h) {
+            r_dst.resize(size_t(p_dst_w * p_dst_h));
+            for (int y = 0; y < p_dst_h; ++y) {
+                const int sy = std::min(p_src_h - 1, int((double(y) + 0.5) * double(p_src_h) / double(p_dst_h)));
+                const uint8_t *src_row = p_src.data() + sy * p_src_stride;
+                uint8_t *dst_row = r_dst.data() + y * p_dst_w;
+                for (int x = 0; x < p_dst_w; ++x) {
+                    const int sx = std::min(p_src_w - 1, int((double(x) + 0.5) * double(p_src_w) / double(p_dst_w)));
+                    dst_row[x] = src_row[sx];
+                }
+            }
+        };
+        resize_gray(p_job.left, src_w, src_h, p_job.left_stride, left_resized, target_w, target_h);
+        resize_gray(p_job.right, src_w, src_h, p_job.right_stride, right_resized, target_w, target_h);
+
+        std::vector<float> left_input(size_t(target_w * target_h * 3));
+        std::vector<float> right_input(size_t(target_w * target_h * 3));
+        auto fill_nchw = [](const std::vector<uint8_t> &p_gray, std::vector<float> &r_tensor, int p_w, int p_h) {
+            const int pixels = p_w * p_h;
+            r_tensor.resize(size_t(pixels * 3));
+            const float means[3] = { 0.485f, 0.456f, 0.406f };
+            const float inv_stds[3] = { 1.0f / 0.229f, 1.0f / 0.224f, 1.0f / 0.225f };
+            for (int i = 0; i < pixels; ++i) {
+                const float v = float(p_gray[size_t(i)]) / 255.0f;
+                r_tensor[size_t(i)] = (v - means[0]) * inv_stds[0];
+                r_tensor[size_t(pixels + i)] = (v - means[1]) * inv_stds[1];
+                r_tensor[size_t(pixels * 2 + i)] = (v - means[2]) * inv_stds[2];
+            }
+        };
+        fill_nchw(left_resized, left_input, target_w, target_h);
+        fill_nchw(right_resized, right_input, target_w, target_h);
+        const auto t_pre = std::chrono::steady_clock::now();
+
+        OrtRuntime &runtime = ort_runtime();
+        const OrtApi *api = runtime.api;
+        OrtMemoryInfo *memory_info = static_cast<OrtMemoryInfo *>(fast_foundation_memory_info);
+        OrtSession *session = static_cast<OrtSession *>(fast_foundation_session);
+        if (!api || !memory_info || !session) {
+            return false;
+        }
+        int64_t input_shape[4] = { 1, 3, target_h, target_w };
+        OrtValue *left_value = nullptr;
+        OrtValue *right_value = nullptr;
+        OrtValue *output_value = nullptr;
+        String error;
+        const size_t input_bytes = left_input.size() * sizeof(float);
+        if (!check_ort(api->CreateTensorWithDataAsOrtValue(memory_info, left_input.data(), input_bytes, input_shape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &left_value), error) ||
+            !check_ort(api->CreateTensorWithDataAsOrtValue(memory_info, right_input.data(), input_bytes, input_shape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &right_value), error)) {
+            if (left_value) api->ReleaseValue(left_value);
+            if (right_value) api->ReleaseValue(right_value);
+            return false;
+        }
+        const char *input_names[2] = { "left_image", "right_image" };
+        const OrtValue *input_values[2] = { left_value, right_value };
+        const char *output_names[1] = { "disparity" };
+        bool run_ok = check_ort(api->Run(session, nullptr, input_names, input_values, 2, output_names, 1, &output_value), error);
+        api->ReleaseValue(left_value);
+        api->ReleaseValue(right_value);
+        if (!run_ok) {
+            return false;
+        }
+        const auto t_model = std::chrono::steady_clock::now();
+        float *output_data = nullptr;
+        if (!check_ort(api->GetTensorMutableData(output_value, reinterpret_cast<void **>(&output_data)), error) || !output_data) {
+            api->ReleaseValue(output_value);
+            return false;
+        }
+        const int model_pixels = target_w * target_h;
+        std::vector<float> disparity(output_data, output_data + model_pixels);
+        api->ReleaseValue(output_value);
+
+        const int grid_stride_local = std::max(1, p_job.grid_stride);
+        const int grid_w = (src_w + grid_stride_local - 1) / grid_stride_local;
+        const int grid_h = (src_h + grid_stride_local - 1) / grid_stride_local;
+        std::vector<float> depth(size_t(grid_w * grid_h), 0.0f);
+        const double fx_scale = double(target_w) / double(std::max(1, src_w));
+        int next_valid_depth_pixels = 0;
+
+        auto sample_disparity = [&](double p_src_x, double p_src_y) -> float {
+            const double mx = std::min(double(target_w - 1), std::max(0.0, (p_src_x + 0.5) * double(target_w) / double(src_w) - 0.5));
+            const double my = std::min(double(target_h - 1), std::max(0.0, (p_src_y + 0.5) * double(target_h) / double(src_h) - 0.5));
+            const int x0 = int(std::floor(mx));
+            const int y0 = int(std::floor(my));
+            const int x1 = std::min(target_w - 1, x0 + 1);
+            const int y1 = std::min(target_h - 1, y0 + 1);
+            const float tx = float(mx - double(x0));
+            const float ty = float(my - double(y0));
+            const float a = disparity[size_t(y0 * target_w + x0)];
+            const float b = disparity[size_t(y0 * target_w + x1)];
+            const float c = disparity[size_t(y1 * target_w + x0)];
+            const float d = disparity[size_t(y1 * target_w + x1)];
+            return ((a * (1.0f - tx) + b * tx) * (1.0f - ty) + (c * (1.0f - tx) + d * tx) * ty) / float(std::max(1e-6, fx_scale));
+        };
+
+        for (int y = 0; y < grid_h; ++y) {
+            const int sy = std::min(y * grid_stride_local, src_h - 1);
+            for (int x = 0; x < grid_w; ++x) {
+                const int sx = std::min(x * grid_stride_local, src_w - 1);
+                const int dst_index = y * grid_w + x;
+                const float disp = sample_disparity(double(sx), double(sy));
+                float depth_m = 0.0f;
+                if (std::isfinite(disp) && disp > 0.75f) {
+                    depth_m = float((double(p_job.fx) * double(p_job.baseline_m)) / double(std::max(0.75f, disp)));
+                    if (depth_m < 0.05f || depth_m > 10.0f || !std::isfinite(depth_m)) {
+                        depth_m = 0.0f;
+                    }
+                }
+                depth[size_t(dst_index)] = depth_m;
+                if (depth_m >= p_job.min_depth && depth_m <= p_job.max_depth) {
+                    next_valid_depth_pixels++;
+                }
+            }
+        }
+
+        std::vector<uint8_t> color_rgba;
+        const int color_w = grid_w;
+        const int color_h = grid_h;
+        if (p_job.color_enabled) {
+            color_rgba.resize(size_t(color_w * color_h * 4));
+            if (!p_job.color.empty() && p_job.color_bpp > 0 && p_job.color_stride > 0) {
+                auto write_color = [&](int p_dst_index, int p_cx, int p_cy, uint8_t p_alpha) {
+                    const int cx = std::min(std::max(0, p_cx), std::max(0, p_job.color_width - 1));
+                    const int cy = std::min(std::max(0, p_cy), std::max(0, p_job.color_height - 1));
+                    const uint8_t *bgr = p_job.color.data() + cy * p_job.color_stride + cx * p_job.color_bpp;
+                    const int dst_offset = p_dst_index * 4;
+                    color_rgba[size_t(dst_offset + 0)] = p_job.color_bpp >= 3 ? bgr[2] : bgr[0];
+                    color_rgba[size_t(dst_offset + 1)] = p_job.color_bpp >= 2 ? bgr[1] : bgr[0];
+                    color_rgba[size_t(dst_offset + 2)] = bgr[0];
+                    color_rgba[size_t(dst_offset + 3)] = p_alpha;
+                };
+                auto write_gray = [&](int p_dst_index, int p_sx, int p_sy, uint8_t p_alpha) {
+                    const int sx = std::min(std::max(0, p_sx), std::max(0, src_w - 1));
+                    const int sy = std::min(std::max(0, p_sy), std::max(0, src_h - 1));
+                    const uint8_t gray = p_job.left[size_t(sy * p_job.left_stride + sx)];
+                    const int dst_offset = p_dst_index * 4;
+                    color_rgba[size_t(dst_offset + 0)] = gray;
+                    color_rgba[size_t(dst_offset + 1)] = gray;
+                    color_rgba[size_t(dst_offset + 2)] = gray;
+                    color_rgba[size_t(dst_offset + 3)] = p_alpha;
+                };
+
+                if (p_job.color_projection_valid) {
+                    const int pixel_count = grid_w * grid_h;
+                    std::vector<int> projected_x(size_t(pixel_count), -1);
+                    std::vector<int> projected_y(size_t(pixel_count), -1);
+                    std::vector<float> projected_z(size_t(pixel_count), 0.0f);
+                    std::vector<float> nearest_color_z(size_t(p_job.color_width * p_job.color_height), std::numeric_limits<float>::infinity());
+
+                    for (int y = 0; y < grid_h; ++y) {
+                        const int sy = std::min(y * grid_stride_local, src_h - 1);
+                        for (int x = 0; x < grid_w; ++x) {
+                            const int sx = std::min(x * grid_stride_local, src_w - 1);
+                            const int dst_index = y * grid_w + x;
+                            const float depth_m = depth[size_t(dst_index)];
+                            write_gray(dst_index, sx, sy, depth_m > 0.0f ? 255 : 0);
+                            if (!(depth_m > 0.0f) || !std::isfinite(depth_m)) {
+                                continue;
+                            }
+                            const float depth_pixel[2] = { float(sx), float(sy) };
+                            float depth_point[3] = {};
+                            float color_point[3] = {};
+                            float color_pixel[2] = {};
+                            rs2_deproject_pixel_to_point(depth_point, &p_job.depth_intrinsics, depth_pixel, depth_m);
+                            rs2_transform_point_to_point(color_point, &p_job.depth_to_color_extrinsics, depth_point);
+                            if (!(color_point[2] > 0.0001f) || !std::isfinite(color_point[2])) {
+                                continue;
+                            }
+                            rs2_project_point_to_pixel(color_pixel, &p_job.color_intrinsics, color_point);
+                            const int cx = int(std::lround(color_pixel[0]));
+                            const int cy = int(std::lround(color_pixel[1]));
+                            if (cx >= 0 && cx < p_job.color_width && cy >= 0 && cy < p_job.color_height) {
+                                projected_x[size_t(dst_index)] = cx;
+                                projected_y[size_t(dst_index)] = cy;
+                                projected_z[size_t(dst_index)] = color_point[2];
+                                float &nearest = nearest_color_z[size_t(cy * p_job.color_width + cx)];
+                                nearest = std::min(nearest, color_point[2]);
+                            }
+                        }
+                    }
+
+                    constexpr float visibility_tolerance_m = 0.035f;
+                    for (int i = 0; i < pixel_count; ++i) {
+                        const int cx = projected_x[size_t(i)];
+                        const int cy = projected_y[size_t(i)];
+                        if (cx < 0 || cy < 0) {
+                            continue;
+                        }
+                        const float nearest = nearest_color_z[size_t(cy * p_job.color_width + cx)];
+                        const float z = projected_z[size_t(i)];
+                        if (std::isfinite(nearest) && std::abs(z - nearest) <= visibility_tolerance_m) {
+                            write_color(i, cx, cy, 255);
+                        }
+                    }
+                } else {
+                    for (int y = 0; y < grid_h; ++y) {
+                        const int sy = std::min(y * grid_stride_local, src_h - 1);
+                        for (int x = 0; x < grid_w; ++x) {
+                            const int sx = std::min(x * grid_stride_local, src_w - 1);
+                            const int dst_index = y * grid_w + x;
+                            const float depth_m = depth[size_t(dst_index)];
+                            const int cx = int((double(sx) + 0.5) * double(p_job.color_width) / double(std::max(1, src_w)));
+                            const int cy = int((double(sy) + 0.5) * double(p_job.color_height) / double(std::max(1, src_h)));
+                            write_color(dst_index, cx, cy, depth_m > 0.0f ? 255 : 0);
+                        }
+                    }
+                }
+            } else {
+                for (int y = 0; y < grid_h; ++y) {
+                    const int sy = std::min(y * grid_stride_local, src_h - 1);
+                    const uint8_t *src_row = p_job.left.data() + sy * p_job.left_stride;
+                    for (int x = 0; x < grid_w; ++x) {
+                        const int sx = std::min(x * grid_stride_local, src_w - 1);
+                        const uint8_t gray = src_row[sx];
+                        const int dst_offset = (y * color_w + x) * 4;
+                        color_rgba[size_t(dst_offset + 0)] = gray;
+                        color_rgba[size_t(dst_offset + 1)] = gray;
+                        color_rgba[size_t(dst_offset + 2)] = gray;
+                        color_rgba[size_t(dst_offset + 3)] = 255;
+                    }
+                }
+            }
+        }
+        const auto t_depth = std::chrono::steady_clock::now();
+
+        r_result.sequence = p_job.sequence;
+        r_result.width = grid_w;
+        r_result.height = grid_h;
+        r_result.source_width = src_w;
+        r_result.source_height = src_h;
+        r_result.color_width = p_job.color_enabled ? color_w : 0;
+        r_result.color_height = p_job.color_enabled ? color_h : 0;
+        r_result.valid_depth_pixels = next_valid_depth_pixels;
+        r_result.intrinsics = Vector4(p_job.fx, p_job.fy, p_job.ppx, p_job.ppy);
+        r_result.depth = std::move(depth);
+        r_result.color = std::move(color_rgba);
+        r_result.pre_ms = std::chrono::duration<double, std::milli>(t_pre - t0).count();
+        r_result.model_ms = std::chrono::duration<double, std::milli>(t_model - t_pre).count();
+        r_result.depth_ms = std::chrono::duration<double, std::milli>(t_depth - t_model).count();
+        return true;
+    } catch (const std::exception &e) {
+        return false;
+    }
+#else
+    return false;
+#endif
 }
 
 bool RealSenseDirectFrameSource::poll_fast_foundation() {
@@ -911,171 +1295,142 @@ bool RealSenseDirectFrameSource::poll_fast_foundation() {
 
         const int src_w = left_frame.get_width();
         const int src_h = left_frame.get_height();
-        const int target_w = fast_foundation_input_width;
-        const int target_h = fast_foundation_input_height;
-        if (src_w <= 0 || src_h <= 0 || target_w <= 0 || target_h <= 0) {
+        if (src_w <= 0 || src_h <= 0 || fast_foundation_input_width <= 0 || fast_foundation_input_height <= 0) {
             return false;
         }
-        const auto t0 = std::chrono::steady_clock::now();
         const uint8_t *left_src = static_cast<const uint8_t *>(left_frame.get_data());
         const uint8_t *right_src = static_cast<const uint8_t *>(right_frame.get_data());
         const int left_stride = left_frame.get_stride_in_bytes();
         const int right_stride = right_frame.get_stride_in_bytes();
-        auto resize_gray = [](const uint8_t *p_src, int p_src_w, int p_src_h, int p_src_stride, std::vector<uint8_t> &r_dst, int p_dst_w, int p_dst_h) {
-            r_dst.resize(size_t(p_dst_w * p_dst_h));
-            for (int y = 0; y < p_dst_h; ++y) {
-                const int sy = std::min(p_src_h - 1, int((double(y) + 0.5) * double(p_src_h) / double(p_dst_h)));
-                const uint8_t *src_row = p_src + sy * p_src_stride;
-                uint8_t *dst_row = r_dst.data() + y * p_dst_w;
-                for (int x = 0; x < p_dst_w; ++x) {
-                    const int sx = std::min(p_src_w - 1, int((double(x) + 0.5) * double(p_src_w) / double(p_dst_w)));
-                    dst_row[x] = src_row[sx];
-                }
-            }
-        };
-        resize_gray(left_src, src_w, src_h, left_stride, fast_foundation_left_resized, target_w, target_h);
-        resize_gray(right_src, src_w, src_h, right_stride, fast_foundation_right_resized, target_w, target_h);
-
-        auto fill_nchw = [](const std::vector<uint8_t> &p_gray, std::vector<float> &r_tensor, int p_w, int p_h) {
-            const int pixels = p_w * p_h;
-            r_tensor.resize(size_t(pixels * 3));
-            const float means[3] = { 0.485f, 0.456f, 0.406f };
-            const float inv_stds[3] = { 1.0f / 0.229f, 1.0f / 0.224f, 1.0f / 0.225f };
-            for (int i = 0; i < pixels; ++i) {
-                const float v = float(p_gray[size_t(i)]) / 255.0f;
-                r_tensor[size_t(i)] = (v - means[0]) * inv_stds[0];
-                r_tensor[size_t(pixels + i)] = (v - means[1]) * inv_stds[1];
-                r_tensor[size_t(pixels * 2 + i)] = (v - means[2]) * inv_stds[2];
-            }
-        };
-        fill_nchw(fast_foundation_left_resized, fast_foundation_left_input, target_w, target_h);
-        fill_nchw(fast_foundation_right_resized, fast_foundation_right_input, target_w, target_h);
-        const auto t_pre = std::chrono::steady_clock::now();
-
-        OrtRuntime &runtime = ort_runtime();
-        const OrtApi *api = runtime.api;
-        OrtMemoryInfo *memory_info = static_cast<OrtMemoryInfo *>(fast_foundation_memory_info);
-        OrtSession *session = static_cast<OrtSession *>(fast_foundation_session);
-        int64_t input_shape[4] = { 1, 3, target_h, target_w };
-        OrtValue *left_value = nullptr;
-        OrtValue *right_value = nullptr;
-        OrtValue *output_value = nullptr;
-        String error;
-        const size_t input_bytes = fast_foundation_left_input.size() * sizeof(float);
-        if (!check_ort(api->CreateTensorWithDataAsOrtValue(memory_info, fast_foundation_left_input.data(), input_bytes, input_shape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &left_value), error) ||
-            !check_ort(api->CreateTensorWithDataAsOrtValue(memory_info, fast_foundation_right_input.data(), input_bytes, input_shape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &right_value), error)) {
-            if (left_value) api->ReleaseValue(left_value);
-            if (right_value) api->ReleaseValue(right_value);
-            status = String("RealSense native FastFoundation tensor setup failed: ") + error;
-            UtilityFunctions::push_warning(status);
-            return false;
-        }
-        const char *input_names[2] = { "left_image", "right_image" };
-        const OrtValue *input_values[2] = { left_value, right_value };
-        const char *output_names[1] = { "disparity" };
-        bool run_ok = check_ort(api->Run(session, nullptr, input_names, input_values, 2, output_names, 1, &output_value), error);
-        api->ReleaseValue(left_value);
-        api->ReleaseValue(right_value);
-        if (!run_ok) {
-            status = String("RealSense native FastFoundation model run failed: ") + error;
-            UtilityFunctions::push_warning(status);
-            return false;
-        }
-        const auto t_model = std::chrono::steady_clock::now();
-        float *output_data = nullptr;
-        if (!check_ort(api->GetTensorMutableData(output_value, reinterpret_cast<void **>(&output_data)), error) || !output_data) {
-            api->ReleaseValue(output_value);
-            status = String("RealSense native FastFoundation output failed: ") + error;
-            UtilityFunctions::push_warning(status);
-            return false;
-        }
-        const int model_pixels = target_w * target_h;
-        fast_foundation_disparity.assign(output_data, output_data + model_pixels);
-        api->ReleaseValue(output_value);
-
-        const int grid_stride = std::max(1, stride);
-        const int grid_w = (src_w + grid_stride - 1) / grid_stride;
-        const int grid_h = (src_h + grid_stride - 1) / grid_stride;
-        PackedByteArray next_depth;
-        next_depth.resize(grid_w * grid_h * 4);
-        PackedByteArray next_color;
-        if (color_output_enabled) {
-            next_color.resize(grid_w * grid_h * 4);
-        }
-        float *depth_out = reinterpret_cast<float *>(next_depth.ptrw());
-        uint8_t *color_out = color_output_enabled ? next_color.ptrw() : nullptr;
 
         rs2::video_stream_profile left_profile = left_frame.get_profile().as<rs2::video_stream_profile>();
         const rs2_intrinsics rs_intrinsics = left_profile.get_intrinsics();
-        const double fx_scale = double(target_w) / double(std::max(1, src_w));
-        const int color_w = color_frame ? color_frame.get_width() : src_w;
-        const int color_h = color_frame ? color_frame.get_height() : src_h;
-        const uint8_t *color_data = color_output_enabled && color_frame ? static_cast<const uint8_t *>(color_frame.get_data()) : nullptr;
-        const int color_bpp = color_frame ? color_frame.get_bytes_per_pixel() : 0;
-        const int color_stride = color_frame ? color_frame.get_stride_in_bytes() : 0;
-        int next_valid_depth_pixels = 0;
+        ensure_fast_foundation_worker();
+        bool should_submit_job = false;
+        {
+            std::lock_guard<std::mutex> lock(fast_foundation_mutex);
+            should_submit_job = !fast_foundation_pending_ready;
+        }
+        if (should_submit_job) {
+            FastFoundationJob job;
+            job.sequence = ++fast_foundation_next_job_sequence;
+            job.src_width = src_w;
+            job.src_height = src_h;
+            job.left_stride = left_stride;
+            job.right_stride = right_stride;
+            job.grid_stride = std::max(1, stride);
+            job.fx = rs_intrinsics.fx;
+            job.fy = rs_intrinsics.fy;
+            job.ppx = rs_intrinsics.ppx;
+            job.ppy = rs_intrinsics.ppy;
+            job.baseline_m = fast_foundation_baseline_m;
+            job.min_depth = filter_min_depth;
+            job.max_depth = filter_max_depth;
+            job.color_enabled = color_output_enabled;
+            job.left.resize(size_t(left_stride * src_h));
+            job.right.resize(size_t(right_stride * src_h));
+            std::memcpy(job.left.data(), left_src, job.left.size());
+            std::memcpy(job.right.data(), right_src, job.right.size());
 
-        auto sample_disparity = [&](double p_src_x, double p_src_y) -> float {
-            const double mx = std::min(double(target_w - 1), std::max(0.0, (p_src_x + 0.5) * double(target_w) / double(src_w) - 0.5));
-            const double my = std::min(double(target_h - 1), std::max(0.0, (p_src_y + 0.5) * double(target_h) / double(src_h) - 0.5));
-            const int x0 = int(std::floor(mx));
-            const int y0 = int(std::floor(my));
-            const int x1 = std::min(target_w - 1, x0 + 1);
-            const int y1 = std::min(target_h - 1, y0 + 1);
-            const float tx = float(mx - double(x0));
-            const float ty = float(my - double(y0));
-            const float a = fast_foundation_disparity[size_t(y0 * target_w + x0)];
-            const float b = fast_foundation_disparity[size_t(y0 * target_w + x1)];
-            const float c = fast_foundation_disparity[size_t(y1 * target_w + x0)];
-            const float d = fast_foundation_disparity[size_t(y1 * target_w + x1)];
-            return ((a * (1.0f - tx) + b * tx) * (1.0f - ty) + (c * (1.0f - tx) + d * tx) * ty) / float(std::max(1e-6, fx_scale));
-        };
-
-        for (int y = 0; y < grid_h; ++y) {
-            const int sy = std::min(y * grid_stride, src_h - 1);
-            for (int x = 0; x < grid_w; ++x) {
-                const int sx = std::min(x * grid_stride, src_w - 1);
-                const int dst_index = y * grid_w + x;
-                const float disp = sample_disparity(double(sx), double(sy));
-                float depth_m = 0.0f;
-                if (std::isfinite(disp) && disp > 0.75f) {
-                    depth_m = float((double(rs_intrinsics.fx) * double(fast_foundation_baseline_m)) / double(std::max(0.75f, disp)));
-                    if (depth_m < 0.05f || depth_m > 10.0f || !std::isfinite(depth_m)) {
-                        depth_m = 0.0f;
-                    }
+            if (color_output_enabled && color_frame) {
+                job.color_width = color_frame.get_width();
+                job.color_height = color_frame.get_height();
+                job.color_bpp = color_frame.get_bytes_per_pixel();
+                job.color_stride = color_frame.get_stride_in_bytes();
+                const wchar_t *project_color_env = _wgetenv(L"REALSENSE_FAST_FOUNDATION_PROJECT_COLOR");
+                bool project_color = true;
+                if (project_color_env) {
+                    project_color = !(
+                        project_color_env[0] == L'0' ||
+                        project_color_env[0] == L'f' ||
+                        project_color_env[0] == L'F' ||
+                        project_color_env[0] == L'n' ||
+                        project_color_env[0] == L'N'
+                    );
                 }
-                depth_out[dst_index] = depth_m;
-                if (depth_m >= filter_min_depth && depth_m <= filter_max_depth) {
-                    next_valid_depth_pixels++;
+                fast_foundation_color_status = project_color ? "project_z" : "resize";
+                if (project_color) {
+                    rs2::video_stream_profile color_profile = color_frame.get_profile().as<rs2::video_stream_profile>();
+                    job.depth_intrinsics = rs_intrinsics;
+                    job.color_intrinsics = color_profile.get_intrinsics();
+                    job.depth_to_color_extrinsics = left_profile.get_extrinsics_to(color_profile);
+                    job.color_projection_valid = true;
                 }
+                const uint8_t *color_data = static_cast<const uint8_t *>(color_frame.get_data());
+                job.color.resize(size_t(job.color_stride * job.color_height));
+                std::memcpy(job.color.data(), color_data, job.color.size());
+            }
 
-                if (color_output_enabled) {
-                    if (color_data) {
-                        const int cx = std::min(std::max(0, int((float(sx) + 0.5f) * float(color_w) / float(std::max(1, src_w)))), std::max(0, color_w - 1));
-                        const int cy = std::min(std::max(0, int((float(sy) + 0.5f) * float(color_h) / float(std::max(1, src_h)))), std::max(0, color_h - 1));
-                        const uint8_t *bgr = color_data + cy * color_stride + cx * color_bpp;
-                        color_out[dst_index * 4 + 0] = color_bpp >= 3 ? bgr[2] : bgr[0];
-                        color_out[dst_index * 4 + 1] = color_bpp >= 2 ? bgr[1] : bgr[0];
-                        color_out[dst_index * 4 + 2] = bgr[0];
-                        color_out[dst_index * 4 + 3] = 255;
-                    } else {
-                        const uint8_t gray = left_src[sy * left_stride + sx];
-                        color_out[dst_index * 4 + 0] = gray;
-                        color_out[dst_index * 4 + 1] = gray;
-                        color_out[dst_index * 4 + 2] = gray;
-                        color_out[dst_index * 4 + 3] = 255;
-                    }
+            {
+                std::lock_guard<std::mutex> lock(fast_foundation_mutex);
+                if (!fast_foundation_pending_ready) {
+                    fast_foundation_pending_job = std::move(job);
+                    fast_foundation_pending_ready = true;
+                } else {
+                    should_submit_job = false;
                 }
             }
+            if (should_submit_job) {
+                fast_foundation_cv.notify_one();
+            }
         }
-        const auto t_depth = std::chrono::steady_clock::now();
 
-        intrinsics = Vector4(rs_intrinsics.fx, rs_intrinsics.fy, rs_intrinsics.ppx, rs_intrinsics.ppy);
-        source_width = src_w;
-        source_height = src_h;
-        width = grid_w;
-        height = grid_h;
-        valid_depth_pixels = next_valid_depth_pixels;
+        FastFoundationResult result;
+        bool have_result = false;
+        {
+            std::lock_guard<std::mutex> lock(fast_foundation_mutex);
+            if (fast_foundation_latest_ready && fast_foundation_latest_result.sequence > fast_foundation_applied_sequence) {
+                result = std::move(fast_foundation_latest_result);
+                fast_foundation_latest_ready = false;
+                fast_foundation_applied_sequence = result.sequence;
+                have_result = true;
+            }
+        }
+        if (!have_result) {
+            if (depth_image.is_valid()) {
+                const double valid_percent = width > 0 && height > 0 ? (100.0 * double(valid_depth_pixels) / double(width * height)) : 0.0;
+                status = String("RealSense native FastFoundation active: ") + stream_profile + " backend=" + fast_foundation_backend + " provider=" + fast_foundation_provider_status + " held=1";
+                filter_status = String("foundation_native profile=") + fast_foundation_profile
+                    + " provider=" + fast_foundation_provider_status
+                    + " color=" + fast_foundation_color_status
+                    + " input=" + String::num_int64(fast_foundation_input_width) + "x" + String::num_int64(fast_foundation_input_height)
+                    + " src=" + String::num_int64(source_width) + "x" + String::num_int64(source_height)
+                    + " out=" + String::num_int64(width) + "x" + String::num_int64(height)
+                    + " valid=" + String::num_int64(valid_depth_pixels) + "/" + String::num_int64(width * height)
+                    + " (" + String::num(valid_percent, 1) + "%)"
+                    + " pre=" + String::num(fast_foundation_pre_ms, 1) + "ms"
+                    + " model=" + String::num(fast_foundation_model_ms, 1) + "ms"
+                    + " depth=" + String::num(fast_foundation_depth_ms, 1) + "ms"
+                    + " held=1";
+                return false;
+            }
+            status = String("RealSense native FastFoundation warming: ") + stream_profile + " backend=" + fast_foundation_backend + " provider=" + fast_foundation_provider_status;
+            filter_status = String("foundation_native profile=") + fast_foundation_profile
+                + " provider=" + fast_foundation_provider_status
+                + " color=" + fast_foundation_color_status
+                + " input=" + String::num_int64(fast_foundation_input_width) + "x" + String::num_int64(fast_foundation_input_height)
+                + " src=" + String::num_int64(src_w) + "x" + String::num_int64(src_h)
+                + " waiting_for_worker=1";
+            return false;
+        }
+
+        PackedByteArray next_depth;
+        next_depth.resize(result.depth.size() * sizeof(float));
+        if (!result.depth.empty()) {
+            std::memcpy(next_depth.ptrw(), result.depth.data(), next_depth.size());
+        }
+        PackedByteArray next_color;
+        if (color_output_enabled && !result.color.empty()) {
+            next_color.resize(result.color.size());
+            std::memcpy(next_color.ptrw(), result.color.data(), next_color.size());
+        }
+
+        intrinsics = result.intrinsics;
+        source_width = result.source_width;
+        source_height = result.source_height;
+        width = result.width;
+        height = result.height;
+        valid_depth_pixels = result.valid_depth_pixels;
         frame_id++;
         sequence += 2;
         const double now_sec = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1091,19 +1446,21 @@ bool RealSenseDirectFrameSource::poll_fast_foundation() {
             capture_fps_window_start = now_sec;
         }
         depth_image = Image::create_from_data(width, height, false, Image::FORMAT_RF, next_depth);
-        if (color_output_enabled) {
-            color_image = Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, next_color);
+        if (color_output_enabled && result.color_width > 0 && result.color_height > 0 && !next_color.is_empty()) {
+            color_image = Image::create_from_data(result.color_width, result.color_height, false, Image::FORMAT_RGBA8, next_color);
         } else {
             color_image.unref();
         }
-        fast_foundation_pre_ms = std::chrono::duration<double, std::milli>(t_pre - t0).count();
-        fast_foundation_model_ms = std::chrono::duration<double, std::milli>(t_model - t_pre).count();
-        fast_foundation_depth_ms = std::chrono::duration<double, std::milli>(t_depth - t_model).count();
+        fast_foundation_pre_ms = result.pre_ms;
+        fast_foundation_model_ms = result.model_ms;
+        fast_foundation_depth_ms = result.depth_ms;
         const double valid_percent = width > 0 && height > 0 ? (100.0 * double(valid_depth_pixels) / double(width * height)) : 0.0;
-        status = String("RealSense native FastFoundation active: ") + stream_profile + " backend=" + fast_foundation_backend;
+        status = String("RealSense native FastFoundation active: ") + stream_profile + " backend=" + fast_foundation_backend + " provider=" + fast_foundation_provider_status;
         filter_status = String("foundation_native profile=") + fast_foundation_profile
-            + " input=" + String::num_int64(target_w) + "x" + String::num_int64(target_h)
-            + " src=" + String::num_int64(src_w) + "x" + String::num_int64(src_h)
+            + " provider=" + fast_foundation_provider_status
+            + " color=" + fast_foundation_color_status
+            + " input=" + String::num_int64(fast_foundation_input_width) + "x" + String::num_int64(fast_foundation_input_height)
+            + " src=" + String::num_int64(source_width) + "x" + String::num_int64(source_height)
             + " out=" + String::num_int64(width) + "x" + String::num_int64(height)
             + " valid=" + String::num_int64(valid_depth_pixels) + "/" + String::num_int64(width * height)
             + " (" + String::num(valid_percent, 1) + "%)"

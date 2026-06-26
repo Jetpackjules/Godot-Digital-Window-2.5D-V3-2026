@@ -5,6 +5,9 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/vector4.hpp>
 
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #ifdef REALSENSE_DIRECT_ENABLED
@@ -115,6 +118,8 @@ private:
     godot::String fast_foundation_backend = "onnx_cuda";
     godot::String fast_foundation_profile = "fast_192x384_i2";
     godot::String fast_foundation_model_path;
+    godot::String fast_foundation_provider_status = "cpu";
+    godot::String fast_foundation_color_status = "resize";
     double fast_foundation_model_ms = 0.0;
     double fast_foundation_pre_ms = 0.0;
     double fast_foundation_depth_ms = 0.0;
@@ -137,6 +142,64 @@ private:
     std::vector<float> fast_foundation_disparity;
     std::vector<uint8_t> fast_foundation_left_resized;
     std::vector<uint8_t> fast_foundation_right_resized;
+    struct FastFoundationJob {
+        uint64_t sequence = 0;
+        int src_width = 0;
+        int src_height = 0;
+        int left_stride = 0;
+        int right_stride = 0;
+        int color_width = 0;
+        int color_height = 0;
+        int color_bpp = 0;
+        int color_stride = 0;
+        int grid_stride = 1;
+        float fx = 0.0f;
+        float fy = 0.0f;
+        float ppx = 0.0f;
+        float ppy = 0.0f;
+        float baseline_m = 0.0f;
+        float min_depth = 0.0f;
+        float max_depth = 0.0f;
+        bool color_enabled = false;
+        bool color_projection_valid = false;
+        rs2_intrinsics depth_intrinsics = {};
+        rs2_intrinsics color_intrinsics = {};
+        rs2_extrinsics depth_to_color_extrinsics = {};
+        std::vector<uint8_t> left;
+        std::vector<uint8_t> right;
+        std::vector<uint8_t> color;
+    };
+    struct FastFoundationResult {
+        uint64_t sequence = 0;
+        int width = 0;
+        int height = 0;
+        int source_width = 0;
+        int source_height = 0;
+        int color_width = 0;
+        int color_height = 0;
+        int valid_depth_pixels = 0;
+        godot::Vector4 intrinsics;
+        std::vector<float> depth;
+        std::vector<uint8_t> color;
+        double pre_ms = 0.0;
+        double model_ms = 0.0;
+        double depth_ms = 0.0;
+    };
+    std::thread fast_foundation_worker;
+    std::mutex fast_foundation_mutex;
+    std::condition_variable fast_foundation_cv;
+    bool fast_foundation_worker_running = false;
+    bool fast_foundation_worker_stop = false;
+    bool fast_foundation_pending_ready = false;
+    bool fast_foundation_latest_ready = false;
+    uint64_t fast_foundation_next_job_sequence = 0;
+    uint64_t fast_foundation_applied_sequence = 0;
+    FastFoundationJob fast_foundation_pending_job;
+    FastFoundationResult fast_foundation_latest_result;
+    void ensure_fast_foundation_worker();
+    void stop_fast_foundation_worker();
+    void fast_foundation_worker_loop();
+    bool process_fast_foundation_job(const FastFoundationJob &p_job, FastFoundationResult &r_result);
     rs2::pipeline pipeline;
     rs2::pipeline_profile pipeline_profile;
     rs2::align align_to_depth;

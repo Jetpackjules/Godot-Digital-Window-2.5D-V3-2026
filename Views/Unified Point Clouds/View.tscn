@@ -7,15 +7,20 @@
 script = ExtResource("1_unified")
 editor_stream_enabled = true
 min_depth_m = 0.05
-render_mode = "points"
 point_pixel_size = 2.0
-realsense_status = "RealSense direct capture active: highres30
-filters=off src=1280x720 out=1280x720 valid=610912/921600 (66.3%)"
-realsense_stream_profile = "highres30"
+realsense_status = "RealSense direct capture active: viewer30
+filters=off src=848x480 out=848x480 valid=324431/407040 (79.7%)"
 realsense_decimation_filter_enabled = false
-oakd_status = "OAK-D active none 0x0@0 | requested source depthai | requested 1024x576@30"
-calibration_status = "Big ArUco OK: 4 shared marker(s), depth rmse 0.021m"
-debug_text = "RealSense cap/pub/render 24.0/24.0/23.5, OAK-D cap/pub/render 0.0/0.0/0.0"
+realsense_decimation_magnitude = 8
+realsense_hole_filling = 2
+realsense_fast_profile = "fast_192x384_i2"
+realsense_fast_iters = 1
+realsense_fast_scale = 0.25
+oakd_enabled = false
+oakd_status = "Editor live streaming is paused because the running game owns the Godot RealSense stream."
+oakd_depth_source = "depthai"
+calibration_status = "big ArUco failed | OAK-D: big ArUco size=0.1500m markers=3 ids=4x4_50:46,4x4_50:47,4x4_50:49 | RealSense: big ArUco size=0.1500m markers=1 ids=4x4_50:48"
+debug_text = "RealSense cap/pub/render 30.3/30.3/33.9, OAK-D cap/pub/render 0.0/0.0/0.0"
 
 [node name="CameraClouds2" type="Node3D" parent="." unique_id=1373529331]
 
@@ -27,6 +32,6 @@ transform = Transform3D(0.707107, -0.353553, 0.612372, 0, 0.866025, 0.5, -0.7071
 light_energy = 0.45
 
 [node name="ViewBounds" type="Node3D" parent="." unique_id=258096863]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.44468057)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.06498714, 0.033245414, -0.25927112)
 script = ExtResource("2_46eh4")
 show_preview_in_game = true

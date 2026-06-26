@@ -33,7 +33,7 @@ albedo_texture = ExtResource("3_cm0pq")
 material = SubResource("StandardMaterial3D_3dxm6")
 height = 1.0
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fpfj3"]
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_j4qnp"]
 shading_mode = 0
 albedo_color = Color(1, 0, 0, 1)
 
@@ -97,22 +97,22 @@ border_depth_offset_meters = 0.0
 
 [node name="Border_R" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=430316341]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.30382875, 0, 0)
-material_override = SubResource("StandardMaterial3D_fpfj3")
+material_override = SubResource("StandardMaterial3D_j4qnp")
 mesh = SubResource("QuadMesh_cm0pq")
 
 [node name="Border_L" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1990355786]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.30382875, 0, 0)
-material_override = SubResource("StandardMaterial3D_fpfj3")
+material_override = SubResource("StandardMaterial3D_j4qnp")
 mesh = SubResource("QuadMesh_cm0pq")
 
 [node name="Border_U" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=1073289249]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.17549743, 0)
-material_override = SubResource("StandardMaterial3D_fpfj3")
+material_override = SubResource("StandardMaterial3D_j4qnp")
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Border_D" type="MeshInstance3D" parent="Player/MonitorFrame/Red_Border" unique_id=441872831]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.17549743, 0)
-material_override = SubResource("StandardMaterial3D_fpfj3")
+material_override = SubResource("StandardMaterial3D_j4qnp")
 mesh = SubResource("QuadMesh_fos0i")
 
 [node name="Light" type="DirectionalLight3D" parent="." unique_id=1035636811]
@@ -149,7 +149,19 @@ fallback_world_environment_path = NodePath("../WorldEnvironment")
 window_center_path = NodePath("../Player/MonitorFrame")
 current_view_scene = ExtResource("9_j4qnp")
 explicit_view_scene_paths = PackedStringArray()
+camera_reactive_debug_status = "Off"
 current_view_name = "test_box.tscn"
+
+[node name="EnhancedGraphicsEnvironment" type="WorldEnvironment" parent="View" unique_id=1992688370]
+
+[node name="EnhancedGraphicsKeyLight" type="DirectionalLight3D" parent="View" unique_id=666534515]
+visible = false
+
+[node name="EnhancedGraphicsFillLight" type="DirectionalLight3D" parent="View" unique_id=1945039909]
+visible = false
+
+[node name="EnhancedGraphicsRimLight" type="DirectionalLight3D" parent="View" unique_id=1817373885]
+visible = false
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]
 resources = [PackedStringArray("aruco_0", "aruco_1", "aruco_2", "aruco_3", "aruco_4", "aruco_5"), [ExtResource("10_aruco_0"), ExtResource("11_aruco_1"), ExtResource("12_aruco_2"), ExtResource("13_aruco_3"), ExtResource("14_aruco_4"), ExtResource("15_aruco_5")]]

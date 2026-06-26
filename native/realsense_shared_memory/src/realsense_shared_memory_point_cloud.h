@@ -125,7 +125,7 @@ private:
     bool gpu_mesh_compute_indices = false;
     bool gpu_mesh_static_shader = false;
     double mesh_max_edge = 0.08;
-    double mesh_max_depth_delta = 0.08;
+    double mesh_max_depth_delta = 0.05;
     double mesh_min_triangle_area = 0.0;
     double mesh_max_color_delta = 2.0;
     bool edge_feather_enabled = false;

@@ -972,7 +972,7 @@ uniform vec4 intrinsics = vec4(600.0, 600.0, 320.0, 240.0);
 uniform vec2 depth_range = vec2(0.2, 4.5);
 uniform vec2 texel_size = vec2(0.01, 0.01);
 uniform float grid_stride = 1.0;
-uniform float max_depth_delta = 0.08;
+uniform float max_depth_delta = 0.05;
 uniform float max_mesh_edge = 0.08;
 uniform bool point_cleanup_enabled = false;
 uniform float point_cleanup_depth_delta = 0.06;
@@ -1002,61 +1002,21 @@ bool depth_in_range(float d) {
     return d >= depth_range.x && d <= depth_range.y;
 }
 
-float fill_ring_depth(vec2 uv, float radius, float required_count) {
-    vec2 step_uv = texel_size * radius;
-    float d0 = texture(depth_tex, uv + vec2(-step_uv.x, 0.0)).r;
-    float d1 = texture(depth_tex, uv + vec2(step_uv.x, 0.0)).r;
-    float d2 = texture(depth_tex, uv + vec2(0.0, -step_uv.y)).r;
-    float d3 = texture(depth_tex, uv + vec2(0.0, step_uv.y)).r;
-    float d4 = texture(depth_tex, uv + vec2(-step_uv.x, -step_uv.y)).r;
-    float d5 = texture(depth_tex, uv + vec2(step_uv.x, -step_uv.y)).r;
-    float d6 = texture(depth_tex, uv + vec2(-step_uv.x, step_uv.y)).r;
-    float d7 = texture(depth_tex, uv + vec2(step_uv.x, step_uv.y)).r;
-    float sum = 0.0;
-    float count = 0.0;
-    float min_d = depth_range.y;
-    float max_d = depth_range.x;
-    if (depth_in_range(d0)) { sum += d0; count += 1.0; min_d = min(min_d, d0); max_d = max(max_d, d0); }
-    if (depth_in_range(d1)) { sum += d1; count += 1.0; min_d = min(min_d, d1); max_d = max(max_d, d1); }
-    if (depth_in_range(d2)) { sum += d2; count += 1.0; min_d = min(min_d, d2); max_d = max(max_d, d2); }
-    if (depth_in_range(d3)) { sum += d3; count += 1.0; min_d = min(min_d, d3); max_d = max(max_d, d3); }
-    if (depth_in_range(d4)) { sum += d4; count += 1.0; min_d = min(min_d, d4); max_d = max(max_d, d4); }
-    if (depth_in_range(d5)) { sum += d5; count += 1.0; min_d = min(min_d, d5); max_d = max(max_d, d5); }
-    if (depth_in_range(d6)) { sum += d6; count += 1.0; min_d = min(min_d, d6); max_d = max(max_d, d6); }
-    if (depth_in_range(d7)) { sum += d7; count += 1.0; min_d = min(min_d, d7); max_d = max(max_d, d7); }
-    if (count >= required_count && max_d - min_d <= max_depth_delta * 1.5) {
-        return sum / count;
-    }
-    return 0.0;
+float depth_delta_limit(float a, float b) {
+    return max_depth_delta * max(max(abs(a), abs(b)), 0.000001);
 }
 
-float resolved_depth(vec2 uv) {
-    float d = texture(depth_tex, uv).r;
-    if (depth_in_range(d)) {
-        return d;
-    }
-    float r1 = fill_ring_depth(uv, 1.0, 3.0);
-    if (depth_in_range(r1)) {
-        return r1;
-    }
-    float r2 = fill_ring_depth(uv, 2.0, 4.0);
-    if (depth_in_range(r2)) {
-        return r2;
-    }
-    float r3 = fill_ring_depth(uv, 3.0, 5.0);
-    if (depth_in_range(r3)) {
-        return r3;
-    }
-    return d;
+float triangle_delta_limit(float da, float db, float dc) {
+    return max_depth_delta * max(max(abs(da), abs(db)), max(abs(dc), 0.000001));
 }
 
 bool triangle_depth_ok(float da, float db, float dc) {
     return depth_in_range(da)
         && depth_in_range(db)
         && depth_in_range(dc)
-        && abs(da - db) <= max_depth_delta
-        && abs(db - dc) <= max_depth_delta
-        && abs(dc - da) <= max_depth_delta;
+        && abs(da - db) <= depth_delta_limit(da, db)
+        && abs(db - dc) <= depth_delta_limit(db, dc)
+        && abs(dc - da) <= depth_delta_limit(dc, da);
 }
 
 bool triangle_edge_ok(vec3 pa, vec3 pb, vec3 pc) {
@@ -1067,17 +1027,30 @@ bool triangle_edge_ok(vec3 pa, vec3 pb, vec3 pc) {
     return eab <= max_edge_sq && ebc <= max_edge_sq && eca <= max_edge_sq;
 }
 
-float close_neighbor_count(vec2 uv, float d) {
+float close_neighbor_count_delta(vec2 uv, float d, float delta) {
     float dl = texture(depth_tex, uv + vec2(-texel_size.x, 0.0)).r;
     float dr = texture(depth_tex, uv + vec2(texel_size.x, 0.0)).r;
     float du = texture(depth_tex, uv + vec2(0.0, -texel_size.y)).r;
     float dd = texture(depth_tex, uv + vec2(0.0, texel_size.y)).r;
     float close_neighbors = 0.0;
-    close_neighbors += (depth_in_range(dl) && abs(d - dl) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
-    close_neighbors += (depth_in_range(dr) && abs(d - dr) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
-    close_neighbors += (depth_in_range(du) && abs(d - du) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
-    close_neighbors += (depth_in_range(dd) && abs(d - dd) <= point_cleanup_depth_delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(dl) && abs(d - dl) <= delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(dr) && abs(d - dr) <= delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(du) && abs(d - du) <= delta) ? 1.0 : 0.0;
+    close_neighbors += (depth_in_range(dd) && abs(d - dd) <= delta) ? 1.0 : 0.0;
     return close_neighbors;
+}
+
+float close_neighbor_count(vec2 uv, float d) {
+    return close_neighbor_count_delta(uv, d, point_cleanup_depth_delta);
+}
+
+bool corner_supported(vec2 uv, float d) {
+    float guard_delta = max(0.002, max_depth_delta * abs(d) * 0.5);
+    return close_neighbor_count_delta(uv, d, guard_delta) >= 2.0;
+}
+
+bool triangle_support_ok(vec2 ua, float da, vec2 ub, float db, vec2 uc, float dc) {
+    return corner_supported(ua, da) && corner_supported(ub, db) && corner_supported(uc, dc);
 }
 
 void vertex() {
@@ -1085,19 +1058,19 @@ void vertex() {
     tri_uv_a = UV2;
     tri_uv_b = CUSTOM0.xy;
     tri_uv_c = CUSTOM0.zw;
-    float da = resolved_depth(tri_uv_a);
-    float db = resolved_depth(tri_uv_b);
-    float dc = resolved_depth(tri_uv_c);
+    float da = texture(depth_tex, tri_uv_a).r;
+    float db = texture(depth_tex, tri_uv_b).r;
+    float dc = texture(depth_tex, tri_uv_c).r;
     vec3 pa = project_uv(tri_uv_a, da);
     vec3 pb = project_uv(tri_uv_b, db);
     vec3 pc = project_uv(tri_uv_c, dc);
-    bool tri_ok = triangle_depth_ok(da, db, dc) && triangle_edge_ok(pa, pb, pc);
+    bool tri_ok = triangle_depth_ok(da, db, dc) && triangle_edge_ok(pa, pb, pc) && triangle_support_ok(tri_uv_a, da, tri_uv_b, db, tri_uv_c, dc);
     point_valid = tri_ok ? 1.0 : 0.0;
     if (!tri_ok) {
         float fallback_depth = depth_in_range(da) ? da : (depth_in_range(db) ? db : (depth_in_range(dc) ? dc : depth_range.y));
         VERTEX = project_uv((tri_uv_a + tri_uv_b + tri_uv_c) / 3.0, fallback_depth);
     } else {
-        float depth_m = resolved_depth(UV);
+        float depth_m = texture(depth_tex, UV).r;
         VERTEX = project_uv(UV, depth_m);
     }
 }
@@ -1107,14 +1080,14 @@ void fragment() {
         discard;
     }
 
-    float da = resolved_depth(tri_uv_a);
-    float db = resolved_depth(tri_uv_b);
-    float dc = resolved_depth(tri_uv_c);
-    if (!triangle_depth_ok(da, db, dc)) {
+    float da = texture(depth_tex, tri_uv_a).r;
+    float db = texture(depth_tex, tri_uv_b).r;
+    float dc = texture(depth_tex, tri_uv_c).r;
+    if (!triangle_depth_ok(da, db, dc) || !triangle_support_ok(tri_uv_a, da, tri_uv_b, db, tri_uv_c, dc)) {
         discard;
     }
     if (point_cleanup_enabled) {
-        float center_depth = resolved_depth(point_uv);
+        float center_depth = texture(depth_tex, point_uv).r;
         if (!depth_in_range(center_depth) || close_neighbor_count(point_uv, center_depth) < point_cleanup_min_neighbors) {
             discard;
         }
@@ -1130,7 +1103,8 @@ void fragment() {
     float edge_shade = 1.0;
     if (edge_feather_enabled) {
         float max_jump = max(max(abs(da - db), abs(db - dc)), abs(dc - da));
-        float feather = 1.0 - smoothstep(max_depth_delta - edge_feather_width, max_depth_delta, max_jump);
+        float max_delta = triangle_delta_limit(da, db, dc);
+        float feather = 1.0 - smoothstep(max(max_delta - edge_feather_width, 0.0), max_delta, max_jump);
         edge_shade = mix(edge_feather_min_alpha, 1.0, feather);
     }
 
