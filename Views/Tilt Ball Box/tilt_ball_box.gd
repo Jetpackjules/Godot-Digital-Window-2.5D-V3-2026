@@ -52,6 +52,10 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 		wood_plank_width_meters = value
 		_box_piece_materials.clear()
 		_rebuild_if_ready(true)
+@export_range(0.05, 4.0, 0.01) var wood_texture_tile_size_meters: float = 1.2 :
+	set(value):
+		wood_texture_tile_size_meters = value
+		_rebuild_if_ready(true)
 
 @export_group("Balls")
 @export_range(1, 48, 1) var ball_count: int = 6 :
@@ -585,7 +589,7 @@ func _sync_box_piece_in_parent(parent: Node3D, piece_name: String, size: Vector3
 
 	var mesh_instance: MeshInstance3D = _get_or_create_mesh_instance(body, "Mesh")
 	mesh_instance.cast_shadow = _get_mesh_shadow_setting()
-	mesh_instance.mesh = _make_textured_box_mesh(size, material)
+	mesh_instance.mesh = _make_textured_box_mesh(piece_name, size, material)
 
 	var collision: CollisionShape3D = _get_or_create_collision_shape(body, "Collision")
 	var shape: BoxShape3D = collision.shape as BoxShape3D
@@ -594,31 +598,38 @@ func _sync_box_piece_in_parent(parent: Node3D, piece_name: String, size: Vector3
 	shape.size = size
 	collision.shape = shape
 
-func _make_textured_box_mesh(size: Vector3, material: Material) -> ArrayMesh:
+func _make_textured_box_mesh(piece_name: String, size: Vector3, material: Material) -> ArrayMesh:
 	var safe_size := Vector3(
 		maxf(size.x, 0.0001),
 		maxf(size.y, 0.0001),
 		maxf(size.z, 0.0001)
 	)
 	var half := safe_size * 0.5
-	var texture_tile_size := maxf(wood_plank_width_meters * 3.0, 0.05)
+	var texture_tile_size := maxf(wood_texture_tile_size_meters, 0.05)
 	var uv_scale := 1.0 / texture_tile_size
+	var rotate_horizontal_wall_uv := piece_name == "TopWall" or piece_name == "BottomWall"
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
+	var tangents := PackedFloat32Array()
 	var indices := PackedInt32Array()
 
-	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, -half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, indices, Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, -half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, indices, Vector3(-half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, -half.z), safe_size.x, safe_size.z, uv_scale)
-	_add_box_face(vertices, normals, uvs, indices, Vector3(0.0, -half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), safe_size.x, safe_size.z, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, -half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, -half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(-half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
+	if rotate_horizontal_wall_uv:
+		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, half.y, 0.0), Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), safe_size.z, safe_size.x, uv_scale)
+		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, -half.y, 0.0), Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), safe_size.z, safe_size.x, uv_scale)
+	else:
+		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, -half.z), safe_size.x, safe_size.z, uv_scale)
+		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, -half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), safe_size.x, safe_size.z, uv_scale)
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TANGENT] = tangents
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
 
@@ -627,26 +638,33 @@ func _make_textured_box_mesh(size: Vector3, material: Material) -> ArrayMesh:
 	mesh.surface_set_material(0, material)
 	return mesh
 
-func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, indices: PackedInt32Array, center: Vector3, u_axis: Vector3, v_axis: Vector3, u_length: float, v_length: float, uv_scale: float) -> void:
+func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, tangents: PackedFloat32Array, indices: PackedInt32Array, center: Vector3, u_axis: Vector3, v_axis: Vector3, u_length: float, v_length: float, uv_scale: float) -> void:
 	var base_index := vertices.size()
 	var normal := u_axis.cross(v_axis).normalized()
+	var tangent := u_axis.normalized()
+	var bitangent := v_axis.normalized()
+	var tangent_sign := 1.0 if normal.cross(tangent).dot(bitangent) >= 0.0 else -1.0
 	vertices.append(center - u_axis - v_axis)
 	vertices.append(center + u_axis - v_axis)
 	vertices.append(center + u_axis + v_axis)
 	vertices.append(center - u_axis + v_axis)
 	for _index in range(4):
 		normals.append(normal)
+		tangents.append(tangent.x)
+		tangents.append(tangent.y)
+		tangents.append(tangent.z)
+		tangents.append(tangent_sign)
 	uvs.append(Vector2(0.0, 0.0))
 	uvs.append(Vector2(u_length * uv_scale, 0.0))
 	uvs.append(Vector2(u_length * uv_scale, v_length * uv_scale))
 	uvs.append(Vector2(0.0, v_length * uv_scale))
 	indices.append_array(PackedInt32Array([
 		base_index,
+		base_index + 2,
 		base_index + 1,
-		base_index + 2,
 		base_index,
-		base_index + 2,
 		base_index + 3,
+		base_index + 2,
 	]))
 
 func _build_rounded_corners(bounds_size: Vector2) -> void:
@@ -740,12 +758,12 @@ func _build_maze(bounds_size: Vector2) -> void:
 	_generated_maze_goal_position = _maze_cell_center(goal_cell, left, bottom, cell_size)
 
 	_sync_vertical_maze_wall_runs(vertical_walls, columns, rows, left, bottom, cell_size, z, thickness, material)
-	_sync_horizontal_maze_wall_runs(horizontal_walls, columns, rows, left, bottom, cell_size, z, thickness, material)
+	_sync_horizontal_maze_wall_runs(horizontal_walls, vertical_walls, columns, rows, left, bottom, cell_size, z, thickness, material)
 	_sync_maze_goal(bounds_size)
 
 func _sync_maze_wall(piece_name: String, position_xy: Vector2, size: Vector2, z: float, material: Material) -> void:
 	var position: Vector3 = Vector3(position_xy.x, position_xy.y, z)
-	var wall_size: Vector3 = Vector3(size.x, size.y, box_depth_meters * 0.88)
+	var wall_size: Vector3 = Vector3(size.x, size.y, box_depth_meters)
 	_sync_box_piece_in_parent(_maze_root, piece_name, wall_size, position, material, _make_surface_physics_material())
 
 func _sync_maze_goal(bounds_size: Vector2) -> void:
@@ -880,7 +898,7 @@ func _sync_vertical_maze_wall_runs(vertical_walls: Array, columns: int, rows: in
 			_sync_maze_wall("MazeWall_V_%02d" % [run_index], Vector2(x, y), Vector2(thickness, run_height), z, material)
 			run_index += 1
 
-func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, columns: int, rows: int, left: float, bottom: float, cell_size: Vector2, z: float, thickness: float, material: Material) -> void:
+func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, vertical_walls: Array, columns: int, rows: int, left: float, bottom: float, cell_size: Vector2, z: float, thickness: float, material: Material) -> void:
 	var run_index: int = 0
 	for y_index in range(rows + 1):
 		var x_index: int = 0
@@ -892,11 +910,38 @@ func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, columns: int, rows
 			while x_index < columns and bool(horizontal_walls[_horizontal_wall_index(x_index, y_index, columns)]):
 				x_index += 1
 			var run_cells: int = x_index - start_x
-			var x: float = left + (float(start_x) + float(run_cells) * 0.5) * cell_size.x
 			var y: float = bottom + float(y_index) * cell_size.y
-			var run_width: float = float(run_cells) * cell_size.x + thickness
-			_sync_maze_wall("MazeWall_H_%02d" % [run_index], Vector2(x, y), Vector2(run_width, thickness), z, material)
-			run_index += 1
+			var segment_start_x: float = left + float(start_x) * cell_size.x
+			var run_end_x: float = left + float(start_x + run_cells) * cell_size.x
+			if _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, start_x, y_index):
+				segment_start_x += thickness * 0.5
+			for junction_x in range(start_x + 1, start_x + run_cells):
+				if not _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, junction_x, y_index):
+					continue
+				var segment_end_x: float = left + float(junction_x) * cell_size.x - thickness * 0.5
+				run_index = _sync_horizontal_maze_wall_segment(run_index, segment_start_x, segment_end_x, y, z, thickness, material)
+				segment_start_x = left + float(junction_x) * cell_size.x + thickness * 0.5
+			var segment_end_x: float = run_end_x
+			if _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, start_x + run_cells, y_index):
+				segment_end_x -= thickness * 0.5
+			run_index = _sync_horizontal_maze_wall_segment(run_index, segment_start_x, segment_end_x, y, z, thickness, material)
+
+func _sync_horizontal_maze_wall_segment(run_index: int, start_x: float, end_x: float, y: float, z: float, thickness: float, material: Material) -> int:
+	var width: float = end_x - start_x
+	if width <= 0.001:
+		return run_index
+	var x: float = (start_x + end_x) * 0.5
+	_sync_maze_wall("MazeWall_H_%02d" % [run_index], Vector2(x, y), Vector2(width, thickness), z, material)
+	return run_index + 1
+
+func _has_vertical_maze_wall_at_junction(vertical_walls: Array, columns: int, rows: int, x_index: int, y_index: int) -> bool:
+	if x_index < 0 or x_index > columns:
+		return false
+	if y_index > 0 and bool(vertical_walls[_vertical_wall_index(x_index, y_index - 1, columns)]):
+		return true
+	if y_index < rows and bool(vertical_walls[_vertical_wall_index(x_index, y_index, columns)]):
+		return true
+	return false
 
 func _maze_cell_center(cell: Vector2i, left: float, bottom: float, cell_size: Vector2) -> Vector2:
 	return Vector2(
