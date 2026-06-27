@@ -5,12 +5,14 @@
 
 [node name="Tilt Ball Box" type="Node3D" unique_id=1087960548]
 script = ExtResource("1_tilt_box")
-play_mode = 1
-wood_texture_tile_size_meters = 3.68
-maximum_ball_radius_ratio_of_depth = 0.49
+ball_radius_ratio_of_view_height = 0.057999999999999996
+ball_bounce = 0.08
+maze_wall_thickness_meters = 0.18
+front_limiter_debug_color = Color(1, 1, 0, 0.0627451)
+ambient_light_energy = 0.81
 cinematic_quality_lighting_enabled = true
 cinematic_quality_level = 2
-cinematic_shadow_opacity = 0.61
+cinematic_shadow_opacity = 0.66
 cinematic_softbox_energy = 0.35
 
 [node name="ViewBounds" type="Node3D" parent="." unique_id=771867793]
@@ -20,3 +22,7 @@ bounds_width_meters = 8.0
 bounds_height_meters = 4.5
 preview_thickness_meters = 0.035
 black_fill_enabled = false
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1386509399]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4.7168183)
+visible = false

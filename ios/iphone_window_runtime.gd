@@ -421,6 +421,7 @@ func _handle_view_cycle_input(event: InputEvent) -> void:
 	if _current_view_wants_primary_touch_input() and not (event is InputEventKey):
 		return
 	if desktop_debug_cycle_views and _handle_desktop_view_cycle_input(event):
+		get_viewport().set_input_as_handled()
 		return
 	if not event is InputEventScreenTouch:
 		return
@@ -753,7 +754,7 @@ func _make_viewbox_scale_slider() -> HSlider:
 func _make_ball_size_slider() -> HSlider:
 	var slider := HSlider.new()
 	slider.min_value = 50.0
-	slider.max_value = 250.0
+	slider.max_value = 400.0
 	slider.step = 1.0
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return slider
@@ -1031,7 +1032,7 @@ func _on_viewbox_scale_slider_changed(value: float) -> void:
 func _on_ball_size_slider_changed(value: float) -> void:
 	if _view_switcher == null:
 		return
-	var multiplier: float = clampf(value / 100.0, 0.5, 2.5)
+	var multiplier: float = clampf(value / 100.0, 0.5, 4.0)
 	if _view_switcher.has_method("set_current_view_ball_size_multiplier"):
 		_view_switcher.call("set_current_view_ball_size_multiplier", multiplier)
 	_sync_settings_values_from_runtime(true)
@@ -1327,6 +1328,7 @@ func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dicti
 	const SAMPLES_PER_AXIS := 6
 	var grid_luma := PackedFloat32Array()
 	var grid_colors := PackedColorArray()
+	var grid_peak_luma := PackedFloat32Array()
 	var total_luma := 0.0
 	var total_color := Color(0.0, 0.0, 0.0, 0.0)
 	var total_cells := GRID_WIDTH * GRID_HEIGHT
@@ -1337,6 +1339,7 @@ func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dicti
 		for gx in range(GRID_WIDTH):
 			var cell_luma := 0.0
 			var cell_color := Color(0.0, 0.0, 0.0, 0.0)
+			var cell_peak_luma := 0.0
 			var sample_count := 0
 			var mapped_gx: int = GRID_WIDTH - 1 - gx if desktop_debug_camera_light_mirror_x else gx
 			var mapped_gy: int = GRID_HEIGHT - 1 - gy if desktop_debug_camera_light_flip_y else gy
@@ -1350,6 +1353,7 @@ func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dicti
 					var luma := color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 					cell_luma += luma
 					cell_color += color
+					cell_peak_luma = maxf(cell_peak_luma, luma)
 					sample_count += 1
 			var divisor := maxf(float(sample_count), 1.0)
 			var averaged_luma := cell_luma / divisor
@@ -1359,6 +1363,7 @@ func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dicti
 				brightest_index = gy * GRID_WIDTH + gx
 			grid_luma.push_back(averaged_luma)
 			grid_colors.push_back(averaged_color)
+			grid_peak_luma.push_back(cell_peak_luma)
 			total_luma += averaged_luma
 			total_color += averaged_color
 
@@ -1369,6 +1374,7 @@ func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dicti
 	estimate["grid_height"] = GRID_HEIGHT
 	estimate["grid_luma"] = grid_luma
 	estimate["grid_colors"] = grid_colors
+	estimate["grid_peak_luma"] = grid_peak_luma
 	estimate["average_luma"] = total_luma / cell_divisor
 	estimate["average_color"] = total_color * (1.0 / cell_divisor)
 	estimate["brightest_index"] = brightest_index

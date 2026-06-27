@@ -2,81 +2,92 @@
 extends Node3D
 
 const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Textures/Wood Flat/Wood_Floor_016.tres")
+const FALLBACK_WOOD_PLANK_WIDTH_METERS: float = 0.28
+const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 
 @export var view_bounds_path: NodePath = NodePath("ViewBounds")
 
 @export_group("Mode")
 @export_enum("Sandbox", "Maze") var play_mode: int = 0 :
 	set(value):
-		play_mode = clampi(value, MODE_SANDBOX, MODE_MAZE)
+		var next_value: int = clampi(value, MODE_SANDBOX, MODE_MAZE)
+		if play_mode == next_value:
+			return
+		play_mode = next_value
 		_rebuild_if_ready(true)
 
 @export_group("Box")
 @export_range(0.05, 5.0, 0.01) var box_depth_meters: float = 0.8 :
 	set(value):
+		if is_equal_approx(box_depth_meters, value):
+			return
 		box_depth_meters = value
 		_rebuild_if_ready(true)
 @export var rounded_screen_corners_enabled: bool = true :
 	set(value):
+		if rounded_screen_corners_enabled == value:
+			return
 		rounded_screen_corners_enabled = value
 		_rebuild_if_ready(true)
 @export_range(0.0, 1.5, 0.005) var screen_corner_radius_meters: float = 0.36 :
 	set(value):
+		if is_equal_approx(screen_corner_radius_meters, value):
+			return
 		screen_corner_radius_meters = value
 		_rebuild_if_ready(true)
 @export_range(0.0, 0.35, 0.005) var screen_corner_radius_ratio_of_bounds_height: float = 0.17 :
 	set(value):
+		if is_equal_approx(screen_corner_radius_ratio_of_bounds_height, value):
+			return
 		screen_corner_radius_ratio_of_bounds_height = value
 		_rebuild_if_ready(true)
 @export_range(0.005, 0.5, 0.005) var wall_thickness_meters: float = 0.08 :
 	set(value):
+		if is_equal_approx(wall_thickness_meters, value):
+			return
 		wall_thickness_meters = value
 		_rebuild_if_ready(true)
 @export var wall_color: Color = Color(0.08, 0.1, 0.12, 1.0) :
 	set(value):
+		if wall_color == value:
+			return
 		wall_color = value
 		_box_piece_materials.clear()
 		_rebuild_if_ready(true)
 @export var back_color: Color = Color(0.92, 0.94, 0.96, 1.0) :
 	set(value):
+		if back_color == value:
+			return
 		back_color = value
 		_box_piece_materials.clear()
 		_rebuild_if_ready(true)
 @export var box_wood_material: StandardMaterial3D = DEFAULT_BOX_WOOD_MATERIAL :
 	set(value):
+		if box_wood_material == value:
+			return
 		box_wood_material = value
 		_box_piece_materials.clear()
 		_rebuild_if_ready(true)
-@export_range(0.05, 1.0, 0.01) var wood_plank_width_meters: float = 0.28 :
+@export_range(0.05, 4.0, 0.01) var wood_texture_tile_size_meters: float = 3.68 :
 	set(value):
-		wood_plank_width_meters = value
-		_box_piece_materials.clear()
-		_rebuild_if_ready(true)
-@export_range(0.05, 4.0, 0.01) var wood_texture_tile_size_meters: float = 1.2 :
-	set(value):
+		if is_equal_approx(wood_texture_tile_size_meters, value):
+			return
 		wood_texture_tile_size_meters = value
 		_rebuild_if_ready(true)
 
 @export_group("Balls")
 @export_range(1, 48, 1) var ball_count: int = 6 :
 	set(value):
+		if ball_count == value:
+			return
 		ball_count = value
 		_rebuild_if_ready(true)
-@export_range(0.005, 0.2, 0.001) var ball_radius_ratio_of_bounds_height: float = 0.12 :
+@export_range(0.005, 0.9, 0.001) var ball_radius_ratio_of_view_height: float = DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT :
 	set(value):
-		ball_radius_ratio_of_bounds_height = value
-		_rebuild_if_ready(true)
-@export_range(0.5, 2.5, 0.01) var ball_size_multiplier: float = 2.5 :
-	set(value):
-		ball_size_multiplier = clampf(value, 0.5, 2.5)
-		_rebuild_if_ready(true)
-@export_range(0.01, 1.0, 0.005) var maximum_ball_radius_meters: float = 0.6 :
-	set(value):
-		maximum_ball_radius_meters = value
-		_rebuild_if_ready(true)
-@export_range(0.05, 0.49, 0.005) var maximum_ball_radius_ratio_of_depth: float = 0.42 :
-	set(value):
-		maximum_ball_radius_ratio_of_depth = value
+		var next_value: float = clampf(value, 0.005, 0.9)
+		if is_equal_approx(ball_radius_ratio_of_view_height, next_value):
+			return
+		ball_radius_ratio_of_view_height = next_value
 		_rebuild_if_ready(true)
 @export var ball_colors: Array[Color] = [
 	Color(1.0, 0.12, 0.08, 1.0),
@@ -86,12 +97,15 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 	Color(0.95, 0.2, 1.0, 1.0),
 ] :
 	set(value):
+		if ball_colors == value:
+			return
 		ball_colors = value
 		_ball_materials.clear()
 		_rebuild_if_ready(true)
 
 @export_group("Tilt Physics")
 @export_range(0.0, 4.0, 0.05) var tilt_gravity_multiplier: float = 1.0
+@export_range(1.0, 80.0, 1.0) var debug_extreme_gravity_boost: float = 1.0
 @export_range(0.0, 1.0, 0.01) var tilt_smoothing: float = 0.16
 @export var swap_tilt_axes: bool = true
 @export var invert_tilt_x: bool = false
@@ -99,9 +113,13 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 @export_range(0.0, 2.0, 0.01) var ball_linear_damp: float = 0.18
 @export_range(0.0, 2.0, 0.01) var ball_angular_damp: float = 0.08
 @export_range(0.0, 1.0, 0.01) var ball_surface_friction: float = 0.52
-@export_range(0.0, 1.0, 0.01) var ball_bounce: float = 0.08
+@export_range(0.0, 1.0, 0.01) var ball_bounce: float = 0.0
 @export_range(0.0, 9.8, 0.05) var back_wall_contact_gravity: float = 2.0
 @export_range(0.0, 1.0, 0.01) var front_cover_friction: float = 0.0
+@export var settle_assist_enabled: bool = true
+@export_range(0.0, 1.0, 0.01) var settle_planar_gravity_threshold: float = 0.05
+@export_range(0.0, 0.25, 0.005) var settle_linear_speed_threshold: float = 0.035
+@export_range(0.0, 8.0, 0.05) var settle_angular_speed_threshold: float = 5.0
 
 @export_group("Haptics")
 @export var haptics_enabled: bool = true
@@ -111,44 +129,60 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 @export_group("Maze")
 @export_range(3, 25, 1) var maze_columns: int = 9 :
 	set(value):
-		maze_columns = maxi(3, value)
+		var next_value: int = maxi(3, value)
+		if maze_columns == next_value:
+			return
+		maze_columns = next_value
 		_rebuild_if_ready(true)
 @export_range(3, 25, 1) var maze_rows: int = 5 :
 	set(value):
-		maze_rows = maxi(3, value)
+		var next_value: int = maxi(3, value)
+		if maze_rows == next_value:
+			return
+		maze_rows = next_value
 		_rebuild_if_ready(true)
 @export var randomize_maze_on_ready: bool = true :
 	set(value):
+		if randomize_maze_on_ready == value:
+			return
 		randomize_maze_on_ready = value
 		_active_maze_seed = 0
 		_rebuild_if_ready(true)
 @export var maze_seed: int = 0 :
 	set(value):
+		if maze_seed == value:
+			return
 		maze_seed = value
 		_active_maze_seed = 0
 		_rebuild_if_ready(true)
-@export_range(0.0, 0.25, 0.005) var maze_outer_margin_ratio: float = 0.08 :
-	set(value):
-		maze_outer_margin_ratio = value
-		_rebuild_if_ready(true)
 @export_range(0.02, 0.5, 0.005) var maze_wall_thickness_meters: float = 0.12 :
 	set(value):
+		if is_equal_approx(maze_wall_thickness_meters, value):
+			return
 		maze_wall_thickness_meters = value
 		_rebuild_if_ready(true)
 @export_range(1.05, 3.0, 0.05) var maze_cell_clearance_ball_diameters: float = 1.35 :
 	set(value):
+		if is_equal_approx(maze_cell_clearance_ball_diameters, value):
+			return
 		maze_cell_clearance_ball_diameters = value
 		_rebuild_if_ready(true)
 @export var maze_start_normalized_position: Vector2 = Vector2(-0.36, -0.34) :
 	set(value):
+		if maze_start_normalized_position.is_equal_approx(value):
+			return
 		maze_start_normalized_position = value
 		_rebuild_if_ready(true)
 @export var maze_goal_normalized_position: Vector2 = Vector2(0.38, 0.34) :
 	set(value):
+		if maze_goal_normalized_position.is_equal_approx(value):
+			return
 		maze_goal_normalized_position = value
 		_rebuild_if_ready(true)
 @export var maze_goal_color: Color = Color(0.15, 1.0, 0.35, 0.72) :
 	set(value):
+		if maze_goal_color == value:
+			return
 		maze_goal_color = value
 		_maze_goal_material = null
 		_rebuild_if_ready(true)
@@ -159,6 +193,23 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 @export var desktop_debug_mouse_requires_press: bool = true
 @export_range(0.05, 1.0, 0.01) var desktop_debug_mouse_max_gravity_ratio: float = 0.55
 @export var desktop_debug_preset_keys: bool = true
+
+@export_group("Debug")
+@export var debug_gravity_logging: bool = true
+@export var debug_physics_logging: bool = false
+@export_range(0.1, 5.0, 0.1) var debug_physics_log_interval_seconds: float = 0.5
+@export var front_limiter_debug_visible: bool = false :
+	set(value):
+		if front_limiter_debug_visible == value:
+			return
+		front_limiter_debug_visible = value
+		_rebuild_if_ready(true)
+@export var front_limiter_debug_color: Color = Color(0.1, 0.75, 1.0, 0.28) :
+	set(value):
+		if front_limiter_debug_color == value:
+			return
+		front_limiter_debug_color = value
+		_rebuild_if_ready(true)
 
 @export_group("Lighting")
 @export var soft_scene_lighting_enabled: bool = true :
@@ -200,6 +251,8 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 @export_group("Cinematic Lighting")
 @export var cinematic_quality_lighting_enabled: bool = false :
 	set(value):
+		if cinematic_quality_lighting_enabled == value:
+			return
 		cinematic_quality_lighting_enabled = value
 		_box_piece_materials.clear()
 		_ball_materials.clear()
@@ -208,7 +261,10 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 		_sync_generated_mesh_shadow_casting()
 @export_enum("Low", "High", "Insane") var cinematic_quality_level: int = 1 :
 	set(value):
-		cinematic_quality_level = clampi(value, CINEMATIC_QUALITY_LOW, CINEMATIC_QUALITY_INSANE)
+		var next_value: int = clampi(value, CINEMATIC_QUALITY_LOW, CINEMATIC_QUALITY_INSANE)
+		if cinematic_quality_level == next_value:
+			return
+		cinematic_quality_level = next_value
 		_box_piece_materials.clear()
 		_ball_materials.clear()
 		_micro_normal_textures.clear()
@@ -220,6 +276,8 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 		_sync_lighting()
 @export_range(0.0, 1.0, 0.01) var cinematic_reflection_strength: float = 0.32 :
 	set(value):
+		if is_equal_approx(cinematic_reflection_strength, value):
+			return
 		cinematic_reflection_strength = value
 		_box_piece_materials.clear()
 		_ball_materials.clear()
@@ -227,6 +285,8 @@ const DEFAULT_BOX_WOOD_MATERIAL: StandardMaterial3D = preload("res://Assets/Text
 		_rebuild_if_ready(true)
 @export_range(0.0, 1.0, 0.01) var cinematic_material_micro_detail: float = 0.38 :
 	set(value):
+		if is_equal_approx(cinematic_material_micro_detail, value):
+			return
 		cinematic_material_micro_detail = value
 		_box_piece_materials.clear()
 		_ball_materials.clear()
@@ -272,6 +332,7 @@ var _balls: Array[RigidBody3D] = []
 var _last_bounds_size: Vector2 = Vector2.ZERO
 var _box_piece_materials: Dictionary = {}
 var _maze_goal_material: StandardMaterial3D
+var _front_limiter_debug_material: StandardMaterial3D
 var _ball_materials: Array[StandardMaterial3D] = []
 var _ball_textures: Array[Texture2D] = []
 var _micro_normal_textures: Dictionary = {}
@@ -283,6 +344,9 @@ var _generated_maze_goal_position: Vector2 = Vector2.ZERO
 var _maze_runtime_ball_radius_override: float = -1.0
 var _last_haptic_msec: int = -10000
 var _logged_missing_native_haptics: bool = false
+var _debug_physics_log_elapsed: float = 0.0
+var _debug_rebuild_count: int = 0
+var _runtime_view_size_meters: Vector2 = Vector2.ZERO
 
 func _enter_tree() -> void:
 	set_process(true)
@@ -296,8 +360,8 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	var bounds_size: Vector2 = _get_bounds_size()
-	if not bounds_size.is_equal_approx(_last_bounds_size):
-		_rebuild_if_ready(true)
+	if not _bounds_size_equal(bounds_size, _last_bounds_size):
+		_rebuild_if_ready(false)
 
 func _physics_process(_delta: float) -> void:
 	if Engine.is_editor_hint():
@@ -305,19 +369,41 @@ func _physics_process(_delta: float) -> void:
 
 	var raw_gravity: Vector3 = _read_box_gravity()
 	_smoothed_gravity = _smoothed_gravity.lerp(raw_gravity, clampf(1.0 - tilt_smoothing, 0.0, 1.0))
+	var world_basis: Basis = global_transform.basis.orthonormalized()
 	var force_direction: Vector3 = (
-		(global_transform.basis.x * _smoothed_gravity.x)
-		+ (global_transform.basis.y * _smoothed_gravity.y)
-		+ (global_transform.basis.z * _smoothed_gravity.z)
+		(world_basis.x * _smoothed_gravity.x)
+		+ (world_basis.y * _smoothed_gravity.y)
+		+ (world_basis.z * _smoothed_gravity.z)
 	)
 
 	for ball in _balls:
 		if ball == null or not is_instance_valid(ball):
 			continue
-		var force: Vector3 = force_direction * tilt_gravity_multiplier * ball.mass
+		var force: Vector3 = force_direction * tilt_gravity_multiplier * debug_extreme_gravity_boost * ball.mass
 		if force.length_squared() > 0.000001:
 			ball.sleeping = false
 		ball.apply_central_force(force)
+		_apply_settle_assist(ball, force_direction, world_basis)
+
+	_debug_log_physics_state(_delta, raw_gravity, force_direction)
+
+func _apply_settle_assist(ball: RigidBody3D, force_direction: Vector3, world_basis: Basis) -> void:
+	if not settle_assist_enabled:
+		return
+
+	var planar_gravity := Vector2(force_direction.dot(world_basis.x), force_direction.dot(world_basis.y))
+	if planar_gravity.length() > settle_planar_gravity_threshold:
+		return
+
+	var linear_velocity := ball.linear_velocity
+	var planar_velocity := (world_basis.x * linear_velocity.dot(world_basis.x)) + (world_basis.y * linear_velocity.dot(world_basis.y))
+	if planar_velocity.length() > settle_linear_speed_threshold:
+		return
+	if ball.angular_velocity.length() > settle_angular_speed_threshold:
+		return
+
+	ball.linear_velocity = linear_velocity - planar_velocity
+	ball.angular_velocity = Vector3.ZERO
 
 func _input(event: InputEvent) -> void:
 	if Engine.is_editor_hint() or not desktop_debug_preset_keys:
@@ -349,6 +435,58 @@ func _set_desktop_debug_preset_tilt(tilt: Vector2, label: String) -> void:
 	_desktop_debug_preset_tilt = tilt.limit_length(GRAVITY_METERS_PER_SECOND_SQUARED)
 	print("[TiltBallBox] desktop gravity preset: %s %.2f %.2f" % [label, _desktop_debug_preset_tilt.x, _desktop_debug_preset_tilt.y])
 
+func _debug_log_physics_state(delta: float, raw_gravity: Vector3, force_direction: Vector3) -> void:
+	if not debug_gravity_logging and not debug_physics_logging:
+		return
+	_debug_physics_log_elapsed += maxf(delta, 0.0)
+	if _debug_physics_log_elapsed < debug_physics_log_interval_seconds:
+		return
+	_debug_physics_log_elapsed = 0.0
+
+	if not debug_physics_logging:
+		print("[TiltBallBox] gravity rawG=%s smoothG=%s forceDir=%s" % [
+			_debug_vec3(raw_gravity),
+			_debug_vec3(_smoothed_gravity),
+			_debug_vec3(force_direction),
+		])
+		return
+
+	var ball_text := "no-ball"
+	if _balls.size() > 0:
+		var ball: RigidBody3D = _balls[0]
+		if ball != null and is_instance_valid(ball):
+			ball_text = "pos=%s lin=%.3f ang=%.3f sleeping=%s contacts=%d" % [
+				_debug_vec3(ball.global_position),
+				ball.linear_velocity.length(),
+				ball.angular_velocity.length(),
+				str(ball.sleeping),
+				ball.get_contact_count(),
+			]
+
+	var root_scale := global_transform.basis.get_scale()
+	print("[TiltBallBox] physics rawG=%s smoothG=%s forceDir=%s rootScale=%s rebuilds=%d %s" % [
+		_debug_vec3(raw_gravity),
+		_debug_vec3(_smoothed_gravity),
+		_debug_vec3(force_direction),
+		_debug_vec3(root_scale),
+		_debug_rebuild_count,
+		ball_text,
+	])
+
+func _debug_vec3(value: Vector3) -> String:
+	return "(%.2f,%.2f,%.2f)" % [value.x, value.y, value.z]
+
+func handles_view_scale_internally() -> bool:
+	return true
+
+func set_runtime_view_size_meters(size_meters: Vector2) -> void:
+	var next_size := Vector2(maxf(size_meters.x, 0.0), maxf(size_meters.y, 0.0))
+	if _runtime_view_size_meters.is_equal_approx(next_size):
+		return
+	_runtime_view_size_meters = next_size
+	_sync_view_bounds_runtime_size()
+	_rebuild_if_ready(false)
+
 func _rebuild_if_ready(force: bool) -> void:
 	if not is_inside_tree():
 		return
@@ -356,10 +494,13 @@ func _rebuild_if_ready(force: bool) -> void:
 	var bounds_size: Vector2 = _get_bounds_size()
 	if bounds_size.x <= 0.0 or bounds_size.y <= 0.0:
 		return
-	if not force and bounds_size.is_equal_approx(_last_bounds_size):
+	if not force and _bounds_size_equal(bounds_size, _last_bounds_size):
 		return
 
 	_last_bounds_size = bounds_size
+	_debug_rebuild_count += 1
+	if debug_physics_logging and not Engine.is_editor_hint():
+		print("[TiltBallBox] rebuild #%d bounds=%.3f x %.3f mode=%d" % [_debug_rebuild_count, bounds_size.x, bounds_size.y, play_mode])
 	_ensure_roots()
 	_sync_lighting()
 	_balls.clear()
@@ -488,8 +629,10 @@ func _configure_cinematic_omni_lights() -> void:
 	var bounds_size: Vector2 = _last_bounds_size if _last_bounds_size.x > 0.0 and _last_bounds_size.y > 0.0 else _get_bounds_size()
 	var width: float = maxf(bounds_size.x, 1.0)
 	var height: float = maxf(bounds_size.y, 1.0)
+	var depth: float = _get_box_depth(bounds_size)
+	var scaled_softbox_min_z: float = _scale_authored_length(0.26, bounds_size)
 
-	_front_softbox_light.position = Vector3(0.0, -height * 0.12, maxf(0.26, box_depth_meters * 0.35))
+	_front_softbox_light.position = Vector3(0.0, -height * 0.12, maxf(scaled_softbox_min_z, depth * 0.35))
 	_front_softbox_light.light_color = Color(0.9, 0.96, 1.0, 1.0)
 	var safe_softbox_energy: float = minf(cinematic_softbox_energy, 0.35)
 	_front_softbox_light.light_energy = safe_softbox_energy
@@ -497,7 +640,7 @@ func _configure_cinematic_omni_lights() -> void:
 	_front_softbox_light.omni_attenuation = 0.55
 	_front_softbox_light.shadow_enabled = false
 
-	_sky_bounce_light.position = Vector3(-width * 0.22, height * 0.55, -box_depth_meters * 0.35)
+	_sky_bounce_light.position = Vector3(-width * 0.22, height * 0.55, -depth * 0.35)
 	_sky_bounce_light.light_color = Color(1.0, 0.78, 0.52, 1.0)
 	_sky_bounce_light.light_energy = safe_softbox_energy * 0.28
 	_sky_bounce_light.omni_range = maxf(width, height) * 0.75
@@ -560,8 +703,8 @@ func _clear_children(parent: Node) -> void:
 func _build_box(bounds_size: Vector2) -> void:
 	var width: float = bounds_size.x
 	var height: float = bounds_size.y
-	var depth: float = box_depth_meters
-	var thickness: float = wall_thickness_meters
+	var depth: float = _get_box_depth(bounds_size)
+	var thickness: float = _get_wall_thickness(bounds_size)
 	var corner_radius: float = _get_rounded_corner_radius(bounds_size)
 	var straight_width: float = maxf(thickness, width - corner_radius * 2.0)
 	var straight_height: float = maxf(thickness, height - corner_radius * 2.0)
@@ -572,10 +715,12 @@ func _build_box(bounds_size: Vector2) -> void:
 	_sync_box_piece("BottomWall", Vector3(straight_width + thickness * 2.0, thickness, depth), Vector3(0.0, -height * 0.5 - thickness * 0.5, -depth * 0.5), _get_box_piece_material("BottomWall", Vector2(straight_width + thickness * 2.0, depth), false))
 	_sync_box_piece("TopWall", Vector3(straight_width + thickness * 2.0, thickness, depth), Vector3(0.0, height * 0.5 + thickness * 0.5, -depth * 0.5), _get_box_piece_material("TopWall", Vector2(straight_width + thickness * 2.0, depth), false))
 
-	# Invisible front/back rails keep the balls in a shallow physical slice while
-	# leaving the front open to the camera.
+	# Keep the invisible front lid just beyond the current ball front. It must
+	# track radius changes, but it cannot touch the ball at rest or the solver can
+	# spend frames fighting a back-wall/contact constraint.
 	var ball_radius: float = _get_ball_radius(bounds_size)
-	var front_lid_z: float = maxf(thickness * 0.5, -depth + ball_radius * 2.0 + thickness * 0.5)
+	var front_lid_clearance: float = maxf(_scale_authored_length(0.04, bounds_size), ball_radius * 0.12)
+	var front_lid_z: float = maxf(thickness * 0.5, _get_ball_plane_z(ball_radius) + ball_radius + thickness * 0.5 + front_lid_clearance)
 	_sync_collision_piece("FrontCollision", Vector3(width, height, thickness), Vector3(0.0, 0.0, front_lid_z), _make_front_cover_physics_material())
 
 func _sync_box_piece(piece_name: String, size: Vector3, local_position: Vector3, material: Material) -> void:
@@ -605,7 +750,7 @@ func _make_textured_box_mesh(piece_name: String, size: Vector3, material: Materi
 		maxf(size.z, 0.0001)
 	)
 	var half := safe_size * 0.5
-	var texture_tile_size := maxf(wood_texture_tile_size_meters, 0.05)
+	var texture_tile_size := maxf(_get_wood_texture_tile_size(), 0.005)
 	var uv_scale := 1.0 / texture_tile_size
 	var rotate_horizontal_wall_uv := piece_name == "TopWall" or piece_name == "BottomWall"
 	var vertices := PackedVector3Array()
@@ -670,12 +815,13 @@ func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uv
 func _build_rounded_corners(bounds_size: Vector2) -> void:
 	_clear_children(_corner_root)
 	_corner_root.visible = rounded_screen_corners_enabled
-	if not rounded_screen_corners_enabled or screen_corner_radius_meters <= 0.0:
+	if not rounded_screen_corners_enabled:
 		return
 
 	var width: float = bounds_size.x
 	var height: float = bounds_size.y
-	var depth: float = box_depth_meters
+	var depth: float = _get_box_depth(bounds_size)
+	var thickness: float = _get_wall_thickness(bounds_size)
 	var radius: float = _get_rounded_corner_radius(bounds_size)
 	if radius <= 0.0:
 		return
@@ -695,17 +841,17 @@ func _build_rounded_corners(bounds_size: Vector2) -> void:
 		for segment_index in range(segment_count):
 			var angle: float = start_angles[corner_index] + (float(segment_index) + 0.5) * angle_step
 			var outward: Vector2 = Vector2(cos(angle), sin(angle))
-			var arc_position: Vector2 = corner_centers[corner_index] + outward * (radius + wall_thickness_meters * 0.5)
+			var arc_position: Vector2 = corner_centers[corner_index] + outward * (radius + thickness * 0.5)
 			var body_position: Vector3 = Vector3(arc_position.x, arc_position.y, -depth * 0.5)
 			var body_rotation: Vector3 = Vector3(0.0, 0.0, angle + PI * 0.5)
 			var piece_name: String = "RoundedAperture_%02d_%02d" % [corner_index + 1, segment_index + 1]
-			_sync_box_piece_in_parent(_corner_root, piece_name, Vector3(segment_length, wall_thickness_meters, depth), body_position, material, _make_surface_physics_material(), body_rotation)
+			_sync_box_piece_in_parent(_corner_root, piece_name, Vector3(segment_length, thickness, depth), body_position, material, _make_surface_physics_material(), body_rotation)
 
 func _get_rounded_corner_radius(bounds_size: Vector2) -> float:
 	if not rounded_screen_corners_enabled:
 		return 0.0
 	var ratio_radius: float = bounds_size.y * screen_corner_radius_ratio_of_bounds_height
-	var target_radius: float = maxf(screen_corner_radius_meters, ratio_radius)
+	var target_radius: float = maxf(_scale_authored_length(screen_corner_radius_meters, bounds_size), ratio_radius)
 	return clampf(target_radius, 0.0, minf(bounds_size.x, bounds_size.y) * 0.34)
 
 func _build_maze(bounds_size: Vector2) -> void:
@@ -716,15 +862,14 @@ func _build_maze(bounds_size: Vector2) -> void:
 
 	var width: float = bounds_size.x
 	var height: float = bounds_size.y
-	var depth: float = box_depth_meters
-	var thickness: float = maze_wall_thickness_meters
+	var depth: float = _get_box_depth(bounds_size)
+	var thickness: float = _get_maze_wall_thickness(bounds_size)
 	var material: Material = _get_box_piece_material("MazeWall", Vector2(width, depth), false)
 	var z: float = -depth * 0.5
 
 	var radius: float = _get_ball_radius(bounds_size)
-	var margin: float = maxf(radius * 1.45, minf(width, height) * maze_outer_margin_ratio)
-	var maze_width: float = maxf(radius * 4.0, width - margin * 2.0)
-	var maze_height: float = maxf(radius * 4.0, height - margin * 2.0)
+	var maze_width: float = width
+	var maze_height: float = height
 	var requested_columns: int = maxi(3, maze_columns)
 	var requested_rows: int = maxi(3, maze_rows)
 	var minimum_cell_size: float = radius * 2.0 * maze_cell_clearance_ball_diameters + thickness
@@ -737,9 +882,6 @@ func _build_maze(bounds_size: Vector2) -> void:
 	if radius > clearance_radius:
 		radius = clearance_radius
 		_maze_runtime_ball_radius_override = radius
-		margin = maxf(radius * 1.45, minf(width, height) * maze_outer_margin_ratio)
-		maze_width = maxf(radius * 4.0, width - margin * 2.0)
-		maze_height = maxf(radius * 4.0, height - margin * 2.0)
 		minimum_cell_size = radius * 2.0 * maze_cell_clearance_ball_diameters + thickness
 		max_columns_for_ball = maxi(3, floori(maze_width / maxf(minimum_cell_size, 0.001)))
 		max_rows_for_ball = maxi(3, floori(maze_height / maxf(minimum_cell_size, 0.001)))
@@ -757,13 +899,13 @@ func _build_maze(bounds_size: Vector2) -> void:
 	_generated_maze_start_position = _maze_cell_center(start_cell, left, bottom, cell_size)
 	_generated_maze_goal_position = _maze_cell_center(goal_cell, left, bottom, cell_size)
 
-	_sync_vertical_maze_wall_runs(vertical_walls, columns, rows, left, bottom, cell_size, z, thickness, material)
-	_sync_horizontal_maze_wall_runs(horizontal_walls, vertical_walls, columns, rows, left, bottom, cell_size, z, thickness, material)
+	_sync_vertical_maze_wall_runs(vertical_walls, columns, rows, left, bottom, cell_size, z, thickness, material, true)
+	_sync_horizontal_maze_wall_runs(horizontal_walls, vertical_walls, columns, rows, left, bottom, cell_size, z, thickness, material, true)
 	_sync_maze_goal(bounds_size)
 
 func _sync_maze_wall(piece_name: String, position_xy: Vector2, size: Vector2, z: float, material: Material) -> void:
 	var position: Vector3 = Vector3(position_xy.x, position_xy.y, z)
-	var wall_size: Vector3 = Vector3(size.x, size.y, box_depth_meters)
+	var wall_size: Vector3 = Vector3(size.x, size.y, _get_box_depth(_last_bounds_size))
 	_sync_box_piece_in_parent(_maze_root, piece_name, wall_size, position, material, _make_surface_physics_material())
 
 func _sync_maze_goal(bounds_size: Vector2) -> void:
@@ -780,7 +922,7 @@ func _sync_maze_goal(bounds_size: Vector2) -> void:
 	goal.position = Vector3(
 		_get_maze_goal_position(bounds_size).x,
 		_get_maze_goal_position(bounds_size).y,
-		-box_depth_meters + 0.006
+		-_get_box_depth(bounds_size) + _scale_authored_length(0.006, bounds_size)
 	)
 	goal.material_override = _get_maze_goal_material()
 
@@ -880,9 +1022,11 @@ func _get_open_maze_neighbors(cell: Vector2i, vertical_walls: Array, horizontal_
 		neighbors.append(Vector2i(cell.x, cell.y + 1))
 	return neighbors
 
-func _sync_vertical_maze_wall_runs(vertical_walls: Array, columns: int, rows: int, left: float, bottom: float, cell_size: Vector2, z: float, thickness: float, material: Material) -> void:
+func _sync_vertical_maze_wall_runs(vertical_walls: Array, columns: int, rows: int, left: float, bottom: float, cell_size: Vector2, z: float, thickness: float, material: Material, skip_outer_walls: bool = false) -> void:
 	var run_index: int = 0
 	for x_index in range(columns + 1):
+		if skip_outer_walls and (x_index == 0 or x_index == columns):
+			continue
 		var y_index: int = 0
 		while y_index < rows:
 			if not bool(vertical_walls[_vertical_wall_index(x_index, y_index, columns)]):
@@ -898,9 +1042,11 @@ func _sync_vertical_maze_wall_runs(vertical_walls: Array, columns: int, rows: in
 			_sync_maze_wall("MazeWall_V_%02d" % [run_index], Vector2(x, y), Vector2(thickness, run_height), z, material)
 			run_index += 1
 
-func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, vertical_walls: Array, columns: int, rows: int, left: float, bottom: float, cell_size: Vector2, z: float, thickness: float, material: Material) -> void:
+func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, vertical_walls: Array, columns: int, rows: int, left: float, bottom: float, cell_size: Vector2, z: float, thickness: float, material: Material, skip_outer_walls: bool = false) -> void:
 	var run_index: int = 0
 	for y_index in range(rows + 1):
+		if skip_outer_walls and (y_index == 0 or y_index == rows):
+			continue
 		var x_index: int = 0
 		while x_index < columns:
 			if not bool(horizontal_walls[_horizontal_wall_index(x_index, y_index, columns)]):
@@ -913,7 +1059,7 @@ func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, vertical_walls: Ar
 			var y: float = bottom + float(y_index) * cell_size.y
 			var segment_start_x: float = left + float(start_x) * cell_size.x
 			var run_end_x: float = left + float(start_x + run_cells) * cell_size.x
-			if _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, start_x, y_index):
+			if (not skip_outer_walls or (start_x > 0 and start_x < columns)) and _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, start_x, y_index):
 				segment_start_x += thickness * 0.5
 			for junction_x in range(start_x + 1, start_x + run_cells):
 				if not _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, junction_x, y_index):
@@ -922,7 +1068,7 @@ func _sync_horizontal_maze_wall_runs(horizontal_walls: Array, vertical_walls: Ar
 				run_index = _sync_horizontal_maze_wall_segment(run_index, segment_start_x, segment_end_x, y, z, thickness, material)
 				segment_start_x = left + float(junction_x) * cell_size.x + thickness * 0.5
 			var segment_end_x: float = run_end_x
-			if _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, start_x + run_cells, y_index):
+			if (not skip_outer_walls or (start_x + run_cells > 0 and start_x + run_cells < columns)) and _has_vertical_maze_wall_at_junction(vertical_walls, columns, rows, start_x + run_cells, y_index):
 				segment_end_x -= thickness * 0.5
 			run_index = _sync_horizontal_maze_wall_segment(run_index, segment_start_x, segment_end_x, y, z, thickness, material)
 
@@ -1018,30 +1164,81 @@ func _sync_collision_piece(piece_name: String, size: Vector3, local_position: Ve
 	shape.size = size
 	collision.shape = shape
 
+	if piece_name == "FrontCollision":
+		_sync_front_limiter_debug_mesh(body, size)
+
+func _sync_front_limiter_debug_mesh(body: StaticBody3D, size: Vector3) -> void:
+	var mesh_instance: MeshInstance3D = _get_or_create_mesh_instance(body, "DebugMesh")
+	mesh_instance.visible = front_limiter_debug_visible
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var mesh: BoxMesh = mesh_instance.mesh as BoxMesh
+	if mesh == null:
+		mesh = BoxMesh.new()
+	mesh.size = size
+	mesh.material = _get_front_limiter_debug_material()
+	mesh_instance.mesh = mesh
+
 func _build_balls(bounds_size: Vector2) -> void:
 	var radius: float = _get_ball_radius(bounds_size)
-	var margin: float = radius * 2.05
-	var usable_width: float = maxf(radius, bounds_size.x - margin * 2.0)
-	var usable_height: float = maxf(radius, bounds_size.y - margin * 2.0)
 	var active_ball_count: int = _get_active_ball_count()
-	var columns: int = maxi(1, ceili(sqrt(float(active_ball_count))))
-	var rows: int = maxi(1, ceili(float(active_ball_count) / float(columns)))
+	var layout: Dictionary = _get_ball_spawn_layout(bounds_size, radius, active_ball_count)
+	var columns: int = int(layout["columns"])
+	var rows: int = int(layout["rows"])
+	var usable_width: float = float(layout["usable_width"])
+	var usable_height: float = float(layout["usable_height"])
+	var spawn_radius: float = float(layout["spawn_radius"])
 	_hide_unused_balls(active_ball_count)
 
 	for index in range(active_ball_count):
 		var column: int = index % columns
 		var row: int = floori(float(index) / float(columns))
-		var x: float = -usable_width * 0.5 + usable_width * (float(column) + 0.5) / float(columns)
-		var y: float = -usable_height * 0.5 + usable_height * (float(row) + 0.5) / float(rows)
+		var x: float = 0.0 if columns <= 1 else lerpf(-usable_width * 0.5, usable_width * 0.5, float(column) / float(columns - 1))
+		var y: float = 0.0 if rows <= 1 else lerpf(-usable_height * 0.5, usable_height * 0.5, float(row) / float(rows - 1))
 		if play_mode == MODE_MAZE:
 			var start_position: Vector2 = _get_maze_start_position(bounds_size)
 			x = clampf(start_position.x, -usable_width * 0.5, usable_width * 0.5)
 			y = clampf(start_position.y, -usable_height * 0.5, usable_height * 0.5)
 		var jitter: Vector2 = Vector2(
-			sin(float(index) * 12.9898) * radius * 0.06,
-			cos(float(index) * 78.233) * radius * 0.06
+			sin(float(index) * 12.9898) * spawn_radius * 0.06,
+			cos(float(index) * 78.233) * spawn_radius * 0.06
 		)
-		_sync_ball(index, radius, Vector3(x + jitter.x, y + jitter.y, _get_ball_plane_z(radius)))
+		var clamped_position := Vector2(
+			clampf(x + jitter.x, -usable_width * 0.5, usable_width * 0.5),
+			clampf(y + jitter.y, -usable_height * 0.5, usable_height * 0.5)
+		)
+		_sync_ball(index, radius, Vector3(clamped_position.x, clamped_position.y, _get_ball_plane_z(radius)))
+
+func _get_ball_spawn_layout(bounds_size: Vector2, radius: float, active_ball_count: int) -> Dictionary:
+	var edge_margin: float = radius * 1.04
+	var usable_width: float = maxf(0.001, bounds_size.x - edge_margin * 2.0)
+	var usable_height: float = maxf(0.001, bounds_size.y - edge_margin * 2.0)
+	var best_columns: int = maxi(1, ceili(sqrt(float(active_ball_count))))
+	var best_rows: int = maxi(1, ceili(float(active_ball_count) / float(best_columns)))
+	var best_score: float = -1.0e20
+	var best_spawn_radius: float = radius
+	for columns in range(1, active_ball_count + 1):
+		var rows: int = ceili(float(active_ball_count) / float(columns))
+		var spacing_x: float = usable_width if columns <= 1 else usable_width / float(columns - 1)
+		var spacing_y: float = usable_height if rows <= 1 else usable_height / float(rows - 1)
+		var candidate_spawn_radius: float = minf(radius, minf(spacing_x, spacing_y) * 0.48)
+		var aspect_penalty: float = absf(float(columns) / float(rows) - bounds_size.x / maxf(bounds_size.y, 0.001)) * radius * 0.08
+		var score: float = candidate_spawn_radius - aspect_penalty
+		if score > best_score:
+			best_score = score
+			best_columns = columns
+			best_rows = rows
+			best_spawn_radius = candidate_spawn_radius
+	if best_columns <= 1:
+		usable_width = 0.0
+	if best_rows <= 1:
+		usable_height = 0.0
+	return {
+		"columns": best_columns,
+		"rows": best_rows,
+		"usable_width": usable_width,
+		"usable_height": usable_height,
+		"spawn_radius": best_spawn_radius,
+	}
 
 func _get_active_ball_count() -> int:
 	if play_mode == MODE_MAZE:
@@ -1086,11 +1283,8 @@ func _sync_ball(index: int, radius: float, local_position: Vector3) -> void:
 	collision.shape = shape
 
 func _get_ball_plane_z(radius: float) -> float:
-	var back_contact_z: float = -box_depth_meters + radius
-	var front_contact_z: float = -radius
-	if back_contact_z <= front_contact_z:
-		return back_contact_z
-	return -box_depth_meters * 0.5
+	var back_contact_z: float = -_get_box_depth(_get_active_bounds_size()) + radius
+	return back_contact_z
 
 func _on_ball_body_entered(_other_body: Node, source_ball: RigidBody3D) -> void:
 	if source_ball == null or not is_instance_valid(source_ball):
@@ -1287,6 +1481,8 @@ func _read_desktop_mouse_tilt() -> Vector2:
 	return (normalized * max_gravity).limit_length(max_gravity)
 
 func _get_bounds_size() -> Vector2:
+	if _runtime_view_size_meters.x > 0.0 and _runtime_view_size_meters.y > 0.0:
+		return _runtime_view_size_meters
 	var bounds_node: Node = get_node_or_null(view_bounds_path)
 	if bounds_node != null and bounds_node.has_method("get_bounds_size_meters"):
 		var raw_size: Variant = bounds_node.call("get_bounds_size_meters")
@@ -1294,36 +1490,96 @@ func _get_bounds_size() -> Vector2:
 			return raw_size
 	return Vector2(8.0, 4.5)
 
+func _get_authored_bounds_size() -> Vector2:
+	var bounds_node: Node = get_node_or_null(view_bounds_path)
+	if bounds_node != null:
+		if bounds_node.has_method("get_authored_bounds_size_meters"):
+			var authored_size: Variant = bounds_node.call("get_authored_bounds_size_meters")
+			if authored_size is Vector2 and authored_size.x > 0.0 and authored_size.y > 0.0:
+				return authored_size
+		if _runtime_view_size_meters.x <= 0.0 and _runtime_view_size_meters.y <= 0.0 and bounds_node.has_method("get_bounds_size_meters"):
+			var raw_size: Variant = bounds_node.call("get_bounds_size_meters")
+			if raw_size is Vector2 and raw_size.x > 0.0 and raw_size.y > 0.0:
+				return raw_size
+	return Vector2(8.0, 4.5)
+
+func _get_active_bounds_size() -> Vector2:
+	if _last_bounds_size.x > 0.0 and _last_bounds_size.y > 0.0:
+		return _last_bounds_size
+	return _get_bounds_size()
+
+func _get_view_physical_scale(bounds_size: Vector2) -> float:
+	var authored_size: Vector2 = _get_authored_bounds_size()
+	if bounds_size.y <= 0.0 or authored_size.y <= 0.0:
+		return 1.0
+	return bounds_size.y / authored_size.y
+
+func _scale_authored_length(length_meters: float, bounds_size: Vector2) -> float:
+	if length_meters <= 0.0:
+		return 0.0
+	return length_meters * _get_view_physical_scale(bounds_size)
+
+func _get_box_depth(bounds_size: Vector2) -> float:
+	return maxf(_scale_authored_length(box_depth_meters, bounds_size), 0.001)
+
+func _get_wall_thickness(bounds_size: Vector2) -> float:
+	return maxf(_scale_authored_length(wall_thickness_meters, bounds_size), 0.0005)
+
+func _get_maze_wall_thickness(bounds_size: Vector2) -> float:
+	return maxf(_scale_authored_length(maze_wall_thickness_meters, bounds_size), 0.0005)
+
+func _get_wood_texture_tile_size() -> float:
+	return maxf(_scale_authored_length(wood_texture_tile_size_meters, _get_active_bounds_size()), 0.005)
+
+func _sync_view_bounds_runtime_size() -> void:
+	var bounds_node: Node = get_node_or_null(view_bounds_path)
+	if bounds_node == null:
+		return
+	if bounds_node.has_method("set_runtime_bounds_size_override_meters"):
+		bounds_node.call("set_runtime_bounds_size_override_meters", _runtime_view_size_meters)
+	elif bounds_node.has_method("set_runtime_window_size_meters"):
+		bounds_node.call("set_runtime_window_size_meters", _runtime_view_size_meters)
+
+func _bounds_size_equal(a: Vector2, b: Vector2) -> bool:
+	return absf(a.x - b.x) <= 0.0005 and absf(a.y - b.y) <= 0.0005
+
 func _get_ball_radius(bounds_size: Vector2) -> float:
 	if play_mode == MODE_MAZE and _maze_runtime_ball_radius_override > 0.0:
 		return _maze_runtime_ball_radius_override
-	var height_radius: float = bounds_size.y * ball_radius_ratio_of_bounds_height
-	var depth_radius: float = box_depth_meters * maximum_ball_radius_ratio_of_depth
-	var base_radius: float = minf(maximum_ball_radius_meters, minf(height_radius, depth_radius))
-	return maxf(0.01, base_radius * ball_size_multiplier)
+	return maxf(0.01, bounds_size.y * ball_radius_ratio_of_view_height)
 
 func set_ball_size_multiplier(multiplier: float) -> void:
-	ball_size_multiplier = clampf(multiplier, 0.5, 2.5)
-	_rebuild_if_ready(true)
+	var next_ratio: float = DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT * clampf(multiplier, 0.5, 4.0)
+	if is_equal_approx(ball_radius_ratio_of_view_height, next_ratio):
+		return
+	ball_radius_ratio_of_view_height = next_ratio
 
 func get_ball_size_multiplier() -> float:
-	return ball_size_multiplier
+	return ball_radius_ratio_of_view_height / DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT
 
 func set_cinematic_quality_lighting_enabled(enabled: bool) -> void:
+	if cinematic_quality_lighting_enabled == enabled:
+		return
 	cinematic_quality_lighting_enabled = enabled
 
 func is_cinematic_quality_lighting_enabled() -> bool:
 	return cinematic_quality_lighting_enabled
 
 func set_enhanced_graphics_quality(quality: int) -> void:
-	cinematic_quality_lighting_enabled = quality != ENHANCED_GRAPHICS_OFF
+	quality = clampi(quality, ENHANCED_GRAPHICS_OFF, ENHANCED_GRAPHICS_INSANE)
+	var next_enabled: bool = quality != ENHANCED_GRAPHICS_OFF
+	var next_level: int = cinematic_quality_level
 	match quality:
 		ENHANCED_GRAPHICS_INSANE:
-			cinematic_quality_level = CINEMATIC_QUALITY_INSANE
+			next_level = CINEMATIC_QUALITY_INSANE
 		ENHANCED_GRAPHICS_LOW:
-			cinematic_quality_level = CINEMATIC_QUALITY_LOW
+			next_level = CINEMATIC_QUALITY_LOW
 		_:
-			cinematic_quality_level = CINEMATIC_QUALITY_HIGH
+			next_level = CINEMATIC_QUALITY_HIGH
+	if cinematic_quality_lighting_enabled == next_enabled and cinematic_quality_level == next_level:
+		return
+	cinematic_quality_lighting_enabled = next_enabled
+	cinematic_quality_level = next_level
 	_sync_lighting()
 
 func get_enhanced_graphics_quality() -> int:
@@ -1342,7 +1598,7 @@ func _get_box_piece_material(piece_name: String, face_size: Vector2, is_back: bo
 		piece_name,
 		face_size.x,
 		face_size.y,
-		wood_plank_width_meters,
+		_get_wood_texture_tile_size(),
 		str(is_back),
 	]
 	if _box_piece_materials.has(material_key):
@@ -1392,6 +1648,17 @@ func _get_maze_goal_material() -> StandardMaterial3D:
 		_maze_goal_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return _maze_goal_material
 
+func _get_front_limiter_debug_material() -> StandardMaterial3D:
+	if _front_limiter_debug_material == null:
+		_front_limiter_debug_material = StandardMaterial3D.new()
+		_front_limiter_debug_material.resource_local_to_scene = true
+		_front_limiter_debug_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_front_limiter_debug_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_front_limiter_debug_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_front_limiter_debug_material.no_depth_test = true
+	_front_limiter_debug_material.albedo_color = front_limiter_debug_color
+	return _front_limiter_debug_material
+
 func _get_ball_material(index: int) -> StandardMaterial3D:
 	while _ball_materials.size() <= index:
 		var material: StandardMaterial3D = StandardMaterial3D.new()
@@ -1440,7 +1707,7 @@ func _make_wood_texture(dark: Color, light: Color, face_size: Vector2) -> ImageT
 	var pixels_per_meter: float = 52.0
 	var image_width: int = clampi(roundi(face_size.x * pixels_per_meter), 96, 512)
 	var image_height: int = clampi(roundi(face_size.y * pixels_per_meter), 96, 512)
-	var plank_count: int = maxi(3, roundi(face_size.x / maxf(wood_plank_width_meters, 0.01)))
+	var plank_count: int = maxi(3, roundi(face_size.x / FALLBACK_WOOD_PLANK_WIDTH_METERS))
 	var image: Image = Image.create(image_width, image_height, false, Image.FORMAT_RGBA8)
 	for y in range(image_height):
 		for x in range(image_width):

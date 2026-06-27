@@ -6,7 +6,7 @@
 [ext_resource type="Script" uid="uid://dxns726aueit5" path="res://analgyph_script.gd" id="5_fos0i"]
 [ext_resource type="Script" uid="uid://co7672yt3e3gk" path="res://open_track_client.gd" id="7_lgr22"]
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
-[ext_resource type="PackedScene" uid="uid://dnghk8l0qx7rm" path="res://Views/Unified Point Clouds/View.tscn" id="9_j4qnp"]
+[ext_resource type="PackedScene" uid="uid://bqye210twle25" path="res://Views/Tilt Ball Box/View.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
 [ext_resource type="Script" uid="uid://dgllwkw8ksktv" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
@@ -74,6 +74,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.25, 0)
 script = ExtResource("1_glv2v")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=1508845456]
+visible = false
 shape = SubResource("CapsuleShape3D_noarx")
 disabled = true
 
@@ -82,6 +83,7 @@ visible = false
 mesh = SubResource("CapsuleMesh_a0tk4")
 
 [node name="Head_Cam" type="Camera3D" parent="Player" unique_id=1849009951]
+visible = false
 projection = 2
 current = true
 script = ExtResource("2_r0du0")
@@ -152,6 +154,7 @@ explicit_view_scene_paths = PackedStringArray()
 camera_reactive_debug_status = "Off"
 current_view_name = "test_box.tscn"
 
+<<<<<<< HEAD
 [node name="EnhancedGraphicsEnvironment" type="WorldEnvironment" parent="View" unique_id=1992688370]
 
 [node name="EnhancedGraphicsKeyLight" type="DirectionalLight3D" parent="View" unique_id=666534515]
@@ -161,6 +164,17 @@ visible = false
 visible = false
 
 [node name="EnhancedGraphicsRimLight" type="DirectionalLight3D" parent="View" unique_id=1817373885]
+=======
+[node name="EnhancedGraphicsEnvironment" type="WorldEnvironment" parent="View" unique_id=1364561941]
+
+[node name="EnhancedGraphicsKeyLight" type="DirectionalLight3D" parent="View" unique_id=1879213950]
+visible = false
+
+[node name="EnhancedGraphicsFillLight" type="DirectionalLight3D" parent="View" unique_id=1260318199]
+visible = false
+
+[node name="EnhancedGraphicsRimLight" type="DirectionalLight3D" parent="View" unique_id=887733895]
+>>>>>>> 929072e (ball view proper scaling (but ball scaling broken I think))
 visible = false
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]

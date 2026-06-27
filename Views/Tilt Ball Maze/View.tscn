@@ -6,16 +6,21 @@
 [node name="Tilt Ball Maze" type="Node3D"]
 script = ExtResource("1_tilt_box")
 play_mode = 1
-box_depth_meters = 0.75
+box_depth_meters = 0.8
 screen_corner_radius_meters = 0.36
 screen_corner_radius_ratio_of_bounds_height = 0.17
-ball_count = 1
-ball_radius_ratio_of_bounds_height = 0.07
+ball_radius_ratio_of_view_height = 0.175
 ball_surface_friction = 0.58
+ball_bounce = 0.08
 maze_columns = 5
 maze_rows = 9
-maze_wall_thickness_meters = 0.055
+maze_wall_thickness_meters = 0.18
 maze_cell_clearance_ball_diameters = 1.35
+front_limiter_debug_color = Color(1, 1, 0, 0.0627451)
+cinematic_quality_lighting_enabled = true
+cinematic_quality_level = 2
+cinematic_shadow_opacity = 0.63
+cinematic_softbox_energy = 0.35
 
 [node name="ViewBounds" type="Node3D" parent="."]
 script = ExtResource("2_view_bounds")
@@ -27,6 +32,7 @@ bounds_width_meters = 8.0
 bounds_height_meters = 4.5
 show_preview_in_game = false
 preview_thickness_meters = 0.035
+black_fill_enabled = false
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.86273, 0.357407, -0.357407, -0.0789899, 0.793353, 0.603681, 0.49939, -0.492564, 0.712862, 0.0, 0.9, 1.2)

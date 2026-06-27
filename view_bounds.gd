@@ -105,7 +105,9 @@ var _last_black_fill_enabled: bool = false
 var _last_black_fill_extent: float = -1.0
 var _last_bounds_size_mode: int = -1
 var _last_runtime_window_size: Vector2 = Vector2.INF
+var _last_runtime_bounds_size_override: Vector2 = Vector2.INF
 var _runtime_window_size_meters: Vector2 = Vector2.ZERO
+var _runtime_bounds_size_override_meters: Vector2 = Vector2.ZERO
 var _is_applying_aspect_lock: bool = false
 
 func _enter_tree() -> void:
@@ -119,10 +121,15 @@ func _process(_delta: float) -> void:
 	_update_preview(false)
 
 func get_bounds_size_meters() -> Vector2:
+	if _runtime_bounds_size_override_meters.x > 0.0 and _runtime_bounds_size_override_meters.y > 0.0:
+		return _runtime_bounds_size_override_meters
 	if bounds_size_mode == 1 and bounds_height_meters > 0.0:
 		var runtime_aspect := _get_runtime_window_aspect()
 		if runtime_aspect > 0.0:
 			return Vector2(bounds_height_meters * runtime_aspect, bounds_height_meters)
+	return Vector2(bounds_width_meters, bounds_height_meters)
+
+func get_authored_bounds_size_meters() -> Vector2:
 	return Vector2(bounds_width_meters, bounds_height_meters)
 
 func should_affect_view_layout() -> bool:
@@ -132,6 +139,12 @@ func set_runtime_window_size_meters(size_meters: Vector2) -> void:
 	if _runtime_window_size_meters.is_equal_approx(size_meters):
 		return
 	_runtime_window_size_meters = size_meters
+	_update_preview(true)
+
+func set_runtime_bounds_size_override_meters(size_meters: Vector2) -> void:
+	if _runtime_bounds_size_override_meters.is_equal_approx(size_meters):
+		return
+	_runtime_bounds_size_override_meters = size_meters
 	_update_preview(true)
 
 func _apply_aspect_lock_from_driver() -> void:
@@ -186,6 +199,7 @@ func _update_preview(force: bool) -> void:
 		and is_equal_approx(black_fill_extent_meters, _last_black_fill_extent)
 		and bounds_size_mode == _last_bounds_size_mode
 		and _runtime_window_size_meters.is_equal_approx(_last_runtime_window_size)
+		and _runtime_bounds_size_override_meters.is_equal_approx(_last_runtime_bounds_size_override)
 	):
 		return
 
@@ -198,6 +212,7 @@ func _update_preview(force: bool) -> void:
 	_last_black_fill_extent = black_fill_extent_meters
 	_last_bounds_size_mode = bounds_size_mode
 	_last_runtime_window_size = _runtime_window_size_meters
+	_last_runtime_bounds_size_override = _runtime_bounds_size_override_meters
 
 	var half_width := width * 0.5
 	var half_height := height * 0.5
