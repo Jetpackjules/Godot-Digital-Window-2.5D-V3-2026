@@ -84,6 +84,8 @@ public:
     godot::Transform3D get_secondary_transform() const;
     void set_direct_realsense_enabled(bool p_enabled);
     bool get_direct_realsense_enabled() const;
+    void set_direct_realsense_serial(const godot::String &p_serial);
+    godot::String get_direct_realsense_serial() const;
     void set_direct_realsense_stream_profile(const godot::String &p_profile);
     godot::String get_direct_realsense_stream_profile() const;
     void set_direct_realsense_depth_source(const godot::String &p_source);
@@ -164,6 +166,7 @@ private:
     int current_stride = 1;
     godot::Vector4 current_intrinsics;
     bool direct_realsense_enabled = false;
+    godot::String direct_realsense_serial;
     godot::String direct_realsense_stream_profile = "viewer30";
     godot::String direct_realsense_depth_source = "sdk_depth";
     godot::String direct_realsense_fast_foundation_backend = "onnx_cuda";

@@ -2,6 +2,7 @@
 
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/vector4.hpp>
 
@@ -23,6 +24,9 @@ public:
 
     void set_stream_profile(const godot::String &p_profile);
     godot::String get_stream_profile() const;
+    void set_device_serial(const godot::String &p_serial);
+    godot::String get_device_serial() const;
+    godot::Array list_connected_devices() const;
     void set_stride(int p_stride);
     int get_stride() const;
     void set_color_output_enabled(bool p_enabled);
@@ -82,6 +86,7 @@ private:
     };
 
     godot::String stream_profile = "viewer30";
+    godot::String device_serial;
     int stride = 1;
     bool color_output_enabled = true;
     bool post_processing_enabled = false;

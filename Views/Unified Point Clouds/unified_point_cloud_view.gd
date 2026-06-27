@@ -2,6 +2,7 @@
 extends Node3D
 
 const CAMERA_REALSENSE := "realsense"
+const CAMERA_REALSENSE_PREFIX := "realsense:"
 const CAMERA_OAKD := "oakd"
 const CAMERA_IDS := [CAMERA_REALSENSE, CAMERA_OAKD]
 const BIG_ARUCO_MARKER_SIZE_M := 0.15
@@ -14,6 +15,8 @@ const RUNTIME_STREAM_OWNER_PATH := "user://godot_realsense_runtime_owner.json"
 const RUNTIME_STREAM_OWNER_TIMEOUT_MSEC := 2000
 const RUNTIME_STREAM_OWNER_WRITE_INTERVAL_MSEC := 250
 const RUNTIME_STREAM_OWNER_CHECK_INTERVAL_MSEC := 150
+const REALSENSE_SCAN_INTERVAL_MSEC := 2000
+const REALSENSE_DUPLICATE_SUFFIXES := ["A", "B", "C", "D", "E", "F", "G", "H"]
 
 @export_group("Workflow")
 ## UDP control port used by launch_web_stack.py. Performance impact: none unless changed to the wrong port.
@@ -128,12 +131,23 @@ const RUNTIME_STREAM_OWNER_CHECK_INTERVAL_MSEC := 150
 		_update_camera_renderers()
 
 @export_group("RealSense Camera")
+## Auto-detects RealSense devices by serial and creates one renderer per discovered camera. Settings are stored per serial in Realsense Device Registry.
+@export var realsense_auto_discover: bool = true:
+	set(value):
+		realsense_auto_discover = value
+		_refresh_realsense_devices(true)
+		_update_camera_renderers()
+## Serial-keyed RealSense settings. Each key is a physical camera serial; values persist per device.
+@export var realsense_device_registry: Dictionary = {}
+@export_multiline var realsense_devices_status: String = ""
 ## Enables the RealSense camera in this view. Performance impact: high when on because it captures and publishes a live depth grid.
 @export var realsense_enabled: bool = true:
 	set(value):
 		realsense_enabled = value
+		for camera_id in _realsense_camera_ids():
+			_set_realsense_setting(camera_id, "enabled", value, false)
 		_update_camera_renderers()
-		_send_camera_stream_command(CAMERA_REALSENSE, _streams_enabled() and value)
+		_send_all_stream_commands()
 @export_multiline var realsense_status: String = ""
 ## RealSense depth source. sdk_depth keeps the native RealSense SDK path; fast_foundation_native runs ONNX in the native extension; fast_foundation keeps the Python publisher fallback. Performance impact: high when FastFoundation is selected.
 @export_enum("sdk_depth", "fast_foundation_native", "fast_foundation") var realsense_depth_source: String = "sdk_depth":
@@ -445,11 +459,17 @@ var _runtime_stream_owner_path: String = ""
 var _last_runtime_owner_write_msec: int = 0
 var _last_runtime_owner_check_msec: int = -1000000
 var _runtime_stream_owner_blocks_editor_cached := false
+var _realsense_devices: Dictionary = {}
+var _realsense_camera_order: Array[String] = []
+var _realsense_labels: Dictionary = {}
+var _last_realsense_scan_msec: int = -1000000
+var _realsense_scan_helper: Object = null
 
 func _ready() -> void:
 	_point_cloud_stats_path = ProjectSettings.globalize_path("user://point_cloud_stream_stats.json")
 	_alignment_result_path = ProjectSettings.globalize_path("user://oakd_realsense_alignment.json")
 	_runtime_stream_owner_path = ProjectSettings.globalize_path(RUNTIME_STREAM_OWNER_PATH)
+	_refresh_realsense_devices(true)
 	if Engine.is_editor_hint():
 		_update_runtime_stream_owner_cache(true)
 	else:
@@ -474,6 +494,7 @@ func _exit_tree() -> void:
 
 func _process(_delta: float) -> void:
 	_update_runtime_stream_owner_state()
+	_refresh_realsense_devices(false)
 	_poll_point_cloud_stats()
 	_poll_alignment_result(false)
 	_update_camera_renderers()
@@ -531,9 +552,326 @@ func _apply_clean_defaults() -> void:
 	_send_all_stream_commands()
 	_update_camera_renderers()
 
+func _refresh_realsense_devices(force: bool) -> void:
+	if not realsense_auto_discover:
+		_realsense_devices.clear()
+		_realsense_camera_order.clear()
+		_realsense_labels.clear()
+		realsense_devices_status = "RealSense auto-discovery is disabled."
+		return
+	var now_msec := Time.get_ticks_msec()
+	if not force and now_msec - _last_realsense_scan_msec < REALSENSE_SCAN_INTERVAL_MSEC:
+		return
+	_last_realsense_scan_msec = now_msec
+	var discovered := _query_realsense_devices()
+	var next_devices: Dictionary = {}
+	var next_order: Array[String] = []
+	for device in discovered:
+		if not (device is Dictionary):
+			continue
+		var info := device as Dictionary
+		var serial := str(info.get("serial", "")).strip_edges()
+		if serial.is_empty():
+			continue
+		var camera_id := _realsense_camera_id(serial)
+		_ensure_realsense_registry_entry(serial, info)
+		next_devices[camera_id] = info
+		next_order.append(camera_id)
+	next_order.sort()
+	var order_changed := next_order != _realsense_camera_order
+	_realsense_devices = next_devices
+	_realsense_camera_order = next_order
+	_refresh_realsense_labels()
+	_update_realsense_devices_status(discovered)
+	if order_changed:
+		notify_property_list_changed()
+		_update_camera_renderers()
+		_update_debug_panel(true)
+
+func _query_realsense_devices() -> Array:
+	if not ClassDB.class_exists("RealSenseDirectFrameSource"):
+		return []
+	if _realsense_scan_helper == null or not is_instance_valid(_realsense_scan_helper):
+		_realsense_scan_helper = ClassDB.instantiate("RealSenseDirectFrameSource")
+	if _realsense_scan_helper == null or not _realsense_scan_helper.has_method("list_connected_devices"):
+		return []
+	var devices = _realsense_scan_helper.call("list_connected_devices")
+	return devices if devices is Array else []
+
+func _ensure_realsense_registry_entry(serial: String, info: Dictionary) -> void:
+	var settings: Dictionary = {}
+	if realsense_device_registry.has(serial) and realsense_device_registry[serial] is Dictionary:
+		settings = (realsense_device_registry[serial] as Dictionary).duplicate(true)
+	settings["serial"] = serial
+	settings["name"] = str(info.get("name", settings.get("name", "")))
+	settings["product_id"] = str(info.get("product_id", settings.get("product_id", "")))
+	settings["firmware"] = str(info.get("firmware", settings.get("firmware", "")))
+	settings["physical_port"] = str(info.get("physical_port", settings.get("physical_port", "")))
+	settings["model"] = _realsense_model_name(settings)
+	_realsense_default_setting(settings, "enabled", realsense_enabled)
+	_realsense_default_setting(settings, "depth_source", realsense_depth_source)
+	_realsense_default_setting(settings, "stream_profile", realsense_stream_profile)
+	_realsense_default_setting(settings, "stride", realsense_stride)
+	_realsense_default_setting(settings, "color_enabled", realsense_color_enabled)
+	_realsense_default_setting(settings, "depth_filters_enabled", realsense_depth_filters_enabled)
+	_realsense_default_setting(settings, "filters_for_geometry", realsense_filters_for_geometry)
+	_realsense_default_setting(settings, "geometry_edge_guard_m", realsense_geometry_edge_guard_m)
+	_realsense_default_setting(settings, "hole_filling", realsense_hole_filling)
+	_realsense_default_setting(settings, "stabilization_enabled", realsense_stabilization_enabled)
+	_realsense_default_setting(settings, "stabilization_deadband_m", realsense_stabilization_deadband_m)
+	_realsense_default_setting(settings, "stabilization_hold_frames", realsense_stabilization_hold_frames)
+	_realsense_default_setting(settings, "fast_backend", realsense_fast_backend)
+	_realsense_default_setting(settings, "fast_profile", realsense_fast_profile)
+	_realsense_default_setting(settings, "fast_iters", realsense_fast_iters)
+	_realsense_default_setting(settings, "fast_scale", realsense_fast_scale)
+	realsense_device_registry[serial] = settings
+
+func _realsense_default_setting(settings: Dictionary, key: String, value) -> void:
+	if not settings.has(key):
+		settings[key] = value
+
+func _realsense_model_name(settings: Dictionary) -> String:
+	var name := str(settings.get("name", ""))
+	var upper_name := name.to_upper()
+	var product_id := str(settings.get("product_id", "")).to_upper()
+	if product_id == "0B5C" or upper_name.find("455") >= 0:
+		return "D455"
+	if upper_name.find("435I") >= 0:
+		return "D435i"
+	if product_id == "0B07" or upper_name.find("435") >= 0:
+		return "D435"
+	if upper_name.find("415") >= 0:
+		return "D415"
+	if upper_name.find("405") >= 0:
+		return "D405"
+	var compact := name.replace("Intel(R)", "").replace("RealSense(TM)", "").replace("Depth Camera", "").replace("with RGB Module", "").strip_edges()
+	return compact if not compact.is_empty() else "Camera"
+
+func _refresh_realsense_labels() -> void:
+	_realsense_labels.clear()
+	var groups: Dictionary = {}
+	for camera_id in _realsense_camera_order:
+		var settings := _realsense_settings(camera_id)
+		var base_label := "RealSense %s" % str(settings.get("model", "Camera"))
+		if not groups.has(base_label):
+			groups[base_label] = []
+		(groups[base_label] as Array).append(camera_id)
+	for base_label in groups.keys():
+		var ids := groups[base_label] as Array
+		ids.sort()
+		for i in ids.size():
+			var suffix := ""
+			if ids.size() > 1:
+				suffix = " %s" % REALSENSE_DUPLICATE_SUFFIXES[mini(i, REALSENSE_DUPLICATE_SUFFIXES.size() - 1)]
+			_realsense_labels[str(ids[i])] = "%s%s" % [base_label, suffix]
+
+func _update_realsense_devices_status(raw_devices: Array) -> void:
+	if _realsense_camera_order.is_empty():
+		realsense_devices_status = "No RealSense devices discovered by librealsense."
+		realsense_status = realsense_devices_status
+		return
+	var lines: Array[String] = []
+	for camera_id in _realsense_camera_order:
+		var settings := _realsense_settings(camera_id)
+		lines.append("%s | serial=%s | firmware=%s" % [
+			_camera_label(camera_id),
+			str(settings.get("serial", _realsense_serial(camera_id))),
+			str(settings.get("firmware", "")),
+		])
+	realsense_devices_status = "\n".join(lines)
+
+func _realsense_camera_id(serial: String) -> String:
+	return "%s%s" % [CAMERA_REALSENSE_PREFIX, serial]
+
+func _is_realsense_camera(camera_id: String) -> bool:
+	return camera_id == CAMERA_REALSENSE or camera_id.begins_with(CAMERA_REALSENSE_PREFIX)
+
+func _realsense_serial(camera_id: String) -> String:
+	if camera_id.begins_with(CAMERA_REALSENSE_PREFIX):
+		return camera_id.substr(CAMERA_REALSENSE_PREFIX.length())
+	return ""
+
+func _realsense_camera_ids() -> Array[String]:
+	return _realsense_camera_order.duplicate()
+
+func _known_camera_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for camera_id in _realsense_camera_order:
+		ids.append(camera_id)
+	for camera_id in _camera_nodes.keys():
+		if camera_id is String and camera_id not in ids:
+			ids.append(camera_id)
+	if CAMERA_OAKD not in ids:
+		ids.append(CAMERA_OAKD)
+	return ids
+
+func _debug_camera_ids() -> Array[String]:
+	var ids := _known_camera_ids()
+	if CAMERA_OAKD in ids and not oakd_enabled and not _camera_nodes.has(CAMERA_OAKD):
+		ids.erase(CAMERA_OAKD)
+	return ids
+
+func _realsense_settings(camera_id: String) -> Dictionary:
+	var serial := _realsense_serial(camera_id)
+	if serial.is_empty() or not realsense_device_registry.has(serial) or not (realsense_device_registry[serial] is Dictionary):
+		return {}
+	return realsense_device_registry[serial] as Dictionary
+
+func _realsense_setting(camera_id: String, key: String, fallback):
+	var settings := _realsense_settings(camera_id)
+	return settings.get(key, fallback)
+
+func _set_realsense_setting(camera_id: String, key: String, value, refresh_renderers: bool = true) -> void:
+	var serial := _realsense_serial(camera_id)
+	if serial.is_empty():
+		return
+	var settings := _realsense_settings(camera_id).duplicate(true)
+	settings[key] = value
+	realsense_device_registry[serial] = settings
+	if refresh_renderers:
+		_update_camera_renderers()
+
+func _get_property_list() -> Array:
+	var properties: Array = []
+	if _realsense_camera_order.is_empty():
+		return properties
+	properties.append({
+		"name": "Discovered RealSense Cameras",
+		"type": TYPE_NIL,
+		"usage": PROPERTY_USAGE_GROUP,
+	})
+	for camera_id in _realsense_camera_order:
+		var serial := _realsense_serial(camera_id)
+		var prefix := "realsense/%s/" % serial
+		properties.append({
+			"name": "%slabel" % prefix,
+			"type": TYPE_STRING,
+			"usage": PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_READ_ONLY,
+		})
+		properties.append({
+			"name": "%senabled" % prefix,
+			"type": TYPE_BOOL,
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sstream_profile" % prefix,
+			"type": TYPE_STRING,
+			"hint": PROPERTY_HINT_ENUM,
+			"hint_string": "viewer30,fast60,highres30",
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sdepth_source" % prefix,
+			"type": TYPE_STRING,
+			"hint": PROPERTY_HINT_ENUM,
+			"hint_string": "sdk_depth,fast_foundation_native",
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sstride" % prefix,
+			"type": TYPE_INT,
+			"hint": PROPERTY_HINT_RANGE,
+			"hint_string": "1,8,1",
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%scolor_enabled" % prefix,
+			"type": TYPE_BOOL,
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sdepth_filters_enabled" % prefix,
+			"type": TYPE_BOOL,
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sfilters_for_geometry" % prefix,
+			"type": TYPE_BOOL,
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%shole_filling" % prefix,
+			"type": TYPE_INT,
+			"hint": PROPERTY_HINT_RANGE,
+			"hint_string": "0,2,1",
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sstabilization_enabled" % prefix,
+			"type": TYPE_BOOL,
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sstabilization_deadband_m" % prefix,
+			"type": TYPE_FLOAT,
+			"hint": PROPERTY_HINT_RANGE,
+			"hint_string": "0.0,0.06,0.001,suffix:m",
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+		properties.append({
+			"name": "%sstabilization_hold_frames" % prefix,
+			"type": TYPE_INT,
+			"hint": PROPERTY_HINT_RANGE,
+			"hint_string": "0,4,1",
+			"usage": PROPERTY_USAGE_DEFAULT,
+		})
+	return properties
+
+func _get(property: StringName):
+	var parts := _realsense_dynamic_property_parts(str(property))
+	if parts.is_empty():
+		return null
+	var camera_id := _realsense_camera_id(str(parts["serial"]))
+	var key := str(parts["key"])
+	if key == "label":
+		return _camera_label(camera_id)
+	return _realsense_setting(camera_id, key, null)
+
+func _set(property: StringName, value) -> bool:
+	var parts := _realsense_dynamic_property_parts(str(property))
+	if parts.is_empty():
+		return false
+	var key := str(parts["key"])
+	if key == "label":
+		return true
+	var camera_id := _realsense_camera_id(str(parts["serial"]))
+	match key:
+		"stream_profile":
+			if value not in ["viewer30", "fast60", "highres30"]:
+				value = "viewer30"
+		"depth_source":
+			if value not in ["sdk_depth", "fast_foundation_native"]:
+				value = "sdk_depth"
+		"stride":
+			value = maxi(1, int(value))
+		"hole_filling":
+			value = clampi(int(value), 0, 2)
+		"stabilization_deadband_m":
+			value = maxf(0.0, float(value))
+		"stabilization_hold_frames":
+			value = maxi(0, int(value))
+	_set_realsense_setting(camera_id, key, value)
+	_send_camera_stream_command(camera_id, _streams_enabled() and _camera_enabled(camera_id))
+	return true
+
+func _realsense_dynamic_property_parts(property: String) -> Dictionary:
+	if not property.begins_with("realsense/"):
+		return {}
+	var parts := property.split("/")
+	if parts.size() != 3:
+		return {}
+	var serial := str(parts[1]).strip_edges()
+	var key := str(parts[2]).strip_edges()
+	if serial.is_empty() or key.is_empty():
+		return {}
+	return {
+		"serial": serial,
+		"key": key,
+	}
+
 func _camera_enabled(camera_id: String) -> bool:
-	if camera_id == CAMERA_REALSENSE:
-		return realsense_enabled
+	if _is_realsense_camera(camera_id):
+		return bool(_realsense_setting(camera_id, "enabled", realsense_enabled))
 	if camera_id == CAMERA_OAKD:
 		return oakd_enabled
 	return false
@@ -543,7 +881,7 @@ func _editor_live_stream_allowed() -> bool:
 		return true
 	if _runtime_stream_owner_blocks_editor():
 		return false
-	if get_tree() == null:
+	if not is_inside_tree() or get_tree() == null:
 		return false
 	var edited_root := get_tree().edited_scene_root
 	if edited_root == self:
@@ -660,20 +998,22 @@ func _clear_runtime_stream_owner() -> void:
 	DirAccess.remove_absolute(_runtime_stream_owner_path)
 
 func _camera_stride(camera_id: String) -> int:
-	if camera_id == CAMERA_REALSENSE:
-		return maxi(1, realsense_stride)
+	if _is_realsense_camera(camera_id):
+		return maxi(1, int(_realsense_setting(camera_id, "stride", realsense_stride)))
 	if camera_id == CAMERA_OAKD:
 		return maxi(1, oakd_stride)
 	return 1
 
 func _camera_color_enabled(camera_id: String) -> bool:
-	if camera_id == CAMERA_REALSENSE:
-		return realsense_color_enabled
+	if _is_realsense_camera(camera_id):
+		return bool(_realsense_setting(camera_id, "color_enabled", realsense_color_enabled))
 	if camera_id == CAMERA_OAKD:
 		return oakd_color_enabled
 	return true
 
 func _camera_label(camera_id: String) -> String:
+	if camera_id.begins_with(CAMERA_REALSENSE_PREFIX):
+		return str(_realsense_labels.get(camera_id, "RealSense %s" % _realsense_serial(camera_id)))
 	if camera_id == CAMERA_REALSENSE:
 		return "RealSense"
 	if camera_id == CAMERA_OAKD:
@@ -684,6 +1024,8 @@ func _camera_stats_key(camera_id: String) -> String:
 	return camera_id
 
 func _camera_shm_name(camera_id: String) -> String:
+	if camera_id.begins_with(CAMERA_REALSENSE_PREFIX):
+		return "realsense_%s_point_cloud_grid" % _realsense_serial(camera_id)
 	if camera_id == CAMERA_REALSENSE:
 		return "realsense_point_cloud_grid"
 	if camera_id == CAMERA_OAKD:
@@ -691,9 +1033,12 @@ func _camera_shm_name(camera_id: String) -> String:
 	return "%s_point_cloud_grid" % camera_id
 
 func _camera_node_name(camera_id: String) -> String:
-	return "%sUnifiedPointCloud" % _camera_label(camera_id).replace("-", "").replace(" ", "")
+	var safe_id := camera_id.replace(":", "_").replace("-", "_").replace(" ", "_")
+	return "%sUnifiedPointCloud" % safe_id.to_pascal_case()
 
 func _camera_anchor_name(camera_id: String) -> String:
+	if camera_id.begins_with(CAMERA_REALSENSE_PREFIX):
+		return "RealSense%sCloudAnchor" % _realsense_serial(camera_id)
 	if camera_id == CAMERA_REALSENSE:
 		return "RealSenseCloudAnchor"
 	if camera_id == CAMERA_OAKD:
@@ -725,8 +1070,10 @@ func _tracker_mesh_mode() -> String:
 		return "stereo_cpu"
 	return "gpu_points"
 
-func _direct_realsense_filter_config() -> Dictionary:
-	var native_filters_enabled := realsense_depth_filters_enabled or realsense_filters_for_geometry
+func _direct_realsense_filter_config(camera_id: String = CAMERA_REALSENSE) -> Dictionary:
+	var depth_filters_enabled := bool(_realsense_setting(camera_id, "depth_filters_enabled", realsense_depth_filters_enabled))
+	var filters_for_geometry := bool(_realsense_setting(camera_id, "filters_for_geometry", realsense_filters_for_geometry))
+	var native_filters_enabled := depth_filters_enabled or filters_for_geometry
 	return {
 		"post_processing_enabled": native_filters_enabled,
 		"decimation_filter_enabled": realsense_decimation_filter_enabled,
@@ -740,7 +1087,7 @@ func _direct_realsense_filter_config() -> Dictionary:
 		"temporal_filter_enabled": realsense_temporal_filter_enabled,
 		"hole_filling_filter_enabled": realsense_hole_filling_filter_enabled,
 		"disparity_to_depth_filter_enabled": realsense_disparity_to_depth_filter_enabled,
-		"hole_filling_mode": realsense_hole_filling,
+		"hole_filling_mode": int(_realsense_setting(camera_id, "hole_filling", realsense_hole_filling)),
 	}
 
 func _effective_oakd_color_mode() -> String:
@@ -782,7 +1129,7 @@ func _send_all_stream_commands(force_enabled = null) -> void:
 	var active := _streams_enabled() if force_enabled == null else bool(force_enabled)
 	if not active and not _stream_commands_active:
 		return
-	for camera_id in CAMERA_IDS:
+	for camera_id in _known_camera_ids():
 		_send_camera_stream_command(camera_id, active and _camera_enabled(camera_id))
 	_stream_commands_active = active
 
@@ -804,6 +1151,8 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 		"transport": "shm",
 		"shm_color_format": "bgr",
 	}
+	if camera_id.begins_with(CAMERA_REALSENSE_PREFIX):
+		return
 	if camera_id == CAMERA_REALSENSE:
 		payload.merge({
 			"type": "realsense_point_cloud",
@@ -868,20 +1217,30 @@ func _send_camera_stream_command(camera_id: String, enabled: bool) -> void:
 	_send_udp(payload)
 
 func _realsense_direct_renderer_available() -> bool:
-	var node := _camera_nodes.get(CAMERA_REALSENSE) as Node
+	return not _realsense_camera_order.is_empty()
+
+func _realsense_direct_renderer_available_for(camera_id: String) -> bool:
+	var node := _camera_nodes.get(camera_id) as Node
 	if node == null or not is_instance_valid(node):
-		node = _find_camera_renderer(CAMERA_REALSENSE)
+		node = _find_camera_renderer(camera_id)
 	return node != null and node.has_method("set_direct_realsense_enabled")
 
-func _realsense_direct_capture_active() -> bool:
+func _realsense_direct_capture_active(camera_id: String = CAMERA_REALSENSE) -> bool:
+	if camera_id.begins_with(CAMERA_REALSENSE_PREFIX):
+		var source := str(_realsense_setting(camera_id, "depth_source", realsense_depth_source))
+		return source in ["sdk_depth", "fast_foundation_native"] and _realsense_direct_renderer_available_for(camera_id)
 	return realsense_depth_source in ["sdk_depth", "fast_foundation_native"] and _realsense_direct_renderer_available()
 
 func _update_realsense_direct_status() -> void:
-	var node := _camera_nodes.get(CAMERA_REALSENSE) as Node
-	if node == null or not is_instance_valid(node):
-		node = _find_camera_renderer(CAMERA_REALSENSE)
-	if node != null and node.has_method("get_direct_realsense_status"):
-		realsense_status = str(node.call("get_direct_realsense_status"))
+	var lines: Array[String] = []
+	for camera_id in _realsense_camera_order:
+		var node := _camera_nodes.get(camera_id) as Node
+		if node == null or not is_instance_valid(node):
+			node = _find_camera_renderer(camera_id)
+		if node != null and node.has_method("get_direct_realsense_status"):
+			lines.append("%s: %s" % [_camera_label(camera_id), str(node.call("get_direct_realsense_status"))])
+	if not lines.is_empty():
+		realsense_status = "\n\n".join(lines)
 
 func _request_oakd_restart() -> void:
 	if _point_cloud_stats_path.is_empty():
@@ -935,7 +1294,7 @@ func _request_realsense_restart() -> void:
 
 func _ensure_scene_anchors() -> void:
 	_camera_clouds_node(true)
-	for camera_id in CAMERA_IDS:
+	for camera_id in _known_camera_ids():
 		_camera_anchor(camera_id, true)
 	_debug_panel_anchor(true)
 
@@ -971,19 +1330,21 @@ func _debug_panel_anchor(create: bool) -> Node3D:
 	return anchor
 
 func _assign_editor_owner(node: Node) -> void:
-	if not Engine.is_editor_hint() or get_tree() == null:
+	if not Engine.is_editor_hint() or not is_inside_tree() or get_tree() == null:
 		return
 	var scene_root := get_tree().edited_scene_root
 	if scene_root == self and (node == scene_root or scene_root.is_ancestor_of(node)):
 		node.owner = scene_root
 
 func _update_camera_renderers() -> void:
+	if not is_inside_tree():
+		return
 	if not ClassDB.class_exists("RealSenseSharedMemoryPointCloud"):
 		if not _native_missing_warned:
 			_native_missing_warned = true
 			push_warning("RealSenseSharedMemoryPointCloud native extension is unavailable; unified point-cloud view needs the native SHM renderer.")
 		return
-	for camera_id in CAMERA_IDS:
+	for camera_id in _known_camera_ids():
 		if _camera_enabled(camera_id):
 			_ensure_camera_renderer(camera_id)
 		else:
@@ -1011,7 +1372,7 @@ func _free_camera_renderer(camera_id: String) -> void:
 	if node == null or not is_instance_valid(node):
 		node = _find_camera_renderer(camera_id)
 	if node != null:
-		if camera_id == CAMERA_REALSENSE and node.has_method("set_direct_realsense_enabled"):
+		if _is_realsense_camera(camera_id) and node.has_method("set_direct_realsense_enabled"):
 			node.call("set_direct_realsense_enabled", false)
 		node.queue_free()
 	_camera_nodes.erase(camera_id)
@@ -1058,21 +1419,24 @@ func _apply_camera_renderer_settings(camera_id: String, node: MeshInstance3D) ->
 		node.call("set_gpu_mesh_compute_indices", _gpu_mesh_compute_enabled())
 	if node.has_method("set_gpu_mesh_static_shader"):
 		node.call("set_gpu_mesh_static_shader", _gpu_mesh_static_shader_enabled())
-	if camera_id == CAMERA_REALSENSE and node.has_method("set_direct_realsense_enabled"):
-		node.call("set_direct_realsense_stream_profile", realsense_stream_profile)
+	if _is_realsense_camera(camera_id) and node.has_method("set_direct_realsense_enabled"):
+		var depth_source := str(_realsense_setting(camera_id, "depth_source", realsense_depth_source))
+		var native_depth_source := "fast_foundation_native" if depth_source == "fast_foundation_native" else "sdk_depth"
+		if node.has_method("set_direct_realsense_serial"):
+			node.call("set_direct_realsense_serial", _realsense_serial(camera_id))
+		node.call("set_direct_realsense_stream_profile", str(_realsense_setting(camera_id, "stream_profile", realsense_stream_profile)))
 		if node.has_method("set_direct_realsense_depth_source"):
-			var native_depth_source := "fast_foundation_native" if realsense_depth_source == "fast_foundation_native" else "sdk_depth"
 			node.call("set_direct_realsense_depth_source", native_depth_source)
 		if node.has_method("set_direct_realsense_fast_foundation_backend"):
-			node.call("set_direct_realsense_fast_foundation_backend", realsense_fast_backend)
+			node.call("set_direct_realsense_fast_foundation_backend", str(_realsense_setting(camera_id, "fast_backend", realsense_fast_backend)))
 		if node.has_method("set_direct_realsense_fast_foundation_profile"):
-			node.call("set_direct_realsense_fast_foundation_profile", realsense_fast_profile)
-		node.call("set_direct_realsense_stride", realsense_stride)
+			node.call("set_direct_realsense_fast_foundation_profile", str(_realsense_setting(camera_id, "fast_profile", realsense_fast_profile)))
+		node.call("set_direct_realsense_stride", _camera_stride(camera_id))
 		if node.has_method("set_direct_realsense_filter_config"):
-			node.call("set_direct_realsense_filter_config", _direct_realsense_filter_config())
-		node.call("set_direct_realsense_enabled", _streams_enabled() and realsense_enabled and (realsense_depth_source in ["sdk_depth", "fast_foundation_native"]))
+			node.call("set_direct_realsense_filter_config", _direct_realsense_filter_config(camera_id))
+		node.call("set_direct_realsense_enabled", _streams_enabled() and _camera_enabled(camera_id) and (depth_source in ["sdk_depth", "fast_foundation_native"]))
 		if node.has_method("get_direct_realsense_status"):
-			realsense_status = str(node.call("get_direct_realsense_status"))
+			realsense_status = "%s: %s" % [_camera_label(camera_id), str(node.call("get_direct_realsense_status"))]
 
 func _request_big_aruco_alignment() -> void:
 	if _alignment_result_path.is_empty():
@@ -1275,7 +1639,7 @@ func _rebuild_debug_table() -> void:
 	vbox.add_child(grid)
 	for header in ["Camera", "Cap", "Pub", "Disp", "Dev", "Host", "Work", "Frame", "Held", "Pts/Tri"]:
 		grid.add_child(_debug_cell(header, "", true))
-	for camera_id in CAMERA_IDS:
+	for camera_id in _debug_camera_ids():
 		grid.add_child(_debug_cell(_camera_label(camera_id), "", false, true))
 		for metric in ["cap", "pub", "render", "device_age", "host_age", "work", "frame", "held", "points_tris"]:
 			grid.add_child(_debug_cell("--", "%s_%s" % [camera_id, metric]))
@@ -1326,7 +1690,8 @@ func _update_debug_panel(force: bool) -> void:
 	var work_values := []
 	var frame_age_values := []
 	var held_age_values := []
-	for camera_id in CAMERA_IDS:
+	var debug_ids := _debug_camera_ids()
+	for camera_id in debug_ids:
 		var values := _camera_debug_values(camera_id)
 		_set_debug_cell("%s_cap" % camera_id, _format_fps(float(values["cap"])))
 		_set_debug_cell("%s_pub" % camera_id, _format_fps(float(values["pub"])))
@@ -1358,14 +1723,16 @@ func _update_debug_panel(force: bool) -> void:
 	_set_debug_cell("total_frame", _format_ms(_max_nonzero(frame_age_values)))
 	_set_debug_cell("total_held", _format_ms(_max_nonzero(held_age_values)))
 	_set_debug_cell("total_points_tris", "%s/%s" % [_format_points(total_render_points), _format_points(total_tris)])
-	debug_text = "RealSense cap/pub/render %.1f/%.1f/%.1f, OAK-D cap/pub/render %.1f/%.1f/%.1f" % [
-		float(_camera_debug_values(CAMERA_REALSENSE)["cap"]),
-		float(_camera_debug_values(CAMERA_REALSENSE)["pub"]),
-		float(_camera_debug_values(CAMERA_REALSENSE)["render"]),
-		float(_camera_debug_values(CAMERA_OAKD)["cap"]),
-		float(_camera_debug_values(CAMERA_OAKD)["pub"]),
-		float(_camera_debug_values(CAMERA_OAKD)["render"]),
-	]
+	var summaries: Array[String] = []
+	for camera_id in debug_ids:
+		var values := _camera_debug_values(camera_id)
+		summaries.append("%s %.1f/%.1f/%.1f" % [
+			_camera_label(camera_id),
+			float(values["cap"]),
+			float(values["pub"]),
+			float(values["render"]),
+		])
+	debug_text = ", ".join(summaries)
 
 func _camera_debug_values(camera_id: String) -> Dictionary:
 	var stats: Dictionary = _point_cloud_stats.get(_camera_stats_key(camera_id), {})
@@ -1376,7 +1743,7 @@ func _camera_debug_values(camera_id: String) -> Dictionary:
 		work_age += float(fast_timing.get(key, 0.0))
 	var native_render_fps := _native_stat(camera_id, "get_render_fps")
 	var native_direct_capture_fps := 0.0
-	if camera_id == CAMERA_REALSENSE and _realsense_direct_capture_active():
+	if _is_realsense_camera(camera_id) and _realsense_direct_capture_active(camera_id):
 		native_direct_capture_fps = _native_stat(camera_id, "get_direct_realsense_capture_fps")
 		var direct_cap := native_direct_capture_fps if native_direct_capture_fps > 0.01 else native_render_fps
 		return {

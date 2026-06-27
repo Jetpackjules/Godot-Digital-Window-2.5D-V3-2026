@@ -199,11 +199,7 @@ func _ready() -> void:
 	set_process_unhandled_input(true)
 	
 	for child in get_children():
-<<<<<<< HEAD
-		if child is Node3D and not _is_switcher_internal_child(child):
-=======
 		if child is Node3D and not _is_view_switcher_helper_child(child):
->>>>>>> 929072e (ball view proper scaling (but ball scaling broken I think))
 			_instantiated_view = child
 			break
 

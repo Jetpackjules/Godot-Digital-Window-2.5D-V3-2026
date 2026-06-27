@@ -104,6 +104,8 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_secondary_transform"), &RealSenseSharedMemoryPointCloud::get_secondary_transform);
     ClassDB::bind_method(D_METHOD("set_direct_realsense_enabled", "enabled"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_enabled);
     ClassDB::bind_method(D_METHOD("get_direct_realsense_enabled"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_enabled);
+    ClassDB::bind_method(D_METHOD("set_direct_realsense_serial", "serial"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_serial);
+    ClassDB::bind_method(D_METHOD("get_direct_realsense_serial"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_serial);
     ClassDB::bind_method(D_METHOD("set_direct_realsense_stream_profile", "profile"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_stream_profile);
     ClassDB::bind_method(D_METHOD("get_direct_realsense_stream_profile"), &RealSenseSharedMemoryPointCloud::get_direct_realsense_stream_profile);
     ClassDB::bind_method(D_METHOD("set_direct_realsense_depth_source", "source"), &RealSenseSharedMemoryPointCloud::set_direct_realsense_depth_source);
@@ -153,6 +155,7 @@ void RealSenseSharedMemoryPointCloud::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "secondary_shared_memory_name"), "set_secondary_shared_memory_name", "get_secondary_shared_memory_name");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "secondary_enabled"), "set_secondary_enabled", "get_secondary_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "direct_realsense_enabled"), "set_direct_realsense_enabled", "get_direct_realsense_enabled");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_serial"), "set_direct_realsense_serial", "get_direct_realsense_serial");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_stream_profile"), "set_direct_realsense_stream_profile", "get_direct_realsense_stream_profile");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_depth_source"), "set_direct_realsense_depth_source", "get_direct_realsense_depth_source");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "direct_realsense_fast_foundation_backend"), "set_direct_realsense_fast_foundation_backend", "get_direct_realsense_fast_foundation_backend");
@@ -167,6 +170,7 @@ void RealSenseSharedMemoryPointCloud::_ready() {
         if (direct_realsense.is_null()) {
             direct_realsense.instantiate();
         }
+        direct_realsense->set_device_serial(direct_realsense_serial);
         direct_realsense->set_stream_profile(direct_realsense_stream_profile);
         direct_realsense->set_depth_source(direct_realsense_depth_source);
         direct_realsense->set_fast_foundation_backend(direct_realsense_fast_foundation_backend);
@@ -196,6 +200,7 @@ void RealSenseSharedMemoryPointCloud::_process(double p_delta) {
         if (direct_realsense.is_null()) {
             direct_realsense.instantiate();
         }
+        direct_realsense->set_device_serial(direct_realsense_serial);
         direct_realsense->set_stream_profile(direct_realsense_stream_profile);
         direct_realsense->set_depth_source(direct_realsense_depth_source);
         direct_realsense->set_fast_foundation_backend(direct_realsense_fast_foundation_backend);
@@ -726,6 +731,29 @@ void RealSenseSharedMemoryPointCloud::set_direct_realsense_enabled(bool p_enable
 }
 
 bool RealSenseSharedMemoryPointCloud::get_direct_realsense_enabled() const { return direct_realsense_enabled; }
+
+void RealSenseSharedMemoryPointCloud::set_direct_realsense_serial(const String &p_serial) {
+    const String next = p_serial.strip_edges();
+    if (direct_realsense_serial == next) {
+        return;
+    }
+    direct_realsense_serial = next;
+    primary_history.clear();
+    set_mesh(Ref<Mesh>());
+    grid_width = 0;
+    grid_height = 0;
+    grid_stride = 0;
+    current_width = 0;
+    current_height = 0;
+    current_stride = 1;
+    current_intrinsics = Vector4();
+    if (direct_realsense.is_valid()) {
+        direct_realsense->set_device_serial(direct_realsense_serial);
+        direct_realsense_status = direct_realsense->get_status();
+    }
+}
+
+String RealSenseSharedMemoryPointCloud::get_direct_realsense_serial() const { return direct_realsense_serial; }
 
 void RealSenseSharedMemoryPointCloud::set_direct_realsense_stream_profile(const String &p_profile) {
     String next = p_profile.to_lower();

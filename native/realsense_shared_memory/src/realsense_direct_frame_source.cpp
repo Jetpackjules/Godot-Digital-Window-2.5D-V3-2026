@@ -2,6 +2,8 @@
 
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -201,6 +203,9 @@ RealSenseDirectFrameSource::~RealSenseDirectFrameSource() {
 }
 
 void RealSenseDirectFrameSource::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("set_device_serial", "serial"), &RealSenseDirectFrameSource::set_device_serial);
+    ClassDB::bind_method(D_METHOD("get_device_serial"), &RealSenseDirectFrameSource::get_device_serial);
+    ClassDB::bind_method(D_METHOD("list_connected_devices"), &RealSenseDirectFrameSource::list_connected_devices);
     ClassDB::bind_method(D_METHOD("set_stream_profile", "profile"), &RealSenseDirectFrameSource::set_stream_profile);
     ClassDB::bind_method(D_METHOD("get_stream_profile"), &RealSenseDirectFrameSource::get_stream_profile);
     ClassDB::bind_method(D_METHOD("set_stride", "stride"), &RealSenseDirectFrameSource::set_stride);
@@ -246,12 +251,63 @@ void RealSenseDirectFrameSource::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_status"), &RealSenseDirectFrameSource::get_status);
     ClassDB::bind_method(D_METHOD("get_filter_status"), &RealSenseDirectFrameSource::get_filter_status);
 
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "device_serial"), "set_device_serial", "get_device_serial");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "stream_profile"), "set_stream_profile", "get_stream_profile");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "stride"), "set_stride", "get_stride");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "depth_source"), "set_depth_source", "get_depth_source");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "fast_foundation_backend"), "set_fast_foundation_backend", "get_fast_foundation_backend");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "fast_foundation_profile"), "set_fast_foundation_profile", "get_fast_foundation_profile");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "fast_foundation_model_path"), "set_fast_foundation_model_path", "get_fast_foundation_model_path");
+}
+
+void RealSenseDirectFrameSource::set_device_serial(const String &p_serial) {
+    const String next = p_serial.strip_edges();
+    if (device_serial == next) {
+        return;
+    }
+    if (is_open()) {
+        close();
+    }
+    device_serial = next;
+}
+
+String RealSenseDirectFrameSource::get_device_serial() const {
+    return device_serial;
+}
+
+Array RealSenseDirectFrameSource::list_connected_devices() const {
+    Array devices_out;
+#ifdef REALSENSE_DIRECT_ENABLED
+    try {
+        rs2::context context;
+        rs2::device_list devices = context.query_devices();
+        for (uint32_t i = 0; i < devices.size(); ++i) {
+            rs2::device device = devices[i];
+            Dictionary info;
+            info["index"] = int(i);
+            auto read_info = [&device](rs2_camera_info p_info) -> String {
+                try {
+                    if (device.supports(p_info)) {
+                        return String(device.get_info(p_info));
+                    }
+                } catch (...) {
+                }
+                return String();
+            };
+            info["name"] = read_info(RS2_CAMERA_INFO_NAME);
+            info["serial"] = read_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+            info["product_id"] = read_info(RS2_CAMERA_INFO_PRODUCT_ID);
+            info["firmware"] = read_info(RS2_CAMERA_INFO_FIRMWARE_VERSION);
+            info["physical_port"] = read_info(RS2_CAMERA_INFO_PHYSICAL_PORT);
+            devices_out.append(info);
+        }
+    } catch (const rs2::error &e) {
+        UtilityFunctions::push_warning(String("RealSense device discovery failed: ") + e.what());
+    } catch (const std::exception &e) {
+        UtilityFunctions::push_warning(String("RealSense device discovery failed: ") + e.what());
+    }
+#endif
+    return devices_out;
 }
 
 RealSenseDirectFrameSource::StreamSettings RealSenseDirectFrameSource::resolve_stream_settings() const {
@@ -657,6 +713,9 @@ bool RealSenseDirectFrameSource::open() {
         reset_post_processing_filters();
         const StreamSettings settings = resolve_stream_settings();
         rs2::config config;
+        if (!device_serial.is_empty()) {
+            config.enable_device(std::string(device_serial.utf8().get_data()));
+        }
         if (is_fast_foundation_source()) {
             config.enable_stream(RS2_STREAM_INFRARED, 1, settings.depth_width, settings.depth_height, RS2_FORMAT_Y8, settings.depth_fps);
             config.enable_stream(RS2_STREAM_INFRARED, 2, settings.depth_width, settings.depth_height, RS2_FORMAT_Y8, settings.depth_fps);
@@ -690,6 +749,9 @@ bool RealSenseDirectFrameSource::open() {
         }
         opened = true;
         status = String("RealSense direct capture active: ") + stream_profile + " source=" + depth_source;
+        if (!device_serial.is_empty()) {
+            status += " serial=" + device_serial;
+        }
         UtilityFunctions::print(status);
         return true;
     } catch (const rs2::error &e) {
