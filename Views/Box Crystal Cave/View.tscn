@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Views/Box Scenes/box_scene_view.gd" id="1_box"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="2_bounds"]
+
+[node name="Box Crystal Cave" type="Node3D"]
+script = ExtResource("1_box")
+scene_style = 3
+
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("2_bounds")
+bounds_width_meters = 0.587
+bounds_height_meters = 0.33
+show_preview_in_game = false

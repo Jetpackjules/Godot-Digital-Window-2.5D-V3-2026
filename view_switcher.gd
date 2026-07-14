@@ -1,23 +1,54 @@
 @tool
 extends Node3D
 
+signal available_views_changed
+signal current_view_changed(index: int, view_name: String)
+signal graphics_quality_changed(selected_profile: int, effective_profile: int)
+signal view_performance_sampled(metrics: Dictionary)
+signal view_load_started(index: int, view_name: String)
+signal view_load_finished(index: int, view_name: String, success: bool)
+
 @export var fallback_directional_light_path: NodePath
 @export var fallback_world_environment_path: NodePath
 @export var screen_scaling_path: NodePath = NodePath("../ScreenScaling")
 @export var window_center_path: NodePath
+@export var viewer_camera_path: NodePath
 @export var current_view_scene: PackedScene
+@export var view_catalog: ViewCatalog
 @export var explicit_view_scene_paths: PackedStringArray = []
 @export var log_view_loads: bool = true
 @export_enum("Fit Height", "Cover Screen", "Contain Screen", "Fit Width", "No Scaling") var view_scale_mode: int = 0
+@export_enum("Scene Preferred", "Viewer Scaled Authored") var view_scale_handling_mode: int = 0 :
+	set(value):
+		_set_view_scale_handling_mode(value)
+	get:
+		return _view_scale_handling_mode
 @export_range(0.5, 1.2, 0.005) var view_scale_multiplier: float = 1.0 :
 	set(value):
 		view_scale_multiplier = clampf(value, 0.5, 1.2)
 		_last_applied_view_scale = -1.0
 		_apply_view_scale(true)
+@export_group("Scene Cache")
+@export var adjacent_scene_cache_enabled: bool = true :
+	set(value):
+		if adjacent_scene_cache_enabled == value:
+			return
+		adjacent_scene_cache_enabled = value
+		if adjacent_scene_cache_enabled:
+			_schedule_adjacent_scene_cache()
+		else:
+			_clear_scene_resource_cache()
+@export var log_view_performance: bool = false
 @export var black_fill_enabled: bool = true :
 	set(value):
 		black_fill_enabled = value
 		_sync_view_bounds_black_fill()
+@export var scene_shadows_enabled: bool = false :
+	set(value):
+		if scene_shadows_enabled == value:
+			return
+		scene_shadows_enabled = value
+		_sync_scene_shadows()
 @export var view_bounds_preview_enabled: bool = false :
 	set(value):
 		view_bounds_preview_enabled = value
@@ -57,34 +88,16 @@ extends Node3D
 @export_group("Screen Plane Reference")
 @export var desktop_screen_plane_reference_cycle_enabled: bool = true
 @export var desktop_screen_plane_reference_cycle_key: Key = KEY_V
-@export_group("Enhanced Graphics")
-@export_enum("Off", "Low", "High", "Insane") var enhanced_graphics_quality: int = 0 :
+@export_group("Graphics")
+@export_enum("Auto", "Battery", "Balanced", "Quality", "Showcase") var enhanced_graphics_quality: int = 0 :
 	set(value):
-		enhanced_graphics_quality = clampi(value, ENHANCED_GRAPHICS_OFF, ENHANCED_GRAPHICS_INSANE)
+		enhanced_graphics_quality = clampi(value, GRAPHICS_PROFILE_AUTO, GRAPHICS_PROFILE_SHOWCASE)
+		_update_effective_graphics_profile(true)
 		_sync_enhanced_graphics()
-@export var camera_reactive_lighting_enabled: bool = false :
+@export_enum("Off", "Soft Studio", "Punchy Studio") var studio_lighting_mode: int = 0 :
 	set(value):
-		camera_reactive_lighting_enabled = value
+		studio_lighting_mode = clampi(value, STUDIO_LIGHTING_OFF, STUDIO_LIGHTING_PUNCHY)
 		_sync_enhanced_graphics()
-		_sync_shared_camera_reactive_lighting()
-@export_enum("Grid Lights", "Projected Feed") var camera_reactive_lighting_mode: int = 0 :
-	set(value):
-		camera_reactive_lighting_mode = clampi(value, CAMERA_REACTIVE_MODE_GRID_LIGHTS, CAMERA_REACTIVE_MODE_PROJECTED_FEED)
-		_sync_shared_camera_reactive_lighting()
-@export_enum("Flashlight", "2x2 Strong Colors") var editor_camera_reactive_test_frame: int = 0 :
-	set(value):
-		editor_camera_reactive_test_frame = clampi(value, CAMERA_REACTIVE_EDITOR_TEST_FLASHLIGHT, CAMERA_REACTIVE_EDITOR_TEST_COLORS)
-		_editor_camera_reactive_test_texture = null
-		_sync_shared_camera_reactive_lighting()
-@export var editor_camera_reactive_preview_plane_visible: bool = false :
-	set(value):
-		editor_camera_reactive_preview_plane_visible = value
-		_sync_shared_camera_reactive_lighting()
-@export var editor_camera_reactive_light_debug_visible: bool = true :
-	set(value):
-		editor_camera_reactive_light_debug_visible = value
-		_sync_shared_camera_reactive_lighting()
-@export var camera_reactive_debug_status: String = ""
 
 const AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS := 0.3299948403966754
 const VIEW_SCALE_FIT_HEIGHT := 0
@@ -92,6 +105,8 @@ const VIEW_SCALE_COVER_SCREEN := 1
 const VIEW_SCALE_CONTAIN_SCREEN := 2
 const VIEW_SCALE_FIT_WIDTH := 3
 const VIEW_SCALE_NO_SCALING := 4
+const VIEW_SCALE_HANDLING_SCENE_PREFERRED := 0
+const VIEW_SCALE_HANDLING_VIEWER_SCALED_AUTHORED := 1
 const VIEW_SCALE_MODE_NAMES := [
 	"Fit Height",
 	"Cover Screen",
@@ -99,24 +114,28 @@ const VIEW_SCALE_MODE_NAMES := [
 	"Fit Width",
 	"No Scaling",
 ]
+const VIEW_SCALE_HANDLING_MODE_NAMES := [
+	"Scene Preferred",
+	"Viewer Scaled Authored",
+]
 const SCREEN_PLANE_REFERENCE_SCRIPT_PATH := "res://screen_plane_reference.gd"
 const SCREEN_REFERENCE_MODE_OFF := 0
 const SCREEN_REFERENCE_MODE_VERTICAL_BARS := 1
 const SCREEN_REFERENCE_MODE_EDGE_FRAME := 2
 const SCREEN_REFERENCE_MODE_CROSSHAIR := 3
 const SCREEN_REFERENCE_MODE_THIRDS_GRID := 4
-const ENHANCED_GRAPHICS_OFF := 0
-const ENHANCED_GRAPHICS_LOW := 1
-const ENHANCED_GRAPHICS_HIGH := 2
-const ENHANCED_GRAPHICS_INSANE := 3
-const CAMERA_REACTIVE_MODE_GRID_LIGHTS := 0
-const CAMERA_REACTIVE_MODE_PROJECTED_FEED := 1
-const CAMERA_REACTIVE_EDITOR_TEST_FLASHLIGHT := 0
-const CAMERA_REACTIVE_EDITOR_TEST_COLORS := 1
-const CAMERA_REACTIVE_LIGHTING_MODE_NAMES := [
-	"Grid Lights",
-	"Projected Feed",
-]
+const GRAPHICS_PROFILE_AUTO := 0
+const GRAPHICS_PROFILE_BATTERY := 1
+const GRAPHICS_PROFILE_BALANCED := 2
+const GRAPHICS_PROFILE_QUALITY := 3
+const GRAPHICS_PROFILE_SHOWCASE := 4
+const SCENE_GRAPHICS_OFF := 0
+const SCENE_GRAPHICS_LOW := 1
+const SCENE_GRAPHICS_HIGH := 2
+const SCENE_GRAPHICS_INSANE := 3
+const STUDIO_LIGHTING_OFF := 0
+const STUDIO_LIGHTING_SOFT := 1
+const STUDIO_LIGHTING_PUNCHY := 2
 const SCREEN_REFERENCE_MODE_NAMES := [
 	"Off",
 	"Vertical Bars",
@@ -125,22 +144,28 @@ const SCREEN_REFERENCE_MODE_NAMES := [
 	"Thirds Grid",
 ]
 const ENHANCED_GRAPHICS_QUALITY_NAMES := [
+	"Auto",
+	"Battery",
+	"Balanced",
+	"Quality",
+	"Showcase",
+]
+const STUDIO_LIGHTING_MODE_NAMES := [
 	"Off",
-	"Low",
-	"High",
-	"Insane",
+	"Soft Studio",
+	"Punchy Studio",
 ]
 const _ENHANCED_GRAPHICS_ENVIRONMENT_NAME := "EnhancedGraphicsEnvironment"
 const _ENHANCED_GRAPHICS_KEY_LIGHT_NAME := "EnhancedGraphicsKeyLight"
 const _ENHANCED_GRAPHICS_FILL_LIGHT_NAME := "EnhancedGraphicsFillLight"
 const _ENHANCED_GRAPHICS_RIM_LIGHT_NAME := "EnhancedGraphicsRimLight"
-const _CAMERA_REACTIVE_ENVIRONMENT_NAME := "CameraReactiveEnvironment"
-const _CAMERA_REACTIVE_LIGHT_ROOT_NAME := "CameraReactiveLights"
-const _CAMERA_REACTIVE_PROJECTOR_LIGHT_NAME := "CameraReactiveProjectedFeed"
-const _CAMERA_REACTIVE_PREVIEW_PLANE_NAME := "CameraReactivePreviewPlane"
-const _CAMERA_REACTIVE_DEBUG_MESH_NAME := "DebugEmitterMesh"
-const _CAMERA_REACTIVE_GRID_WIDTH := 3
-const _CAMERA_REACTIVE_GRID_HEIGHT := 3
+const _SCENE_CACHE_MAX_ENTRIES := 3
+const _SCENE_CACHE_IDLE_DELAY_SECONDS := 1.0
+const _SCENE_CACHE_MIN_PRELOAD_FPS := 40.0
+const _AUTO_PROFILE_SAMPLE_SECONDS := 2.0
+const _AUTO_PROFILE_COOLDOWN_SECONDS := 8.0
+const _AUTO_PROFILE_DOWNGRADE_FPS := 52.0
+const _AUTO_PROFILE_UPGRADE_FPS := 58.0
 
 var current_view_name: String = "":
 	set(value):
@@ -151,6 +176,8 @@ var current_view_name: String = "":
 
 var _available_views: Array[String] = []
 var _available_view_scene_paths: Dictionary = {}
+var _available_view_descriptors: Dictionary = {}
+var _views_initialized: bool = false
 var _instantiated_view: Node3D
 var _fallback_directional_light: DirectionalLight3D
 var _fallback_world_environment: WorldEnvironment
@@ -173,20 +200,27 @@ var _enhanced_environment: WorldEnvironment
 var _enhanced_key_light: DirectionalLight3D
 var _enhanced_fill_light: DirectionalLight3D
 var _enhanced_rim_light: DirectionalLight3D
-var _camera_reactive_environment: WorldEnvironment
-var _camera_reactive_light_root: Node3D
-var _camera_reactive_projector_light: SpotLight3D
-var _camera_reactive_preview_plane: MeshInstance3D
-var _camera_reactive_preview_material: StandardMaterial3D
-var _camera_reactive_lights: Array[OmniLight3D] = []
-var _camera_reactive_lighting_sample: Dictionary = {}
-var _editor_camera_reactive_test_texture: ImageTexture
-var _editor_camera_reactive_test_texture_frame: int = -1
-var _camera_reactive_blank_projector_texture: ImageTexture
-var _camera_reactive_generated_projector_texture: ImageTexture
-var _view_light_visibility_overrides: Dictionary = {}
-var _view_world_environment_overrides: Dictionary = {}
-var _camera_reactive_suppression_elapsed: float = 0.0
+var _scene_shadow_overrides: Dictionary = {}
+var _view_scale_handling_mode: int = VIEW_SCALE_HANDLING_SCENE_PREFERRED
+var _active_view_scene_path: String = ""
+var _scene_resource_cache: Dictionary = {}
+var _scene_resource_cache_order: Array[String] = []
+var _pending_scene_cache_paths: Array[String] = []
+var _threaded_scene_cache_path: String = ""
+var _scene_cache_idle_elapsed: float = 0.0
+var _requested_view_name: String = ""
+var _requested_view_scene_path: String = ""
+var _requested_view_report_errors: bool = true
+var _requested_view_started_usec: int = 0
+var _queued_view_name: String = ""
+var _queued_view_scene_path: String = ""
+var _queued_view_report_errors: bool = true
+var _effective_graphics_profile: int = GRAPHICS_PROFILE_BALANCED
+var _auto_profile_sample_elapsed: float = 0.0
+var _auto_profile_cooldown_remaining: float = 0.0
+var _auto_profile_good_samples: int = 0
+var _reported_lighting_fallback_views: Dictionary = {}
+var _last_view_performance_metrics: Dictionary = {}
 
 func _ready() -> void:
 	_refresh_views()
@@ -195,15 +229,12 @@ func _ready() -> void:
 	_resolve_fallback_world_environment()
 	_resolve_screen_scaler()
 	_resolve_window_center()
+	_update_effective_graphics_profile(true)
 	set_process(true)
 	set_process_unhandled_input(true)
 	
 	for child in get_children():
-<<<<<<< HEAD
 		if child is Node3D and not _is_switcher_internal_child(child):
-=======
-		if child is Node3D and not _is_view_switcher_helper_child(child):
->>>>>>> 929072e (ball view proper scaling (but ball scaling broken I think))
 			_instantiated_view = child
 			break
 
@@ -216,7 +247,6 @@ func _ready() -> void:
 		_apply_view_scale(true)
 		_sync_screen_plane_reference()
 		_sync_enhanced_graphics()
-		_sync_shared_camera_reactive_lighting()
 		return
 
 	if current_view_name == "" and _available_views.size() > 0:
@@ -236,7 +266,6 @@ func _is_view_switcher_helper_child(node: Node) -> bool:
 		or node_name == _ENHANCED_GRAPHICS_KEY_LIGHT_NAME
 		or node_name == _ENHANCED_GRAPHICS_FILL_LIGHT_NAME
 		or node_name == _ENHANCED_GRAPHICS_RIM_LIGHT_NAME
-		or node_name == _CAMERA_REACTIVE_LIGHT_ROOT_NAME
 		or node_name == "_ScreenPlaneReference"
 		or node is Light3D
 		or node is WorldEnvironment
@@ -249,12 +278,11 @@ func _process(delta: float) -> void:
 		_resolve_screen_scaler()
 	if _window_center == null:
 		_resolve_window_center()
+	_enforce_viewer_camera()
 	_apply_view_scale(false)
-	if _is_shared_camera_reactive_lighting_active():
-		_camera_reactive_suppression_elapsed += maxf(delta, 0.0)
-		if _camera_reactive_suppression_elapsed >= 0.25:
-			_camera_reactive_suppression_elapsed = 0.0
-			_suppress_current_view_lighting_for_shared_rig()
+	_process_requested_view_load()
+	_process_scene_resource_cache(delta)
+	_process_automatic_graphics_profile(delta)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if Engine.is_editor_hint() or OS.has_feature("ios"):
@@ -296,9 +324,13 @@ func _get_property_list() -> Array:
 func _refresh_views() -> void:
 	_available_views.clear()
 	_available_view_scene_paths.clear()
-	if _refresh_views_from_explicit_paths():
+	_available_view_descriptors.clear()
+	_views_initialized = true
+	if _refresh_views_from_catalog():
+		available_views_changed.emit()
 		return
-	if _refresh_views_from_export_preset():
+	if _refresh_views_from_explicit_paths():
+		available_views_changed.emit()
 		return
 
 	var dir := DirAccess.open("res://Views")
@@ -318,6 +350,23 @@ func _refresh_views() -> void:
 			file_name = dir.get_next()
 	else:
 		push_error("Could not find res://Views folder!")
+	available_views_changed.emit()
+
+func _ensure_views_initialized() -> void:
+	if not _views_initialized:
+		_refresh_views()
+
+func _refresh_views_from_catalog() -> bool:
+	if view_catalog == null:
+		return false
+	for descriptor in view_catalog.get_valid_views():
+		var view_name := descriptor.get_display_title()
+		if view_name == "" or _available_views.has(view_name):
+			continue
+		_available_views.append(view_name)
+		_available_view_scene_paths[view_name] = descriptor.scene_path
+		_available_view_descriptors[view_name] = descriptor
+	return not _available_views.is_empty()
 
 func _refresh_views_from_explicit_paths() -> bool:
 	for path in explicit_view_scene_paths:
@@ -326,42 +375,6 @@ func _refresh_views_from_explicit_paths() -> bool:
 			_available_views.append(view_key)
 			_available_view_scene_paths[view_key] = path
 	return _available_views.size() > 0
-
-func _refresh_views_from_export_preset() -> bool:
-	if not FileAccess.file_exists("res://export_presets.cfg"):
-		return false
-
-	var file := FileAccess.open("res://export_presets.cfg", FileAccess.READ)
-	if file == null:
-		return false
-
-	var in_iphone_preset := false
-	var found_iphone_preset := false
-	while not file.eof_reached():
-		var line := file.get_line().strip_edges()
-		if line.begins_with("[preset."):
-			in_iphone_preset = false
-		elif line == "name=\"iOS iPhone Window\"":
-			in_iphone_preset = true
-			found_iphone_preset = true
-		elif in_iphone_preset and line.begins_with("export_files=PackedStringArray("):
-			_parse_exported_view_keys(line)
-			return _available_views.size() > 0
-
-	return found_iphone_preset and _available_views.size() > 0
-
-func _parse_exported_view_keys(export_files_line: String) -> void:
-	var regex := RegEx.new()
-	var error := regex.compile("\"([^\"]+)\"")
-	if error != OK:
-		return
-
-	for result in regex.search_all(export_files_line):
-		var path := result.get_string(1)
-		var view_key := _view_key_from_scene_path(path)
-		if view_key != "" and not _available_views.has(view_key):
-			_available_views.append(view_key)
-			_available_view_scene_paths[view_key] = path
 
 func _view_key_from_scene_path(scene_path: String) -> String:
 	if not scene_path.begins_with("res://Views/"):
@@ -375,7 +388,7 @@ func _view_key_from_scene_path(scene_path: String) -> String:
 	if relative_path.ends_with("/View.tscn"):
 		return relative_path.trim_suffix("/View.tscn")
 	if not relative_path.contains("/"):
-		return relative_path
+		return relative_path.trim_suffix(".tscn")
 	return ""
 
 func _load_view(view_file: String) -> bool:
@@ -398,13 +411,17 @@ func _load_view_from_path(scene_path: String, view_name: String, report_errors: 
 		_log_view_load("missing", view_name, "")
 		return false
 
+	var cache_hit := adjacent_scene_cache_enabled and _scene_resource_cache.has(scene_path)
+	if not Engine.is_editor_hint() and _instantiated_view != null and not cache_hit:
+		if _queue_or_begin_threaded_view_load(scene_path, view_name, report_errors):
+			return true
+
 	_log_view_load("loading", view_name, scene_path)
-	var packed_scene := ResourceLoader.load(scene_path) as PackedScene
+	var load_started_usec := Time.get_ticks_usec()
+	var packed_scene := _get_cached_or_load_view_scene(scene_path)
+	var resource_load_ms := float(Time.get_ticks_usec() - load_started_usec) / 1000.0
 	if packed_scene:
-		current_view_name = view_name
-		_last_view_load_status = "loaded " + view_name
-		_log_view_load("loaded", view_name, scene_path)
-		_instantiate_view(packed_scene)
+		_commit_loaded_view(scene_path, view_name, packed_scene, resource_load_ms, cache_hit)
 		return true
 	else:
 		_last_view_load_status = "failed " + view_name
@@ -412,6 +429,94 @@ func _load_view_from_path(scene_path: String, view_name: String, report_errors: 
 		if report_errors:
 			push_error("Failed to load view scene: " + scene_path)
 		return false
+
+func _queue_or_begin_threaded_view_load(scene_path: String, view_name: String, report_errors: bool) -> bool:
+	if _requested_view_scene_path != "":
+		if _requested_view_scene_path == scene_path:
+			return true
+		_queued_view_name = view_name
+		_queued_view_scene_path = scene_path
+		_queued_view_report_errors = report_errors
+		_last_view_load_status = "queued " + view_name
+		_log_view_load("queued", view_name, scene_path)
+		return true
+
+	var request_error := OK
+	if _threaded_scene_cache_path == scene_path:
+		_threaded_scene_cache_path = ""
+	else:
+		request_error = ResourceLoader.load_threaded_request(
+			scene_path,
+			"PackedScene",
+			false,
+			ResourceLoader.CACHE_MODE_REUSE
+		)
+	if request_error != OK:
+		return false
+
+	_pending_scene_cache_paths.erase(scene_path)
+	_requested_view_name = view_name
+	_requested_view_scene_path = scene_path
+	_requested_view_report_errors = report_errors
+	_requested_view_started_usec = Time.get_ticks_usec()
+	_last_view_load_status = "loading " + view_name
+	_log_view_load("loading async", view_name, scene_path)
+	view_load_started.emit(_available_views.find(view_name), view_name)
+	return true
+
+func _process_requested_view_load() -> void:
+	if _requested_view_scene_path == "":
+		return
+	var status := ResourceLoader.load_threaded_get_status(_requested_view_scene_path)
+	if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+		return
+
+	var scene_path := _requested_view_scene_path
+	var view_name := _requested_view_name
+	var report_errors := _requested_view_report_errors
+	var resource_load_ms := float(Time.get_ticks_usec() - _requested_view_started_usec) / 1000.0
+	_requested_view_name = ""
+	_requested_view_scene_path = ""
+	_requested_view_report_errors = true
+	_requested_view_started_usec = 0
+
+	if status == ResourceLoader.THREAD_LOAD_LOADED:
+		var packed_scene := ResourceLoader.load_threaded_get(scene_path) as PackedScene
+		if packed_scene != null:
+			if _queued_view_scene_path == "":
+				_commit_loaded_view(scene_path, view_name, packed_scene, resource_load_ms, false)
+				view_load_finished.emit(_available_views.find(view_name), view_name, true)
+			else:
+				_note_scene_resource_cache_hit(scene_path, packed_scene)
+				_start_queued_view_load()
+			return
+
+	_last_view_load_status = "failed " + view_name
+	_log_view_load("failed async", view_name, scene_path)
+	if report_errors:
+		push_error("Failed to load view scene: " + scene_path)
+	view_load_finished.emit(_available_views.find(view_name), view_name, false)
+	_start_queued_view_load()
+
+func _start_queued_view_load() -> void:
+	if _queued_view_scene_path == "":
+		return
+	var view_name := _queued_view_name
+	var scene_path := _queued_view_scene_path
+	var report_errors := _queued_view_report_errors
+	_queued_view_name = ""
+	_queued_view_scene_path = ""
+	_queued_view_report_errors = true
+	_load_view_from_path(scene_path, view_name, report_errors)
+
+func _commit_loaded_view(scene_path: String, view_name: String, packed_scene: PackedScene, resource_load_ms: float, cache_hit: bool) -> void:
+	current_view_name = view_name
+	_active_view_scene_path = scene_path
+	_last_view_load_status = "loaded " + view_name
+	_log_view_load("loaded", view_name, scene_path)
+	_instantiate_view(packed_scene, resource_load_ms, cache_hit)
+	_note_scene_resource_cache_hit(scene_path, packed_scene)
+	_schedule_adjacent_scene_cache()
 
 func _get_view_scene_path(view_file: String) -> String:
 	if view_file.begins_with("res://"):
@@ -421,18 +526,26 @@ func _get_view_scene_path(view_file: String) -> String:
 	if view_file.ends_with(".tscn"):
 		var top_level_path := "res://Views/" + view_file
 		return top_level_path if ResourceLoader.exists(top_level_path) or FileAccess.file_exists(top_level_path) else ""
+	var top_level_scene_path := "res://Views/" + view_file + ".tscn"
+	if ResourceLoader.exists(top_level_scene_path) or FileAccess.file_exists(top_level_scene_path):
+		return top_level_scene_path
 	var folder_view_path := "res://Views/" + view_file + "/View.tscn"
 	if ResourceLoader.exists(folder_view_path) or FileAccess.file_exists(folder_view_path):
 		return folder_view_path
 	return ""
 
-func _instantiate_view(packed_scene: PackedScene) -> void:
+func _instantiate_view(packed_scene: PackedScene, resource_load_ms: float = 0.0, cache_hit: bool = false) -> void:
 	if packed_scene == null:
 		return
+	var instantiate_started_usec := Time.get_ticks_usec()
+	if _active_view_scene_path == "" and packed_scene.resource_path != "":
+		_active_view_scene_path = packed_scene.resource_path
 
-	if _instantiated_view and _instantiated_view.get_parent() == self:
-		_restore_current_view_lighting_overrides()
-		self.remove_child(_instantiated_view)
+	if _instantiated_view and is_instance_valid(_instantiated_view):
+		_restore_scene_shadow_overrides()
+		var old_parent := _instantiated_view.get_parent()
+		if old_parent != null:
+			old_parent.remove_child(_instantiated_view)
 		_instantiated_view.queue_free()
 
 	_instantiated_view = packed_scene.instantiate() as Node3D
@@ -441,18 +554,190 @@ func _instantiate_view(packed_scene: PackedScene) -> void:
 		return
 
 	self.add_child(_instantiated_view)
+	_enforce_viewer_camera()
 	_capture_instantiated_view_base_scale()
 	_sync_view_bounds_black_fill()
 	_sync_view_bounds_preview()
-	if not Engine.is_editor_hint():
-		_apply_view_scale(true)
+	_apply_view_scale(true)
 	_sync_screen_plane_reference()
 	_sync_fallback_directional_light()
 	_sync_enhanced_graphics()
-	_sync_shared_camera_reactive_lighting()
 	_sync_fallback_world_environment()
+	_sync_scene_shadows()
+	_record_view_performance(resource_load_ms, float(Time.get_ticks_usec() - instantiate_started_usec) / 1000.0, cache_hit)
+	current_view_changed.emit(get_current_view_index(), current_view_name)
+
+func _record_view_performance(resource_load_ms: float, instantiate_ms: float, cache_hit: bool) -> void:
+	if _instantiated_view == null:
+		return
+	var counts := {
+		"nodes": 0,
+		"mesh_instances": 0,
+		"multimesh_instances": 0,
+		"particles": 0,
+		"lights": 0,
+		"processing_nodes": 0,
+	}
+	_accumulate_view_node_counts(_instantiated_view, counts)
+	var descriptor := _get_current_view_descriptor()
+	_last_view_performance_metrics = {
+		"view_name": current_view_name,
+		"scene_path": _active_view_scene_path,
+		"performance_tier": get_current_view_performance_tier(),
+		"target_fps": descriptor.target_fps if descriptor != null else 60,
+		"expected_node_budget": descriptor.expected_node_budget if descriptor != null else 0,
+		"cache_hit": cache_hit,
+		"resource_load_ms": resource_load_ms,
+		"instantiate_ms": instantiate_ms,
+		"total_transition_ms": resource_load_ms + instantiate_ms,
+		"nodes": counts["nodes"],
+		"mesh_instances": counts["mesh_instances"],
+		"multimesh_instances": counts["multimesh_instances"],
+		"particles": counts["particles"],
+		"lights": counts["lights"],
+		"processing_nodes": counts["processing_nodes"],
+	}
+	if log_view_performance:
+		print(
+			"[ViewPerformance] view='%s' load=%.2fms instantiate=%.2fms cache=%s nodes=%d meshes=%d multimeshes=%d particles=%d lights=%d processing=%d"
+			% [
+				current_view_name,
+				resource_load_ms,
+				instantiate_ms,
+				str(cache_hit),
+				int(counts["nodes"]),
+				int(counts["mesh_instances"]),
+				int(counts["multimesh_instances"]),
+				int(counts["particles"]),
+				int(counts["lights"]),
+				int(counts["processing_nodes"]),
+			]
+		)
+	view_performance_sampled.emit(_last_view_performance_metrics.duplicate(true))
+
+func _accumulate_view_node_counts(node: Node, counts: Dictionary) -> void:
+	counts["nodes"] = int(counts["nodes"]) + 1
+	if node is MeshInstance3D:
+		counts["mesh_instances"] = int(counts["mesh_instances"]) + 1
+	elif node is MultiMeshInstance3D:
+		counts["multimesh_instances"] = int(counts["multimesh_instances"]) + 1
+	elif node is GPUParticles3D or node is CPUParticles3D:
+		counts["particles"] = int(counts["particles"]) + 1
+	if node is Light3D:
+		counts["lights"] = int(counts["lights"]) + 1
+	if node.is_processing() or node.is_physics_processing():
+		counts["processing_nodes"] = int(counts["processing_nodes"]) + 1
+	for child in node.get_children():
+		_accumulate_view_node_counts(child, counts)
+
+func get_last_view_performance_metrics() -> Dictionary:
+	return _last_view_performance_metrics.duplicate(true)
+
+func set_adjacent_scene_cache_enabled(enabled: bool) -> void:
+	adjacent_scene_cache_enabled = enabled
+
+func is_adjacent_scene_cache_enabled() -> bool:
+	return adjacent_scene_cache_enabled
+
+func _get_cached_or_load_view_scene(scene_path: String) -> PackedScene:
+	if adjacent_scene_cache_enabled and _scene_resource_cache.has(scene_path):
+		return _scene_resource_cache[scene_path] as PackedScene
+	return ResourceLoader.load(scene_path) as PackedScene
+
+func _note_scene_resource_cache_hit(scene_path: String, packed_scene: PackedScene) -> void:
+	if not adjacent_scene_cache_enabled or scene_path == "" or packed_scene == null:
+		return
+	_scene_resource_cache[scene_path] = packed_scene
+	_touch_scene_cache_order(scene_path)
+	_trim_scene_resource_cache()
+
+func _touch_scene_cache_order(scene_path: String) -> void:
+	_scene_resource_cache_order.erase(scene_path)
+	_scene_resource_cache_order.append(scene_path)
+
+func _trim_scene_resource_cache() -> void:
+	while _scene_resource_cache_order.size() > _SCENE_CACHE_MAX_ENTRIES:
+		var remove_path: String = _scene_resource_cache_order.pop_front()
+		if remove_path != _active_view_scene_path:
+			_scene_resource_cache.erase(remove_path)
+		else:
+			_scene_resource_cache_order.append(remove_path)
+			break
+
+func _clear_scene_resource_cache() -> void:
+	_scene_resource_cache.clear()
+	_scene_resource_cache_order.clear()
+	_pending_scene_cache_paths.clear()
+	_threaded_scene_cache_path = ""
+	_scene_cache_idle_elapsed = 0.0
+
+func _schedule_adjacent_scene_cache() -> void:
+	if not adjacent_scene_cache_enabled or not is_inside_tree():
+		return
+	_scene_cache_idle_elapsed = 0.0
+	_pending_scene_cache_paths.clear()
+	if current_view_name == "":
+		return
+	_ensure_views_initialized()
+	var current_index := _available_views.find(current_view_name)
+	if current_index < 0 and _active_view_scene_path != "":
+		current_index = _find_view_index_for_scene_path(_active_view_scene_path)
+	if current_index < 0:
+		return
+	for offset in [1, -1]:
+		var adjacent_index := wrapi(current_index + int(offset), 0, _available_views.size())
+		var descriptor := get_available_view_descriptor(adjacent_index)
+		var maximum_tier := ViewDescriptor.PerformanceTier.MEDIUM if OS.has_feature("ios") else ViewDescriptor.PerformanceTier.HEAVY
+		if descriptor != null:
+			if not descriptor.preload_adjacent or descriptor.performance_tier > maximum_tier:
+				continue
+		var adjacent_path := _get_view_scene_path(_available_views[adjacent_index])
+		if adjacent_path != "" and adjacent_path != _active_view_scene_path and not _scene_resource_cache.has(adjacent_path):
+			_pending_scene_cache_paths.append(adjacent_path)
+
+func _process_scene_resource_cache(delta: float) -> void:
+	if not adjacent_scene_cache_enabled:
+		return
+	_scene_cache_idle_elapsed += maxf(delta, 0.0)
+	if _threaded_scene_cache_path != "":
+		_poll_threaded_scene_cache()
+		return
+	if _scene_cache_idle_elapsed < _SCENE_CACHE_IDLE_DELAY_SECONDS:
+		return
+	if _pending_scene_cache_paths.is_empty():
+		return
+	if Engine.get_frames_per_second() > 0 and Engine.get_frames_per_second() < _SCENE_CACHE_MIN_PRELOAD_FPS:
+		return
+	_start_next_threaded_scene_cache()
+
+func _start_next_threaded_scene_cache() -> void:
+	while not _pending_scene_cache_paths.is_empty():
+		var scene_path: String = _pending_scene_cache_paths.pop_front()
+		if scene_path == "" or _scene_resource_cache.has(scene_path):
+			continue
+		var error := ResourceLoader.load_threaded_request(scene_path, "PackedScene", false, ResourceLoader.CACHE_MODE_REUSE)
+		if error == OK:
+			_threaded_scene_cache_path = scene_path
+			return
+		var packed_scene := ResourceLoader.load(scene_path) as PackedScene
+		if packed_scene != null:
+			_note_scene_resource_cache_hit(scene_path, packed_scene)
+
+func _poll_threaded_scene_cache() -> void:
+	var status := ResourceLoader.load_threaded_get_status(_threaded_scene_cache_path)
+	if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+		return
+	var scene_path := _threaded_scene_cache_path
+	_threaded_scene_cache_path = ""
+	if status == ResourceLoader.THREAD_LOAD_LOADED:
+		var packed_scene := ResourceLoader.load_threaded_get(scene_path) as PackedScene
+		if packed_scene != null:
+			_note_scene_resource_cache_hit(scene_path, packed_scene)
+	_scene_cache_idle_elapsed = _SCENE_CACHE_IDLE_DELAY_SECONDS
 
 func _is_switcher_internal_child(node: Node) -> bool:
+	if node == null:
+		return true
 	var child_name := String(node.name)
 	return (
 		child_name.begins_with("Red_Border")
@@ -460,11 +745,9 @@ func _is_switcher_internal_child(node: Node) -> bool:
 		or child_name == _ENHANCED_GRAPHICS_KEY_LIGHT_NAME
 		or child_name == _ENHANCED_GRAPHICS_FILL_LIGHT_NAME
 		or child_name == _ENHANCED_GRAPHICS_RIM_LIGHT_NAME
-		or child_name == _CAMERA_REACTIVE_ENVIRONMENT_NAME
-		or child_name == _CAMERA_REACTIVE_LIGHT_ROOT_NAME
-		or child_name == _CAMERA_REACTIVE_PROJECTOR_LIGHT_NAME
-		or child_name == _CAMERA_REACTIVE_PREVIEW_PLANE_NAME
 		or child_name == "_ScreenPlaneReference"
+		or node is Light3D
+		or node is WorldEnvironment
 	)
 
 func set_view_scale_mode(mode: int) -> void:
@@ -482,6 +765,29 @@ func get_view_scale_mode_name(mode: int) -> String:
 	if mode >= 0 and mode < VIEW_SCALE_MODE_NAMES.size():
 		return VIEW_SCALE_MODE_NAMES[mode]
 	return "Unknown"
+
+func _set_view_scale_handling_mode(mode: int) -> void:
+	var next_mode := clampi(mode, VIEW_SCALE_HANDLING_SCENE_PREFERRED, VIEW_SCALE_HANDLING_VIEWER_SCALED_AUTHORED)
+	if _view_scale_handling_mode == next_mode and _last_applied_view_scale >= 0.0:
+		return
+	_view_scale_handling_mode = next_mode
+	_last_applied_view_scale = -1.0
+	_last_applied_view_position = Vector3.INF
+	_apply_view_scale(true)
+
+func set_view_scale_handling_mode(mode: int) -> void:
+	_set_view_scale_handling_mode(mode)
+
+func get_view_scale_handling_mode() -> int:
+	return _view_scale_handling_mode
+
+func get_view_scale_handling_mode_count() -> int:
+	return VIEW_SCALE_HANDLING_MODE_NAMES.size()
+
+func get_view_scale_handling_mode_name(mode: int) -> String:
+	if mode >= 0 and mode < VIEW_SCALE_HANDLING_MODE_NAMES.size():
+		return VIEW_SCALE_HANDLING_MODE_NAMES[mode]
+	return VIEW_SCALE_HANDLING_MODE_NAMES[VIEW_SCALE_HANDLING_SCENE_PREFERRED]
 
 func set_view_scale_multiplier(multiplier: float) -> void:
 	view_scale_multiplier = clampf(multiplier, 0.5, 1.2)
@@ -509,13 +815,14 @@ func get_current_view_ball_size_multiplier() -> float:
 	return 1.0
 
 func set_current_view_cinematic_lighting_enabled(enabled: bool) -> void:
-	set_enhanced_graphics_quality(ENHANCED_GRAPHICS_HIGH if enabled else ENHANCED_GRAPHICS_OFF)
+	set_enhanced_graphics_quality(GRAPHICS_PROFILE_QUALITY if enabled else GRAPHICS_PROFILE_AUTO)
 
 func is_current_view_cinematic_lighting_enabled() -> bool:
-	return enhanced_graphics_quality != ENHANCED_GRAPHICS_OFF
+	return _get_effective_scene_graphics_quality() >= SCENE_GRAPHICS_HIGH
 
 func set_enhanced_graphics_quality(quality: int) -> void:
-	enhanced_graphics_quality = clampi(quality, ENHANCED_GRAPHICS_OFF, ENHANCED_GRAPHICS_INSANE)
+	enhanced_graphics_quality = clampi(quality, GRAPHICS_PROFILE_AUTO, GRAPHICS_PROFILE_SHOWCASE)
+	_update_effective_graphics_profile(true)
 	_sync_enhanced_graphics()
 
 func get_enhanced_graphics_quality() -> int:
@@ -527,53 +834,70 @@ func get_enhanced_graphics_quality_count() -> int:
 func get_enhanced_graphics_quality_name(quality: int) -> String:
 	if quality >= 0 and quality < ENHANCED_GRAPHICS_QUALITY_NAMES.size():
 		return ENHANCED_GRAPHICS_QUALITY_NAMES[quality]
-	return ENHANCED_GRAPHICS_QUALITY_NAMES[ENHANCED_GRAPHICS_OFF]
+	return ENHANCED_GRAPHICS_QUALITY_NAMES[GRAPHICS_PROFILE_AUTO]
 
-func set_camera_reactive_lighting_enabled(enabled: bool) -> void:
-	camera_reactive_lighting_enabled = enabled
+func get_effective_graphics_quality() -> int:
+	return _effective_graphics_profile
+
+func get_effective_graphics_quality_name() -> String:
+	return get_enhanced_graphics_quality_name(_effective_graphics_profile)
+
+func set_studio_lighting_mode(mode: int) -> void:
+	studio_lighting_mode = clampi(mode, STUDIO_LIGHTING_OFF, STUDIO_LIGHTING_PUNCHY)
 	_sync_enhanced_graphics()
-	_sync_shared_camera_reactive_lighting()
 
-func is_camera_reactive_lighting_enabled() -> bool:
-	return camera_reactive_lighting_enabled
+func get_studio_lighting_mode() -> int:
+	return studio_lighting_mode
 
-func set_camera_reactive_lighting_sample(sample: Dictionary) -> void:
-	_camera_reactive_lighting_sample = sample
-	_sync_shared_camera_reactive_lighting()
+func get_studio_lighting_mode_count() -> int:
+	return STUDIO_LIGHTING_MODE_NAMES.size()
 
-func set_camera_reactive_lighting_mode(mode: int) -> void:
-	camera_reactive_lighting_mode = clampi(mode, CAMERA_REACTIVE_MODE_GRID_LIGHTS, CAMERA_REACTIVE_MODE_PROJECTED_FEED)
-	_sync_shared_camera_reactive_lighting()
+func get_studio_lighting_mode_name(mode: int) -> String:
+	if mode >= 0 and mode < STUDIO_LIGHTING_MODE_NAMES.size():
+		return STUDIO_LIGHTING_MODE_NAMES[mode]
+	return STUDIO_LIGHTING_MODE_NAMES[STUDIO_LIGHTING_OFF]
 
-func get_camera_reactive_lighting_mode() -> int:
-	return camera_reactive_lighting_mode
+func set_scene_shadows_enabled(enabled: bool) -> void:
+	scene_shadows_enabled = enabled
+	_sync_scene_shadows()
 
-func get_camera_reactive_lighting_mode_count() -> int:
-	return CAMERA_REACTIVE_LIGHTING_MODE_NAMES.size()
+func are_scene_shadows_enabled() -> bool:
+	return scene_shadows_enabled
 
-func get_camera_reactive_lighting_mode_name(mode: int) -> String:
-	if mode >= 0 and mode < CAMERA_REACTIVE_LIGHTING_MODE_NAMES.size():
-		return CAMERA_REACTIVE_LIGHTING_MODE_NAMES[mode]
-	return CAMERA_REACTIVE_LIGHTING_MODE_NAMES[CAMERA_REACTIVE_MODE_GRID_LIGHTS]
+func _sync_scene_shadows() -> void:
+	_restore_scene_shadow_overrides()
+	if _instantiated_view == null or not is_instance_valid(_instantiated_view):
+		return
+	if _get_effective_current_lighting_ownership() == ViewDescriptor.LightingOwnership.SCENE_MANAGED:
+		return
+	for node in _instantiated_view.find_children("*", "Light3D", true, false):
+		var light := node as Light3D
+		if light == null:
+			continue
+		_scene_shadow_overrides[light.get_instance_id()] = {
+			"node": light,
+			"shadow_enabled": light.shadow_enabled,
+		}
+		light.shadow_enabled = scene_shadows_enabled
 
-func set_current_view_camera_reactive_lighting_mode(mode: int) -> void:
-	set_camera_reactive_lighting_mode(mode)
-
-func get_current_view_camera_reactive_lighting_mode() -> int:
-	return get_camera_reactive_lighting_mode()
-
-func get_current_view_camera_reactive_lighting_mode_count() -> int:
-	return get_camera_reactive_lighting_mode_count()
-
-func get_current_view_camera_reactive_lighting_mode_name(mode: int) -> String:
-	return get_camera_reactive_lighting_mode_name(mode)
+func _restore_scene_shadow_overrides() -> void:
+	for override_raw in _scene_shadow_overrides.values():
+		var override := override_raw as Dictionary
+		var light := override.get("node") as Light3D
+		if light != null and is_instance_valid(light):
+			light.shadow_enabled = bool(override.get("shadow_enabled", light.shadow_enabled))
+	_scene_shadow_overrides.clear()
 
 func _sync_current_view_enhanced_graphics() -> bool:
 	if _instantiated_view == null:
 		return false
-	var enabled := enhanced_graphics_quality != ENHANCED_GRAPHICS_OFF
+	var ownership := _get_effective_current_lighting_ownership()
+	if ownership == ViewDescriptor.LightingOwnership.VIEWER_MANAGED:
+		return false
+	var effective_quality := _get_effective_scene_graphics_quality()
+	var enabled := effective_quality != SCENE_GRAPHICS_OFF
 	if _instantiated_view.has_method("set_enhanced_graphics_quality"):
-		_instantiated_view.call("set_enhanced_graphics_quality", enhanced_graphics_quality)
+		_instantiated_view.call("set_enhanced_graphics_quality", effective_quality)
 		return true
 	if _instantiated_view.has_method("set_cinematic_quality_lighting_enabled"):
 		_instantiated_view.call("set_cinematic_quality_lighting_enabled", enabled)
@@ -586,664 +910,230 @@ func _sync_current_view_enhanced_graphics() -> bool:
 func _sync_enhanced_graphics() -> void:
 	if not is_inside_tree():
 		return
+	_update_effective_graphics_profile(false)
+	var ownership := _get_effective_current_lighting_ownership()
 	var current_view_handles_graphics := _sync_current_view_enhanced_graphics()
 	_ensure_enhanced_graphics_nodes()
 
-	var use_shared_rig := (
-		enhanced_graphics_quality != ENHANCED_GRAPHICS_OFF
-		and not current_view_handles_graphics
-		and not _is_shared_camera_reactive_lighting_active()
+	var use_enhanced_shared_rig := (
+		_get_effective_scene_graphics_quality() != SCENE_GRAPHICS_OFF
+		and (
+			ownership == ViewDescriptor.LightingOwnership.VIEWER_MANAGED
+			or (ownership == ViewDescriptor.LightingOwnership.LEGACY_AUTO and not current_view_handles_graphics)
+		)
 	)
-	_enhanced_key_light.visible = use_shared_rig
-	_enhanced_fill_light.visible = use_shared_rig
-	_enhanced_rim_light.visible = use_shared_rig
-	if not use_shared_rig:
+	var use_studio_rig := (
+		studio_lighting_mode != STUDIO_LIGHTING_OFF
+		and ownership in [
+			ViewDescriptor.LightingOwnership.LEGACY_AUTO,
+			ViewDescriptor.LightingOwnership.VIEWER_MANAGED,
+			ViewDescriptor.LightingOwnership.HYBRID,
+		]
+	)
+	var use_any_shared_rig := use_enhanced_shared_rig or use_studio_rig
+	_enhanced_key_light.visible = use_any_shared_rig
+	_enhanced_fill_light.visible = use_any_shared_rig
+	_enhanced_rim_light.visible = use_any_shared_rig
+	if not use_any_shared_rig:
 		_enhanced_environment.environment = null
 		_sync_fallback_directional_light()
 		_sync_fallback_world_environment()
 		return
 
-	var high_quality := enhanced_graphics_quality >= ENHANCED_GRAPHICS_HIGH
-	var insane_quality := enhanced_graphics_quality >= ENHANCED_GRAPHICS_INSANE
+	var scene_quality := _get_effective_scene_graphics_quality()
+	var high_quality := scene_quality >= SCENE_GRAPHICS_HIGH
+	var insane_quality := scene_quality >= SCENE_GRAPHICS_INSANE
+	var studio_punchy := studio_lighting_mode == STUDIO_LIGHTING_PUNCHY
 	var environment := _enhanced_environment.environment
 	if environment == null:
 		environment = Environment.new()
-	_enhanced_environment.environment = environment
+	var view_has_environment := _view_has_world_environment(_instantiated_view)
+	if use_studio_rig and view_has_environment:
+		_enhanced_environment.environment = null
+	else:
+		_enhanced_environment.environment = environment
 	environment.background_mode = Environment.BG_CLEAR_COLOR
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color(0.9, 0.82, 0.72, 1.0)
-	environment.ambient_light_energy = 0.42 if insane_quality else (0.34 if high_quality else 0.24)
+	environment.ambient_light_color = Color(0.88, 0.84, 0.78, 1.0) if use_studio_rig else Color(0.9, 0.82, 0.72, 1.0)
+	environment.ambient_light_energy = (0.3 if studio_punchy else 0.38) if use_studio_rig else (0.42 if insane_quality else (0.34 if high_quality else 0.24))
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 0.8 if insane_quality else (0.86 if high_quality else 0.92)
-	environment.tonemap_white = 2.0 if insane_quality else (1.65 if high_quality else 1.35)
+	environment.tonemap_exposure = (0.74 if studio_punchy else 0.82) if use_studio_rig else (0.8 if insane_quality else (0.86 if high_quality else 0.92))
+	environment.tonemap_white = (2.25 if studio_punchy else 1.9) if use_studio_rig else (2.0 if insane_quality else (1.65 if high_quality else 1.35))
 	environment.ssao_enabled = true
-	environment.ssao_radius = 1.35 if insane_quality else (0.95 if high_quality else 0.65)
-	environment.ssao_intensity = 1.05 if insane_quality else (0.82 if high_quality else 0.45)
+	environment.ssao_radius = (1.25 if studio_punchy else 0.95) if use_studio_rig else (1.35 if insane_quality else (0.95 if high_quality else 0.65))
+	environment.ssao_intensity = (1.0 if studio_punchy else 0.72) if use_studio_rig else (1.05 if insane_quality else (0.82 if high_quality else 0.45))
 	environment.ssil_enabled = high_quality
-	environment.ssil_radius = 1.15 if insane_quality else 0.8
-	environment.ssil_intensity = 0.44 if insane_quality else 0.28
+	if use_studio_rig:
+		environment.ssil_enabled = true
+	environment.ssil_radius = (1.1 if studio_punchy else 0.85) if use_studio_rig else (1.15 if insane_quality else 0.8)
+	environment.ssil_intensity = (0.42 if studio_punchy else 0.3) if use_studio_rig else (0.44 if insane_quality else 0.28)
 	environment.glow_enabled = high_quality
-	environment.glow_intensity = 0.03 if insane_quality else 0.018
+	if use_studio_rig:
+		environment.glow_enabled = true
+	environment.glow_intensity = (0.035 if studio_punchy else 0.02) if use_studio_rig else (0.03 if insane_quality else 0.018)
 	environment.adjustment_enabled = true
-	environment.adjustment_brightness = 0.96 if insane_quality else 0.98
-	environment.adjustment_contrast = 1.08 if insane_quality else (1.04 if high_quality else 1.02)
-	environment.adjustment_saturation = 1.05 if insane_quality else (1.03 if high_quality else 1.01)
+	environment.adjustment_brightness = (0.95 if studio_punchy else 0.98) if use_studio_rig else (0.96 if insane_quality else 0.98)
+	environment.adjustment_contrast = (1.14 if studio_punchy else 1.07) if use_studio_rig else (1.08 if insane_quality else (1.04 if high_quality else 1.02))
+	environment.adjustment_saturation = (1.07 if studio_punchy else 1.03) if use_studio_rig else (1.05 if insane_quality else (1.03 if high_quality else 1.01))
 
-	_enhanced_key_light.rotation_degrees = Vector3(-38.0, -28.0, -8.0)
-	_enhanced_key_light.light_color = Color(1.0, 0.9, 0.76, 1.0)
-	_enhanced_key_light.light_energy = 0.95 if insane_quality else (0.78 if high_quality else 0.42)
-	_enhanced_key_light.shadow_enabled = high_quality
-	_enhanced_key_light.shadow_opacity = 0.34 if insane_quality else 0.22
+	_enhanced_key_light.rotation_degrees = Vector3(-46.0, -34.0, -10.0) if use_studio_rig else Vector3(-38.0, -28.0, -8.0)
+	_enhanced_key_light.light_color = Color(1.0, 0.88, 0.7, 1.0) if use_studio_rig else Color(1.0, 0.9, 0.76, 1.0)
+	_enhanced_key_light.light_energy = (0.42 if studio_punchy else 0.24) if use_studio_rig else (0.95 if insane_quality else (0.78 if high_quality else 0.42))
+	_enhanced_key_light.shadow_enabled = scene_shadows_enabled and (high_quality or use_studio_rig)
+	_enhanced_key_light.shadow_opacity = (0.42 if studio_punchy else 0.28) if use_studio_rig else (0.34 if insane_quality else 0.22)
 	_enhanced_key_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	_enhanced_key_light.directional_shadow_blend_splits = true
 	_enhanced_key_light.directional_shadow_max_distance = 10.0
 
-	_enhanced_fill_light.rotation_degrees = Vector3(18.0, 142.0, 0.0)
-	_enhanced_fill_light.light_color = Color(0.66, 0.78, 1.0, 1.0)
-	_enhanced_fill_light.light_energy = 0.38 if insane_quality else (0.28 if high_quality else 0.16)
+	_enhanced_fill_light.rotation_degrees = Vector3(16.0, 150.0, 0.0) if use_studio_rig else Vector3(18.0, 142.0, 0.0)
+	_enhanced_fill_light.light_color = Color(0.58, 0.72, 1.0, 1.0) if use_studio_rig else Color(0.66, 0.78, 1.0, 1.0)
+	_enhanced_fill_light.light_energy = (0.22 if studio_punchy else 0.14) if use_studio_rig else (0.38 if insane_quality else (0.28 if high_quality else 0.16))
 	_enhanced_fill_light.shadow_enabled = false
 
-	_enhanced_rim_light.rotation_degrees = Vector3(-12.0, 42.0, 0.0)
-	_enhanced_rim_light.light_color = Color(1.0, 0.65, 0.42, 1.0)
-	_enhanced_rim_light.light_energy = 0.34 if insane_quality else (0.24 if high_quality else 0.12)
+	_enhanced_rim_light.rotation_degrees = Vector3(-20.0, 52.0, 0.0) if use_studio_rig else Vector3(-12.0, 42.0, 0.0)
+	_enhanced_rim_light.light_color = Color(1.0, 0.58, 0.34, 1.0) if use_studio_rig else Color(1.0, 0.65, 0.42, 1.0)
+	_enhanced_rim_light.light_energy = (0.55 if studio_punchy else 0.34) if use_studio_rig else (0.34 if insane_quality else (0.24 if high_quality else 0.12))
 	_enhanced_rim_light.shadow_enabled = false
 	_sync_fallback_directional_light()
 	_sync_fallback_world_environment()
+	_sync_scene_shadows()
 
-func _sync_shared_camera_reactive_lighting() -> void:
-	if not is_inside_tree():
-		return
-	var use_shared_rig := _is_shared_camera_reactive_lighting_active()
-	if not use_shared_rig:
-		_camera_reactive_suppression_elapsed = 0.0
-		_restore_current_view_lighting_overrides()
-		if _camera_reactive_light_root != null:
-			_camera_reactive_light_root.visible = false
-		if _camera_reactive_environment != null:
-			_camera_reactive_environment.environment = null
-		_set_shared_camera_reactive_lights_visible(false)
-		_sync_camera_reactive_debug_status()
-		_sync_fallback_directional_light()
-		_sync_fallback_world_environment()
-		return
+func _get_current_view_descriptor() -> ViewDescriptor:
+	if _available_view_descriptors.has(current_view_name):
+		return _available_view_descriptors[current_view_name] as ViewDescriptor
+	if _active_view_scene_path != "":
+		for descriptor_raw in _available_view_descriptors.values():
+			var descriptor := descriptor_raw as ViewDescriptor
+			if descriptor != null and descriptor.scene_path == _active_view_scene_path:
+				return descriptor
+	return null
 
-	_ensure_shared_camera_reactive_nodes()
-	if _camera_reactive_light_root != null:
-		_camera_reactive_light_root.visible = true
-	if _camera_reactive_environment != null:
-		_camera_reactive_environment.environment = null
-	_sync_camera_reactive_debug_status()
-	_suppress_current_view_lighting_for_shared_rig()
-	_set_shared_camera_reactive_lights_visible(false)
-	_sync_fallback_directional_light()
-	_sync_fallback_world_environment()
+func _get_current_lighting_ownership() -> int:
+	var descriptor := _get_current_view_descriptor()
+	if descriptor == null:
+		return ViewDescriptor.LightingOwnership.LEGACY_AUTO
+	return descriptor.lighting_ownership
 
-	var sample := _get_effective_camera_reactive_lighting_sample()
-	var has_live_sample := bool(sample.get("active", false))
-	var environment := _camera_reactive_environment.environment
-	if environment == null:
-		environment = Environment.new()
-	_camera_reactive_environment.environment = environment
-	environment.background_mode = Environment.BG_CLEAR_COLOR
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
-	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 1.05
-	environment.tonemap_white = 3.6
-	environment.ssao_enabled = true
-	environment.ssao_radius = 1.0
-	environment.ssao_intensity = 0.25
-	environment.ssil_enabled = camera_reactive_lighting_mode == CAMERA_REACTIVE_MODE_PROJECTED_FEED
-	environment.ssil_radius = 1.8
-	environment.ssil_intensity = 3.0
-	environment.ssil_sharpness = 0.45
-	environment.glow_enabled = false
-	environment.adjustment_enabled = true
-	environment.adjustment_brightness = 1.12
-	environment.adjustment_contrast = 1.0
-	environment.adjustment_saturation = 1.08
+func _get_effective_current_lighting_ownership() -> int:
+	var ownership := _get_current_lighting_ownership()
+	if ownership != ViewDescriptor.LightingOwnership.SCENE_MANAGED:
+		return ownership
+	if _instantiated_view == null or not is_instance_valid(_instantiated_view):
+		return ownership
+	if _view_has_light(_instantiated_view) or _view_has_world_environment(_instantiated_view):
+		return ownership
 
-	if not has_live_sample:
-		environment.ambient_light_color = Color(1.0, 0.92, 0.78, 1.0)
-		environment.ambient_light_energy = 0.38
-		return
+	var view_key := _active_view_scene_path if _active_view_scene_path != "" else current_view_name
+	if not _reported_lighting_fallback_views.has(view_key):
+		_reported_lighting_fallback_views[view_key] = true
+		push_warning(
+			"View '%s' is marked Scene Managed but has no Light3D or active WorldEnvironment; using viewer-managed lighting."
+			% current_view_name
+		)
+	return ViewDescriptor.LightingOwnership.VIEWER_MANAGED
 
-	var average_color := _get_camera_reactive_average_color(sample)
-	var average_luma := clampf(float(sample.get("average_luma", 0.0)), 0.0, 1.0)
-	if camera_reactive_lighting_mode == CAMERA_REACTIVE_MODE_PROJECTED_FEED:
-		environment.ambient_light_color = Color.WHITE
-		environment.ambient_light_energy = 0.28 + pow(average_luma, 0.75) * 0.24
-	else:
-		environment.ambient_light_color = average_color.lerp(Color.WHITE, 0.42)
-		environment.ambient_light_energy = 0.42 + pow(average_luma, 0.75) * 0.62
-
-	var bounds_size := _get_shared_camera_reactive_window_size()
-	var center := _get_shared_camera_reactive_window_center()
-	if camera_reactive_lighting_mode == CAMERA_REACTIVE_MODE_PROJECTED_FEED:
-		_configure_shared_camera_reactive_projector(center, bounds_size, average_color, average_luma, sample)
-	else:
-		_configure_shared_camera_reactive_grid(center, bounds_size, average_color, average_luma, sample)
-
-func _is_shared_camera_reactive_lighting_active() -> bool:
-	return camera_reactive_lighting_enabled
-
-func _sync_camera_reactive_debug_status() -> void:
-	if not camera_reactive_lighting_enabled:
-		camera_reactive_debug_status = "Off"
-	else:
-		camera_reactive_debug_status = "Using shared viewer rig: %s" % [get_camera_reactive_lighting_mode_name(camera_reactive_lighting_mode)]
-
-func _suppress_current_view_lighting_for_shared_rig() -> void:
-	if _instantiated_view == null:
-		return
-	_suppress_view_lighting_recursive(_instantiated_view)
-
-func _suppress_view_lighting_recursive(node: Node) -> void:
-	if node == null:
-		return
-	if node is Light3D:
-		var light := node as Light3D
-		var id := light.get_instance_id()
-		if not _view_light_visibility_overrides.has(id):
-			_view_light_visibility_overrides[id] = light.visible
-		light.visible = false
-	elif node is WorldEnvironment:
-		var world_environment := node as WorldEnvironment
-		var id := world_environment.get_instance_id()
-		if not _view_world_environment_overrides.has(id):
-			_view_world_environment_overrides[id] = world_environment.environment
-		world_environment.environment = null
-
-	for child in node.get_children():
-		_suppress_view_lighting_recursive(child)
-
-func _restore_current_view_lighting_overrides() -> void:
-	for id in _view_light_visibility_overrides.keys():
-		var object := instance_from_id(int(id))
-		if object is Light3D:
-			(object as Light3D).visible = bool(_view_light_visibility_overrides[id])
-	_view_light_visibility_overrides.clear()
-
-	for id in _view_world_environment_overrides.keys():
-		var object := instance_from_id(int(id))
-		if object is WorldEnvironment:
-			var world_environment := object as WorldEnvironment
-			var environment: Variant = _view_world_environment_overrides[id]
-			if environment is Environment:
-				world_environment.environment = environment
-			else:
-				world_environment.environment = null
-	_view_world_environment_overrides.clear()
-
-func _get_current_view_label() -> String:
-	if current_view_name != "":
-		return current_view_name
-	if _instantiated_view != null:
-		return _instantiated_view.name
-	return "<none>"
-
-func _get_effective_camera_reactive_lighting_sample() -> Dictionary:
-	if Engine.is_editor_hint():
-		return _make_editor_camera_reactive_test_sample(editor_camera_reactive_test_frame)
-	return _camera_reactive_lighting_sample
-
-func _make_editor_camera_reactive_test_sample(test_frame: int) -> Dictionary:
-	var image := _make_editor_camera_reactive_test_image(test_frame)
-	if image == null or image.is_empty():
-		return {"active": false}
-	if _editor_camera_reactive_test_texture == null or _editor_camera_reactive_test_texture_frame != test_frame:
-		_editor_camera_reactive_test_texture = ImageTexture.create_from_image(image)
-		_editor_camera_reactive_test_texture_frame = test_frame
-	var sample := _sample_editor_camera_reactive_image(image)
-	sample["projector_texture"] = _editor_camera_reactive_test_texture
-	sample["source"] = "editor-test"
-	return sample
-
-func _make_editor_camera_reactive_test_image(test_frame: int) -> Image:
-	var width := 256
-	var height := 144
-	var image := Image.create(width, height, false, Image.FORMAT_RGBA8)
-	match test_frame:
-		CAMERA_REACTIVE_EDITOR_TEST_FLASHLIGHT:
-			var center := Vector2(float(width) * 0.72, float(height) * 0.34)
-			var radius := float(mini(width, height)) * 0.42
-			for y in range(height):
-				for x in range(width):
-					var point := Vector2(float(x), float(y))
-					var distance := point.distance_to(center)
-					var falloff := clampf(1.0 - distance / radius, 0.0, 1.0)
-					var glow := pow(falloff, 1.45)
-					var spill := pow(clampf(1.0 - distance / (radius * 2.25), 0.0, 1.0), 1.05) * 0.62
-					var base := Color(0.045, 0.052, 0.062, 1.0)
-					var light := Color(1.0, 0.9, 0.62, 1.0) * glow * 1.28
-					var ambience := Color(0.22, 0.26, 0.34, 1.0) * spill
-					image.set_pixel(x, y, Color(
-						clampf(base.r + light.r + ambience.r, 0.0, 1.0),
-						clampf(base.g + light.g + ambience.g, 0.0, 1.0),
-						clampf(base.b + light.b + ambience.b, 0.0, 1.0),
-						1.0
-					))
-		CAMERA_REACTIVE_EDITOR_TEST_COLORS:
-			for y in range(height):
-				for x in range(width):
-					var left := x < width / 2
-					var top := y < height / 2
-					var color := Color.WHITE
-					if left and top:
-						color = Color(1.0, 0.03, 0.03, 1.0)
-					elif not left and top:
-						color = Color(0.03, 1.0, 0.06, 1.0)
-					elif left and not top:
-						color = Color(0.05, 0.18, 1.0, 1.0)
-					else:
-						color = Color(1.0, 0.92, 0.03, 1.0)
-					var stripe := 0.08 if (x / 12 + y / 12) % 2 == 0 else 0.0
-					image.set_pixel(x, y, color.lightened(stripe))
+func _get_effective_scene_graphics_quality() -> int:
+	match _effective_graphics_profile:
+		GRAPHICS_PROFILE_BATTERY:
+			return SCENE_GRAPHICS_LOW
+		GRAPHICS_PROFILE_BALANCED:
+			return SCENE_GRAPHICS_HIGH
+		GRAPHICS_PROFILE_QUALITY, GRAPHICS_PROFILE_SHOWCASE:
+			return SCENE_GRAPHICS_INSANE
 		_:
-			image.fill(Color.BLACK)
-	return image
+			return SCENE_GRAPHICS_HIGH
 
-func _sample_editor_camera_reactive_image(image: Image) -> Dictionary:
-	var width := image.get_width()
-	var height := image.get_height()
-	var estimate := {"active": false}
-	if width <= 0 or height <= 0:
-		return estimate
+func _resolve_default_auto_graphics_profile() -> int:
+	return GRAPHICS_PROFILE_BALANCED if OS.has_feature("ios") else GRAPHICS_PROFILE_QUALITY
 
-	var grid_luma := PackedFloat32Array()
-	var grid_colors := PackedColorArray()
-	var grid_peak_luma := PackedFloat32Array()
-	var total_luma := 0.0
-	var total_color := Color(0.0, 0.0, 0.0, 0.0)
-	var total_cells := _CAMERA_REACTIVE_GRID_WIDTH * _CAMERA_REACTIVE_GRID_HEIGHT
-	var brightest_index := 0
-	var brightest_luma := -1.0
-	var samples_per_axis := 8
-
-	for gy in range(_CAMERA_REACTIVE_GRID_HEIGHT):
-		for gx in range(_CAMERA_REACTIVE_GRID_WIDTH):
-			var cell_luma := 0.0
-			var cell_color := Color(0.0, 0.0, 0.0, 0.0)
-			var cell_peak_luma := 0.0
-			var sample_count := 0
-			for sy in range(samples_per_axis):
-				for sx in range(samples_per_axis):
-					var px := int(((float(gx) + (float(sx) + 0.5) / float(samples_per_axis)) * float(width)) / float(_CAMERA_REACTIVE_GRID_WIDTH))
-					var py := int(((float(gy) + (float(sy) + 0.5) / float(samples_per_axis)) * float(height)) / float(_CAMERA_REACTIVE_GRID_HEIGHT))
-					px = clampi(px, 0, width - 1)
-					py = clampi(py, 0, height - 1)
-					var color := image.get_pixel(px, py)
-					var luma := color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
-					if editor_camera_reactive_test_frame == CAMERA_REACTIVE_EDITOR_TEST_FLASHLIGHT:
-						luma = clampf(pow(clampf(luma, 0.0, 1.0), 0.72) * 1.18, 0.0, 1.0)
-					if editor_camera_reactive_test_frame == CAMERA_REACTIVE_EDITOR_TEST_COLORS:
-						luma = maxf(luma, maxf(color.r, maxf(color.g, color.b)) * 0.82)
-					cell_luma += luma
-					cell_color += color
-					cell_peak_luma = maxf(cell_peak_luma, luma)
-					sample_count += 1
-			var divisor := maxf(float(sample_count), 1.0)
-			var averaged_luma := cell_luma / divisor
-			var averaged_color := cell_color * (1.0 / divisor)
-			var index := gy * _CAMERA_REACTIVE_GRID_WIDTH + gx
-			if averaged_luma > brightest_luma:
-				brightest_luma = averaged_luma
-				brightest_index = index
-			grid_luma.push_back(averaged_luma)
-			grid_colors.push_back(averaged_color)
-			grid_peak_luma.push_back(cell_peak_luma)
-			total_luma += averaged_luma
-			total_color += averaged_color
-
-	var cell_divisor := maxf(float(total_cells), 1.0)
-	estimate["active"] = true
-	estimate["grid_width"] = _CAMERA_REACTIVE_GRID_WIDTH
-	estimate["grid_height"] = _CAMERA_REACTIVE_GRID_HEIGHT
-	estimate["grid_luma"] = grid_luma
-	estimate["grid_colors"] = grid_colors
-	estimate["grid_peak_luma"] = grid_peak_luma
-	estimate["average_luma"] = total_luma / cell_divisor
-	estimate["average_color"] = total_color * (1.0 / cell_divisor)
-	estimate["brightest_index"] = brightest_index
-	estimate["brightest_luma"] = brightest_luma
-	return estimate
-
-func _ensure_shared_camera_reactive_nodes() -> void:
-	if _camera_reactive_environment == null:
-		_camera_reactive_environment = get_node_or_null(_CAMERA_REACTIVE_ENVIRONMENT_NAME) as WorldEnvironment
-	if _camera_reactive_environment == null:
-		_camera_reactive_environment = WorldEnvironment.new()
-		_camera_reactive_environment.name = _CAMERA_REACTIVE_ENVIRONMENT_NAME
-		add_child(_camera_reactive_environment)
-		_set_scene_owner(_camera_reactive_environment)
-
-	if _camera_reactive_light_root == null:
-		_camera_reactive_light_root = get_node_or_null(_CAMERA_REACTIVE_LIGHT_ROOT_NAME) as Node3D
-	if _camera_reactive_light_root == null:
-		_camera_reactive_light_root = Node3D.new()
-		_camera_reactive_light_root.name = _CAMERA_REACTIVE_LIGHT_ROOT_NAME
-		add_child(_camera_reactive_light_root)
-		_set_scene_owner(_camera_reactive_light_root)
-
-	_ensure_shared_camera_reactive_grid_lights()
-
-func _ensure_shared_camera_reactive_projector_nodes() -> void:
-	if _camera_reactive_light_root == null:
-		_ensure_shared_camera_reactive_nodes()
-	if _camera_reactive_light_root == null:
+func _update_effective_graphics_profile(force: bool) -> void:
+	var next_profile := enhanced_graphics_quality
+	if next_profile == GRAPHICS_PROFILE_AUTO:
+		if force or _effective_graphics_profile == GRAPHICS_PROFILE_AUTO:
+			next_profile = _resolve_default_auto_graphics_profile()
+		else:
+			next_profile = _effective_graphics_profile
+	if not force and next_profile == _effective_graphics_profile:
 		return
+	_effective_graphics_profile = next_profile
+	_apply_renderer_profile()
+	graphics_quality_changed.emit(enhanced_graphics_quality, _effective_graphics_profile)
 
-	if _camera_reactive_projector_light == null:
-		_camera_reactive_projector_light = _camera_reactive_light_root.get_node_or_null(_CAMERA_REACTIVE_PROJECTOR_LIGHT_NAME) as SpotLight3D
-	if _camera_reactive_projector_light == null:
-		_camera_reactive_projector_light = SpotLight3D.new()
-		_camera_reactive_projector_light.name = _CAMERA_REACTIVE_PROJECTOR_LIGHT_NAME
-		_camera_reactive_projector_light.visible = false
-		_camera_reactive_projector_light.light_projector = _get_camera_reactive_blank_projector_texture()
-		_camera_reactive_light_root.add_child(_camera_reactive_projector_light)
-		_set_scene_owner(_camera_reactive_projector_light)
-
-	if _camera_reactive_preview_plane == null:
-		_camera_reactive_preview_plane = _camera_reactive_light_root.get_node_or_null(_CAMERA_REACTIVE_PREVIEW_PLANE_NAME) as MeshInstance3D
-	if _camera_reactive_preview_plane == null:
-		_camera_reactive_preview_plane = MeshInstance3D.new()
-		_camera_reactive_preview_plane.name = _CAMERA_REACTIVE_PREVIEW_PLANE_NAME
-		_camera_reactive_preview_plane.mesh = QuadMesh.new()
-		_camera_reactive_preview_plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_camera_reactive_light_root.add_child(_camera_reactive_preview_plane)
-		_set_scene_owner(_camera_reactive_preview_plane)
-	if _camera_reactive_preview_material == null:
-		_camera_reactive_preview_material = _camera_reactive_preview_plane.get_surface_override_material(0) as StandardMaterial3D
-	if _camera_reactive_preview_material == null:
-		_camera_reactive_preview_material = StandardMaterial3D.new()
-		_camera_reactive_preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_camera_reactive_preview_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-		_camera_reactive_preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		_camera_reactive_preview_plane.set_surface_override_material(0, _camera_reactive_preview_material)
-	_camera_reactive_preview_plane.visible = false
-
-func _ensure_shared_camera_reactive_grid_lights() -> void:
-	if _camera_reactive_light_root == null:
+func _process_automatic_graphics_profile(delta: float) -> void:
+	if enhanced_graphics_quality != GRAPHICS_PROFILE_AUTO:
 		return
-	_remove_generated_camera_reactive_light_duplicates()
-	var grid_count := _CAMERA_REACTIVE_GRID_WIDTH * _CAMERA_REACTIVE_GRID_HEIGHT
-	_camera_reactive_lights.clear()
-	for index in range(grid_count):
-		var light_name := "CameraReactiveLight%d" % [index]
-		var light := _camera_reactive_light_root.get_node_or_null(light_name) as OmniLight3D
-		if light == null:
-			light = OmniLight3D.new()
-			light.name = light_name
-			_camera_reactive_light_root.add_child(light)
-			_set_scene_owner(light)
-		_camera_reactive_lights.append(light)
-
-func _remove_generated_camera_reactive_light_duplicates() -> void:
-	for child in _camera_reactive_light_root.get_children():
-		if child is OmniLight3D and String(child.name).begins_with("@OmniLight3D@"):
-			child.free()
-
-func _set_shared_camera_reactive_lights_visible(visible: bool) -> void:
-	if _camera_reactive_projector_light != null:
-		_camera_reactive_projector_light.visible = visible
-		if not visible:
-			_camera_reactive_projector_light.light_projector = _get_camera_reactive_blank_projector_texture()
-	if not visible and _camera_reactive_preview_plane != null:
-		_camera_reactive_preview_plane.visible = false
-	for light in _camera_reactive_lights:
-		if light != null:
-			light.visible = visible
-			if not visible:
-				_sync_camera_reactive_light_debug_mesh(light, Color.WHITE, 0.0, 0.0, false)
-
-func _configure_shared_camera_reactive_projector(center: Vector3, bounds_size: Vector2, average_color: Color, average_luma: float, sample: Dictionary) -> void:
-	_ensure_shared_camera_reactive_projector_nodes()
-	if _camera_reactive_projector_light == null:
+	_auto_profile_cooldown_remaining = maxf(0.0, _auto_profile_cooldown_remaining - delta)
+	_auto_profile_sample_elapsed += maxf(delta, 0.0)
+	if _auto_profile_sample_elapsed < _AUTO_PROFILE_SAMPLE_SECONDS:
 		return
-	var projector_texture := _get_camera_reactive_projector_texture(sample, average_color, average_luma)
-	if projector_texture == null:
-		_camera_reactive_projector_light.visible = false
-		_camera_reactive_projector_light.light_projector = _get_camera_reactive_blank_projector_texture()
-		_sync_camera_reactive_preview_plane(null, center, bounds_size)
-		_configure_shared_camera_reactive_projector_support_grid(center, bounds_size, average_color, average_luma, sample, false)
+	_auto_profile_sample_elapsed = 0.0
+	if _auto_profile_cooldown_remaining > 0.0:
 		return
-	_camera_reactive_projector_light.visible = true
-	_camera_reactive_projector_light.visible = false
-	_camera_reactive_projector_light.position = center + Vector3(0.0, 0.0, maxf(0.32, maxf(bounds_size.x, bounds_size.y) * 0.58))
-	_camera_reactive_projector_light.rotation = Vector3.ZERO
-	_camera_reactive_projector_light.light_projector = projector_texture
-	_camera_reactive_projector_light.light_color = Color.BLACK
-	_camera_reactive_projector_light.light_energy = 0.0
-	_camera_reactive_projector_light.light_specular = 0.6
-	_camera_reactive_projector_light.spot_range = maxf(bounds_size.x, bounds_size.y) * 6.0
-	_camera_reactive_projector_light.spot_angle = 89.0
-	_camera_reactive_projector_light.spot_attenuation = 0.02
-	_camera_reactive_projector_light.shadow_enabled = false
-	_sync_camera_reactive_preview_plane(projector_texture, center, bounds_size)
-	_configure_shared_camera_reactive_projector_support_grid(center, bounds_size, average_color, average_luma, sample, false)
-
-func _get_camera_reactive_projector_texture(sample: Dictionary, average_color: Color, average_luma: float) -> Texture2D:
-	var projector_texture := sample.get("projector_texture", null) as Texture2D
-	if projector_texture != null:
-		return projector_texture
-
-	if not bool(sample.get("active", false)):
-		return null
-
-	var grid_luma: Variant = sample.get("grid_luma", [])
-	var grid_colors: Variant = sample.get("grid_colors", [])
-	var width := 96
-	var height := 96
-	var image := Image.create(width, height, false, Image.FORMAT_RGBA8)
-	for y in range(height):
-		var gy := clampi(int(float(y) * float(_CAMERA_REACTIVE_GRID_HEIGHT) / float(height)), 0, _CAMERA_REACTIVE_GRID_HEIGHT - 1)
-		for x in range(width):
-			var gx := clampi(int(float(x) * float(_CAMERA_REACTIVE_GRID_WIDTH) / float(width)), 0, _CAMERA_REACTIVE_GRID_WIDTH - 1)
-			var index := gy * _CAMERA_REACTIVE_GRID_WIDTH + gx
-			var luma := _read_camera_reactive_float(grid_luma, index, average_luma)
-			var color := _read_camera_reactive_color(grid_colors, index, average_color)
-			var source_luma := maxf(color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722, 0.001)
-			var scaled_color := color * clampf(luma / source_luma, 0.0, 2.0)
-			image.set_pixel(x, y, Color(
-				clampf(scaled_color.r, 0.0, 1.0),
-				clampf(scaled_color.g, 0.0, 1.0),
-				clampf(scaled_color.b, 0.0, 1.0),
-				1.0
-			))
-
-	if _camera_reactive_generated_projector_texture == null:
-		_camera_reactive_generated_projector_texture = ImageTexture.create_from_image(image)
+	var fps := Engine.get_frames_per_second()
+	if fps > 0.0 and fps < _AUTO_PROFILE_DOWNGRADE_FPS and _effective_graphics_profile > GRAPHICS_PROFILE_BATTERY:
+		_effective_graphics_profile -= 1
+		_auto_profile_good_samples = 0
+		_auto_profile_cooldown_remaining = _AUTO_PROFILE_COOLDOWN_SECONDS
+		_apply_renderer_profile()
+		_sync_enhanced_graphics()
+		graphics_quality_changed.emit(enhanced_graphics_quality, _effective_graphics_profile)
+		return
+	if fps >= _AUTO_PROFILE_UPGRADE_FPS:
+		_auto_profile_good_samples += 1
 	else:
-		_camera_reactive_generated_projector_texture.update(image)
-	return _camera_reactive_generated_projector_texture
+		_auto_profile_good_samples = 0
+	var maximum_auto_profile := GRAPHICS_PROFILE_QUALITY if OS.has_feature("ios") else GRAPHICS_PROFILE_SHOWCASE
+	if _auto_profile_good_samples >= 3 and _effective_graphics_profile < maximum_auto_profile:
+		_effective_graphics_profile += 1
+		_auto_profile_good_samples = 0
+		_auto_profile_cooldown_remaining = _AUTO_PROFILE_COOLDOWN_SECONDS
+		_apply_renderer_profile()
+		_sync_enhanced_graphics()
+		graphics_quality_changed.emit(enhanced_graphics_quality, _effective_graphics_profile)
 
-func _get_camera_reactive_blank_projector_texture() -> Texture2D:
-	if _camera_reactive_blank_projector_texture == null:
-		var image := Image.create(1, 1, false, Image.FORMAT_RGBA8)
-		image.set_pixel(0, 0, Color.BLACK)
-		_camera_reactive_blank_projector_texture = ImageTexture.create_from_image(image)
-	return _camera_reactive_blank_projector_texture
-
-func _configure_shared_camera_reactive_grid(center: Vector3, bounds_size: Vector2, average_color: Color, average_luma: float, sample: Dictionary) -> void:
-	if _camera_reactive_projector_light != null:
-		_camera_reactive_projector_light.visible = false
-		_camera_reactive_projector_light.light_projector = _get_camera_reactive_blank_projector_texture()
-	_sync_camera_reactive_preview_plane(null, center, bounds_size)
-	var grid_luma: Variant = sample.get("grid_luma", [])
-	var grid_peak_luma: Variant = sample.get("grid_peak_luma", [])
-	var grid_colors: Variant = sample.get("grid_colors", [])
-	var light_z := maxf(0.18, bounds_size.y * 0.22)
-	var light_range := maxf(bounds_size.x, bounds_size.y) * 0.48
-	for gy in range(_CAMERA_REACTIVE_GRID_HEIGHT):
-		for gx in range(_CAMERA_REACTIVE_GRID_WIDTH):
-			var index := gy * _CAMERA_REACTIVE_GRID_WIDTH + gx
-			if index >= _camera_reactive_lights.size():
-				continue
-			var light := _camera_reactive_lights[index]
-			var x := (((float(gx) + 0.5) / float(_CAMERA_REACTIVE_GRID_WIDTH)) - 0.5) * bounds_size.x
-			var y := (0.5 - ((float(gy) + 0.5) / float(_CAMERA_REACTIVE_GRID_HEIGHT))) * bounds_size.y
-			var luma := _read_camera_reactive_float(grid_luma, index, average_luma)
-			var peak_luma := _read_camera_reactive_float(grid_peak_luma, index, luma)
-			var display_luma := maxf(luma, peak_luma * 0.72)
-			var color := _read_camera_reactive_color(grid_colors, index, average_color)
-			var display_color := _boost_camera_reactive_color_to_luma(color, display_luma)
-			light.visible = true
-			light.position = center + Vector3(x, y, light_z)
-			light.light_color = display_color
-			light.light_energy = 0.18 + pow(clampf(display_luma, 0.0, 1.0), 1.15) * 1.15
-			light.light_specular = 0.35
-			light.omni_range = light_range
-			light.omni_attenuation = 1.35
-			light.shadow_enabled = false
-			_sync_camera_reactive_light_debug_mesh(light, display_color, display_luma, bounds_size.y, true)
-
-func _configure_shared_camera_reactive_projector_support_grid(center: Vector3, bounds_size: Vector2, average_color: Color, average_luma: float, sample: Dictionary, enabled: bool) -> void:
-	var grid_luma: Variant = sample.get("grid_luma", [])
-	var grid_peak_luma: Variant = sample.get("grid_peak_luma", [])
-	var grid_colors: Variant = sample.get("grid_colors", [])
-	var light_z := maxf(0.12, bounds_size.y * 0.16)
-	var light_range := maxf(bounds_size.x, bounds_size.y) * 0.55
-	for gy in range(_CAMERA_REACTIVE_GRID_HEIGHT):
-		for gx in range(_CAMERA_REACTIVE_GRID_WIDTH):
-			var index := gy * _CAMERA_REACTIVE_GRID_WIDTH + gx
-			if index >= _camera_reactive_lights.size():
-				continue
-			var light := _camera_reactive_lights[index]
-			if light == null:
-				continue
-			if not enabled:
-				light.visible = false
-				_sync_camera_reactive_light_debug_mesh(light, Color.WHITE, 0.0, 0.0, false)
-				continue
-			var x := (((float(gx) + 0.5) / float(_CAMERA_REACTIVE_GRID_WIDTH)) - 0.5) * bounds_size.x
-			var y := (0.5 - ((float(gy) + 0.5) / float(_CAMERA_REACTIVE_GRID_HEIGHT))) * bounds_size.y
-			var luma := _read_camera_reactive_float(grid_luma, index, average_luma)
-			var peak_luma := _read_camera_reactive_float(grid_peak_luma, index, luma)
-			var display_luma := maxf(luma, peak_luma * 0.72)
-			var color := _read_camera_reactive_color(grid_colors, index, average_color)
-			var display_color := _boost_camera_reactive_color_to_luma(color, display_luma)
-			light.visible = true
-			light.position = center + Vector3(x, y, light_z)
-			light.light_color = display_color
-			light.light_energy = 0.18 + pow(clampf(display_luma, 0.0, 1.0), 1.15) * 1.15
-			light.light_specular = 0.3
-			light.omni_range = light_range
-			light.omni_attenuation = 1.35
-			light.shadow_enabled = false
-			_sync_camera_reactive_light_debug_mesh(light, display_color, display_luma, bounds_size.y, true)
-
-func _boost_camera_reactive_color_to_luma(color: Color, target_luma: float) -> Color:
-	var source_luma := maxf(color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722, 0.001)
-	var boost := clampf(target_luma / source_luma, 1.0, 8.0)
-	return Color(
-		clampf(color.r * boost, 0.0, 1.0),
-		clampf(color.g * boost, 0.0, 1.0),
-		clampf(color.b * boost, 0.0, 1.0),
-		color.a
-	)
-
-func _sync_camera_reactive_light_debug_mesh(light: OmniLight3D, color: Color, luma: float, bounds_height: float, visible: bool) -> void:
-	if light == null:
+func _apply_renderer_profile() -> void:
+	if Engine.is_editor_hint() or not is_inside_tree():
 		return
-	var debug_mesh := light.get_node_or_null(_CAMERA_REACTIVE_DEBUG_MESH_NAME) as MeshInstance3D
-	if debug_mesh == null:
-		debug_mesh = MeshInstance3D.new()
-		debug_mesh.name = _CAMERA_REACTIVE_DEBUG_MESH_NAME
-		var sphere := SphereMesh.new()
-		sphere.radial_segments = 16
-		sphere.rings = 8
-		debug_mesh.mesh = sphere
-		debug_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		light.add_child(debug_mesh)
-		_set_scene_owner(debug_mesh)
-	var should_show := (
-		Engine.is_editor_hint()
-		and editor_camera_reactive_light_debug_visible
-		and camera_reactive_lighting_enabled
-		and visible
-	)
-	debug_mesh.visible = should_show
-	if not should_show:
+	var viewport := get_viewport()
+	if viewport == null:
 		return
-	var radius := clampf(bounds_height * 0.026 + clampf(luma, 0.0, 1.0) * bounds_height * 0.028, 0.014, 0.11)
-	if debug_mesh.mesh is SphereMesh:
-		var sphere_mesh := debug_mesh.mesh as SphereMesh
-		sphere_mesh.radius = radius
-		sphere_mesh.height = radius * 2.0
-	var material := debug_mesh.get_surface_override_material(0) as StandardMaterial3D
-	if material == null:
-		material = StandardMaterial3D.new()
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.cull_mode = BaseMaterial3D.CULL_DISABLED
-		debug_mesh.set_surface_override_material(0, material)
-	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = color
-	material.emission_energy_multiplier = 1.8 + clampf(luma, 0.0, 1.0) * 4.2
+	var render_scale := 1.0
+	var msaa := Viewport.MSAA_4X
+	var shadow_atlas_size := 4096
+	var lod_threshold := 1.0
+	var target_fps := 60
+	match _effective_graphics_profile:
+		GRAPHICS_PROFILE_BATTERY:
+			render_scale = 0.72
+			msaa = Viewport.MSAA_DISABLED
+			shadow_atlas_size = 2048
+			lod_threshold = 2.0
+		GRAPHICS_PROFILE_BALANCED:
+			render_scale = 0.86
+			msaa = Viewport.MSAA_2X
+			shadow_atlas_size = 4096
+			lod_threshold = 1.35
+		GRAPHICS_PROFILE_QUALITY:
+			render_scale = 1.0
+			msaa = Viewport.MSAA_4X
+			shadow_atlas_size = 4096
+			lod_threshold = 1.0
+		GRAPHICS_PROFILE_SHOWCASE:
+			render_scale = 1.0
+			msaa = Viewport.MSAA_8X
+			shadow_atlas_size = 8192
+			lod_threshold = 0.6
+			var refresh_rate := DisplayServer.screen_get_refresh_rate()
+			target_fps = clampi(roundi(refresh_rate), 60, 120) if refresh_rate > 0.0 else 120
+	viewport.scaling_3d_scale = render_scale
+	viewport.msaa_3d = msaa
+	viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
+	viewport.use_taa = false
+	viewport.positional_shadow_atlas_size = shadow_atlas_size
+	viewport.mesh_lod_threshold = lod_threshold
+	RenderingServer.directional_shadow_atlas_set_size(shadow_atlas_size, false)
+	Engine.max_fps = target_fps
 
-func _sync_camera_reactive_preview_plane(texture: Texture2D, center: Vector3, bounds_size: Vector2) -> void:
-	if _camera_reactive_preview_plane == null:
-		return
-	var should_show := (
-		Engine.is_editor_hint()
-		and editor_camera_reactive_preview_plane_visible
-		and camera_reactive_lighting_enabled
-		and texture != null
-	)
-	_camera_reactive_preview_plane.visible = should_show
-	if not should_show:
-		return
-	if _camera_reactive_preview_material != null:
-		_camera_reactive_preview_material.albedo_texture = texture
-		_camera_reactive_preview_material.emission_enabled = true
-		_camera_reactive_preview_material.emission_texture = texture
-		_camera_reactive_preview_material.emission_energy_multiplier = 6.0
-		_camera_reactive_preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_camera_reactive_preview_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-	var preview_width := bounds_size.x
-	var preview_height := bounds_size.y
-	if _camera_reactive_preview_plane.mesh is QuadMesh:
-		var quad := _camera_reactive_preview_plane.mesh as QuadMesh
-		quad.size = Vector2(preview_width, preview_height)
-	_camera_reactive_preview_plane.position = center + Vector3(
-		0.0,
-		0.0,
-		-bounds_size.y * 0.5
-	)
-	_camera_reactive_preview_plane.rotation = Vector3.ZERO
-	_camera_reactive_preview_plane.gi_mode = GeometryInstance3D.GI_MODE_DYNAMIC
-
-func _get_shared_camera_reactive_window_size() -> Vector2:
-	var authored_size := _get_authored_window_size_meters()
-	if authored_size.x <= 0.0 or authored_size.y <= 0.0:
-		authored_size = Vector2(_get_authored_reference_width_meters(), AUTHORED_REFERENCE_WINDOW_HEIGHT_METERS)
-	var scale := _last_applied_view_scale if _last_applied_view_scale > 0.0 else 1.0
-	return authored_size * scale
-
-func _get_shared_camera_reactive_window_center() -> Vector3:
-	if _view_bounds_node != null:
-		return to_local(_view_bounds_node.global_position)
-	return Vector3.ZERO
-
-func _get_camera_reactive_average_color(sample: Dictionary) -> Color:
-	var color_raw: Variant = sample.get("average_color", Color(1.0, 0.92, 0.78, 1.0))
-	if color_raw is Color:
-		return color_raw
-	return Color(1.0, 0.92, 0.78, 1.0)
-
-func _read_camera_reactive_float(values: Variant, index: int, fallback: float) -> float:
-	if values is PackedFloat32Array and index < values.size():
-		return float(values[index])
-	if values is Array and index < values.size():
-		return float(values[index])
-	return fallback
-
-func _read_camera_reactive_color(values: Variant, index: int, fallback: Color) -> Color:
-	if values is PackedColorArray and index < values.size():
-		return values[index]
-	if values is Array and index < values.size() and values[index] is Color:
-		return values[index]
-	return fallback
 
 func _ensure_enhanced_graphics_nodes() -> void:
 	_enhanced_environment = get_node_or_null(_ENHANCED_GRAPHICS_ENVIRONMENT_NAME) as WorldEnvironment
@@ -1327,11 +1217,59 @@ func get_current_view_name() -> String:
 	return current_view_name
 
 func get_available_view_count() -> int:
-	_refresh_views()
+	_ensure_views_initialized()
 	return _available_views.size()
+
+func get_available_view_name(index: int) -> String:
+	_ensure_views_initialized()
+	if index < 0 or index >= _available_views.size():
+		return ""
+	return _available_views[index]
+
+func get_available_view_descriptor(index: int) -> ViewDescriptor:
+	var view_name := get_available_view_name(index)
+	if view_name == "":
+		return null
+	return _available_view_descriptors.get(view_name) as ViewDescriptor
+
+func get_available_view_category(index: int) -> String:
+	var descriptor := get_available_view_descriptor(index)
+	return descriptor.category if descriptor != null else "Other"
+
+func get_available_view_thumbnail_path(index: int) -> String:
+	var descriptor := get_available_view_descriptor(index)
+	return descriptor.thumbnail_path if descriptor != null else ""
+
+func get_current_view_performance_tier() -> int:
+	var descriptor := _get_current_view_descriptor()
+	return descriptor.performance_tier if descriptor != null else ViewDescriptor.PerformanceTier.MEDIUM
+
+func get_current_view_index() -> int:
+	_ensure_views_initialized()
+	return _available_views.find(current_view_name)
+
+func set_current_view_index(index: int) -> void:
+	_ensure_views_initialized()
+	if index < 0 or index >= _available_views.size():
+		return
+	set_current_view_name(_available_views[index])
+
+func set_current_view_name(view_name: String) -> void:
+	if view_name == "":
+		return
+	current_view_scene = null
+	_load_view(view_name)
 
 func get_view_debug_status() -> String:
 	return _last_view_load_status
+
+func is_view_load_in_progress() -> bool:
+	return _requested_view_scene_path != ""
+
+func get_pending_view_name() -> String:
+	if _queued_view_name != "":
+		return _queued_view_name
+	return _requested_view_name
 
 func current_view_wants_primary_touch_input() -> bool:
 	if _instantiated_view == null:
@@ -1412,11 +1350,14 @@ func previous_view() -> void:
 	_step_view(-1)
 
 func _step_view(direction: int) -> void:
-	_refresh_views()
+	_ensure_views_initialized()
 	if _available_views.is_empty():
 		return
 
-	var current_index := _available_views.find(current_view_name)
+	var navigation_view_name := get_pending_view_name()
+	if navigation_view_name == "":
+		navigation_view_name = current_view_name
+	var current_index := _available_views.find(navigation_view_name)
 	if current_index < 0 and current_view_scene != null:
 		current_index = _find_view_index_for_scene(current_view_scene)
 	if current_index < 0:
@@ -1441,6 +1382,23 @@ func _step_view(direction: int) -> void:
 	_log_view_load("no loadable view", current_view_name, "")
 	push_error("No exported view scenes could be loaded.")
 
+func _enforce_viewer_camera() -> void:
+	if viewer_camera_path.is_empty() or not is_inside_tree():
+		return
+	var viewer_camera := get_node_or_null(viewer_camera_path) as Camera3D
+	if viewer_camera == null:
+		return
+	if get_viewport().get_camera_3d() != viewer_camera:
+		if _instantiated_view != null:
+			_deactivate_embedded_cameras(_instantiated_view)
+		viewer_camera.make_current()
+
+func _deactivate_embedded_cameras(node: Node) -> void:
+	if node is Camera3D:
+		(node as Camera3D).current = false
+	for child in node.get_children():
+		_deactivate_embedded_cameras(child)
+
 func _log_view_load(state: String, view_name: String, scene_path: String) -> void:
 	if not log_view_loads:
 		return
@@ -1459,6 +1417,11 @@ func _find_view_index_for_scene(scene: PackedScene) -> int:
 	if scene == null:
 		return -1
 	var scene_path := scene.resource_path
+	return _find_view_index_for_scene_path(scene_path)
+
+func _find_view_index_for_scene_path(scene_path: String) -> int:
+	if scene_path == "":
+		return -1
 	for index in range(_available_views.size()):
 		if _get_view_scene_path(_available_views[index]) == scene_path:
 			return index
@@ -1504,6 +1467,7 @@ func _apply_view_scale(force: bool) -> void:
 	if _instantiated_view == null:
 		return
 
+	_sync_screen_scaler_virtual_window_override()
 	var target_scale := _get_target_view_scale()
 	var target_position := _get_target_view_position(target_scale)
 	var handles_scale_internally := _view_handles_scale_internally()
@@ -1518,15 +1482,18 @@ func _apply_view_scale(force: bool) -> void:
 	if handles_scale_internally:
 		_instantiated_view.scale = _instantiated_view_base_scale
 		_instantiated_view.position = _get_target_view_position(1.0)
+		_sync_view_presentation_scale(1.0)
 		_sync_internal_view_physical_size(target_scale)
 	else:
+		_clear_internal_view_physical_size()
 		_instantiated_view.scale = _instantiated_view_base_scale * target_scale
 		_instantiated_view.position = target_position
+		_sync_view_presentation_scale(target_scale)
 	_sync_screen_plane_reference()
-	if _is_shared_camera_reactive_lighting_active():
-		_sync_shared_camera_reactive_lighting()
 
 func _view_handles_scale_internally() -> bool:
+	if _view_scale_handling_mode != VIEW_SCALE_HANDLING_SCENE_PREFERRED:
+		return false
 	if _instantiated_view == null:
 		return false
 	if not _instantiated_view.has_method("handles_view_scale_internally"):
@@ -1541,6 +1508,16 @@ func _sync_internal_view_physical_size(target_scale: float) -> void:
 		return
 	_instantiated_view.call("set_runtime_view_size_meters", authored_size * target_scale)
 
+func _clear_internal_view_physical_size() -> void:
+	if _instantiated_view == null or not _instantiated_view.has_method("set_runtime_view_size_meters"):
+		return
+	_instantiated_view.call("set_runtime_view_size_meters", Vector2.ZERO)
+
+func _sync_view_presentation_scale(scale: float) -> void:
+	if _instantiated_view == null or not _instantiated_view.has_method("set_runtime_presentation_scale"):
+		return
+	_instantiated_view.call("set_runtime_presentation_scale", maxf(scale, 0.0001))
+
 func _get_target_view_scale() -> float:
 	var target_scale := 1.0
 	if view_scale_mode == VIEW_SCALE_NO_SCALING:
@@ -1548,7 +1525,7 @@ func _get_target_view_scale() -> float:
 
 	var authored_size := _get_authored_window_size_meters()
 	if _screen_scaler != null and authored_size.x > 0.0 and authored_size.y > 0.0:
-		var virtual_height := _screen_scaler.virtual_window_height
+		var virtual_height := _get_screen_scaler_virtual_window_height_meters()
 		if virtual_height > 0.0:
 			var height_scale := virtual_height / authored_size.y
 			var width_scale := height_scale
@@ -1581,14 +1558,9 @@ func _get_target_view_position(target_scale: float) -> Vector3:
 	return target_center - scaled_bounds_offset
 
 func _get_target_window_center_position() -> Vector3:
-	if _instantiated_view == null or _window_center == null:
+	if _window_center == null:
 		return _instantiated_view_base_position
-
-	var view_parent := _instantiated_view.get_parent() as Node3D
-	if view_parent == null:
-		return _instantiated_view_base_position
-
-	return view_parent.to_local(_window_center.global_position)
+	return to_local(_window_center.global_position)
 
 func _get_authored_window_size_meters() -> Vector2:
 	var local_bounds_size := _get_view_bounds_local_size_meters()
@@ -1621,9 +1593,27 @@ func _get_authored_reference_width_meters() -> float:
 func _get_virtual_window_width_meters() -> float:
 	if _screen_scaler == null:
 		return 0.0
+	if _screen_scaler.has_method("get_virtual_window_width_meters"):
+		return float(_screen_scaler.call("get_virtual_window_width_meters"))
 	if _screen_scaler.physical_width_meters <= 0.0 or _screen_scaler.physical_height_meters <= 0.0:
 		return 0.0
 	return _screen_scaler.physical_width_meters * _screen_scaler.tracking_scale_multiplier
+
+func _get_screen_scaler_virtual_window_height_meters() -> float:
+	if _screen_scaler == null:
+		return 0.0
+	if _screen_scaler.has_method("get_virtual_window_height_meters"):
+		return float(_screen_scaler.call("get_virtual_window_height_meters"))
+	return _screen_scaler.virtual_window_height
+
+func _sync_screen_scaler_virtual_window_override() -> void:
+	if _screen_scaler == null or not _screen_scaler.has_method("set_runtime_virtual_window_height_override"):
+		return
+	if _view_scale_handling_mode == VIEW_SCALE_HANDLING_VIEWER_SCALED_AUTHORED:
+		var authored_size := _get_authored_window_size_meters()
+		_screen_scaler.call("set_runtime_virtual_window_height_override", authored_size.y if authored_size.y > 0.0 else 0.0)
+	else:
+		_screen_scaler.call("set_runtime_virtual_window_height_override", 0.0)
 
 func _resolve_view_bounds() -> void:
 	_view_bounds_node = null
@@ -1669,12 +1659,15 @@ func _is_active_view_bounds(node: Node) -> bool:
 	return true
 
 func _sync_view_bounds_black_fill() -> void:
+	_set_view_bounds_black_fill_enabled(black_fill_enabled)
+
+func _set_view_bounds_black_fill_enabled(enabled: bool) -> void:
 	if _view_bounds_node == null:
 		return
 	if _view_bounds_node.has_method("set_black_fill_enabled"):
-		_view_bounds_node.call("set_black_fill_enabled", black_fill_enabled)
+		_view_bounds_node.call("set_black_fill_enabled", enabled)
 	else:
-		_view_bounds_node.set("black_fill_enabled", black_fill_enabled)
+		_view_bounds_node.set("black_fill_enabled", enabled)
 
 func _sync_view_bounds_preview() -> void:
 	if _view_bounds_node == null:
@@ -1690,7 +1683,7 @@ func _sync_view_bounds_runtime_window_size() -> void:
 		_view_bounds_node.call("set_runtime_window_size_meters", Vector2.ZERO)
 		return
 
-	var runtime_height := _screen_scaler.virtual_window_height
+	var runtime_height := _get_screen_scaler_virtual_window_height_meters()
 	var runtime_width := _get_virtual_window_width_meters()
 	if runtime_width <= 0.0 or runtime_height <= 0.0:
 		_view_bounds_node.call("set_runtime_window_size_meters", Vector2.ZERO)
@@ -1761,11 +1754,17 @@ func _sync_fallback_directional_light() -> void:
 	if _fallback_directional_light == null:
 		return
 
+	var ownership := _get_effective_current_lighting_ownership()
+	var viewer_may_supply_fallback := ownership in [
+		ViewDescriptor.LightingOwnership.LEGACY_AUTO,
+		ViewDescriptor.LightingOwnership.VIEWER_MANAGED,
+	]
 	var has_view_directional_light := _view_has_directional_light(_instantiated_view)
+	var shared_rig_active := _enhanced_key_light != null and _enhanced_key_light.visible
 	_fallback_directional_light.visible = (
-		not has_view_directional_light
-		and enhanced_graphics_quality == ENHANCED_GRAPHICS_OFF
-		and not _is_shared_camera_reactive_lighting_active()
+		viewer_may_supply_fallback
+		and not has_view_directional_light
+		and not shared_rig_active
 	)
 
 func _sync_fallback_world_environment() -> void:
@@ -1773,11 +1772,17 @@ func _sync_fallback_world_environment() -> void:
 	if _fallback_world_environment == null:
 		return
 
+	var ownership := _get_effective_current_lighting_ownership()
+	var viewer_may_supply_fallback := ownership in [
+		ViewDescriptor.LightingOwnership.LEGACY_AUTO,
+		ViewDescriptor.LightingOwnership.VIEWER_MANAGED,
+	]
 	var has_view_world_environment := _view_has_world_environment(_instantiated_view)
+	var shared_environment_active := _enhanced_environment != null and _enhanced_environment.environment != null
 	var should_use_fallback_environment := (
-		not has_view_world_environment
-		and enhanced_graphics_quality == ENHANCED_GRAPHICS_OFF
-		and not _is_shared_camera_reactive_lighting_active()
+		viewer_may_supply_fallback
+		and not has_view_world_environment
+		and not shared_environment_active
 	)
 	_fallback_world_environment.environment = _fallback_world_environment_resource if should_use_fallback_environment else null
 
@@ -1793,12 +1798,24 @@ func _view_has_directional_light(node: Node) -> bool:
 
 	return false
 
+func _view_has_light(node: Node) -> bool:
+	if node == null:
+		return false
+
+	for child in node.get_children():
+		if child is Light3D:
+			return true
+		if _view_has_light(child):
+			return true
+
+	return false
+
 func _view_has_world_environment(node: Node) -> bool:
 	if node == null:
 		return false
 
 	for child in node.get_children():
-		if child is WorldEnvironment:
+		if child is WorldEnvironment and (child as WorldEnvironment).environment != null:
 			return true
 		if _view_has_world_environment(child):
 			return true

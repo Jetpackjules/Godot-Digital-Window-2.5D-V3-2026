@@ -1,0 +1,279 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Theme" path="res://ios/iphone_settings_theme.tres" id="1_theme"]
+
+[node name="IPhoneSettingsUI" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme = ExtResource("1_theme")
+
+[node name="SettingsPanel" type="PanelContainer" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 18.0
+offset_top = 58.0
+offset_right = 498.0
+offset_bottom = 698.0
+mouse_filter = 0
+
+[node name="Scroll" type="ScrollContainer" parent="SettingsPanel"]
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="Margin" type="MarginContainer" parent="SettingsPanel/Scroll"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 14
+
+[node name="Column" type="VBoxContainer" parent="SettingsPanel/Scroll/Margin"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "Window Settings"
+horizontal_alignment = 1
+
+[node name="FPSLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "60 fps"
+horizontal_alignment = 1
+
+[node name="TrackingHeader" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.42, 0.88, 0.81, 1)
+text = "Tracking offset"
+
+[node name="OffsetXLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Horizontal: 0 mm"
+
+[node name="OffsetXSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+min_value = -150.0
+max_value = 150.0
+step = 1.0
+
+[node name="OffsetYLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Vertical: 0 mm"
+
+[node name="OffsetYSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+min_value = -150.0
+max_value = 150.0
+step = 1.0
+
+[node name="SceneHeader" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.42, 0.88, 0.81, 1)
+text = "Scene"
+
+[node name="SceneRow" type="HBoxContainer" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SceneOption" type="OptionButton" parent="SettingsPanel/Scroll/Margin/Column/SceneRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="BrowseScenesButton" type="Button" parent="SettingsPanel/Scroll/Margin/Column/SceneRow"]
+layout_mode = 2
+tooltip_text = "Browse scenes"
+text = "Browse"
+
+[node name="ScaleModeLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Scale mode"
+
+[node name="ScaleModeOption" type="OptionButton" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+
+[node name="ScaleHandlingLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Scale handling"
+
+[node name="ScaleHandlingOption" type="OptionButton" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+
+[node name="ViewboxScaleLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "View scale: 100%"
+
+[node name="ViewboxScaleSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+min_value = 50.0
+max_value = 120.0
+step = 1.0
+value = 100.0
+
+[node name="BallSizeLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Ball size: 100%"
+
+[node name="BallSizeSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+min_value = 50.0
+max_value = 400.0
+step = 1.0
+value = 100.0
+
+[node name="PressDepthLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Press depth: 320 mm"
+
+[node name="PressDepthSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+min_value = 5.0
+max_value = 800.0
+step = 1.0
+value = 320.0
+
+[node name="PopHeightLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Pop height: 90%"
+
+[node name="PopHeightSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+max_value = 300.0
+step = 1.0
+value = 90.0
+
+[node name="TileSizeLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Tile size: 160 mm"
+
+[node name="TileSizeSlider" type="HSlider" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+min_value = 40.0
+max_value = 3000.0
+step = 1.0
+value = 160.0
+
+[node name="PresentationHeader" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.42, 0.88, 0.81, 1)
+text = "Presentation"
+
+[node name="BlackFillCheck" type="CheckBox" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Black fill"
+
+[node name="SceneCacheCheck" type="CheckBox" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Adjacent scene cache"
+
+[node name="SceneShadowsCheck" type="CheckBox" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Scene shadows"
+
+[node name="GraphicsLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Graphics profile"
+
+[node name="GraphicsOption" type="OptionButton" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+
+[node name="StudioLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Studio lighting"
+
+[node name="StudioOption" type="OptionButton" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+
+[node name="TrackingSmoothingCheck" type="CheckBox" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Smooth head tracking"
+
+[node name="InertialFallbackCheck" type="CheckBox" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Inertial tracking fallback"
+
+[node name="ScreenReferenceLabel" type="Label" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Screen reference"
+
+[node name="ScreenReferenceOption" type="OptionButton" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+
+[node name="ZeroOffsetButton" type="Button" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Zero manual offset"
+
+[node name="ViewButtons" type="HBoxContainer" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PreviousViewButton" type="Button" parent="SettingsPanel/Scroll/Margin/Column/ViewButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "< Previous"
+
+[node name="NextViewButton" type="Button" parent="SettingsPanel/Scroll/Margin/Column/ViewButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Next >"
+
+[node name="CloseButton" type="Button" parent="SettingsPanel/Scroll/Margin/Column"]
+layout_mode = 2
+text = "Close"
+
+[node name="SceneBrowserPanel" type="PanelContainer" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 18.0
+offset_top = 58.0
+offset_right = 498.0
+offset_bottom = 698.0
+mouse_filter = 0
+
+[node name="Margin" type="MarginContainer" parent="SceneBrowserPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 14
+
+[node name="Column" type="VBoxContainer" parent="SceneBrowserPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Header" type="HBoxContainer" parent="SceneBrowserPanel/Margin/Column"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BackButton" type="Button" parent="SceneBrowserPanel/Margin/Column/Header"]
+layout_mode = 2
+text = "< Back"
+
+[node name="Title" type="Label" parent="SceneBrowserPanel/Margin/Column/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 22
+text = "Scenes"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="SceneBrowserPanel/Margin/Column/Header"]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="SceneBrowserPanel/Margin/Column"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="SceneGrid" type="GridContainer" parent="SceneBrowserPanel/Margin/Column/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 2
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 10

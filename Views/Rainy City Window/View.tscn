@@ -1,0 +1,79 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://Views/Rainy City Window/rainy_city_window.gd" id="1_city"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="2_bounds"]
+
+[sub_resource type="Environment" id="Environment_city"]
+background_mode = 1
+background_color = Color(0.004, 0.008, 0.018, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.14, 0.2, 0.31, 1)
+ambient_light_energy = 0.46
+reflected_light_source = 2
+tonemap_mode = 3
+tonemap_exposure = 1.08
+ssao_enabled = true
+ssao_radius = 0.09
+ssao_intensity = 1.35
+ssil_enabled = true
+ssil_radius = 0.12
+ssil_intensity = 0.55
+glow_enabled = true
+glow_intensity = 0.52
+glow_strength = 0.82
+glow_bloom = 0.12
+fog_enabled = true
+fog_light_color = Color(0.09, 0.16, 0.23, 1)
+fog_light_energy = 0.42
+fog_density = 0.035
+fog_height = -0.14
+fog_height_density = 2.2
+
+[node name="Rainy City Window" type="Node3D"]
+script = ExtResource("1_city")
+
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("2_bounds")
+bounds_width_meters = 0.587
+bounds_height_meters = 0.33
+show_preview_in_game = false
+preview_color = Color(0.12, 0.72, 1, 0.8)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_city")
+
+[node name="MoonKey" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-38, -24, 4)
+light_color = Color(0.54, 0.68, 1, 1)
+light_energy = 0.72
+light_indirect_energy = 0.65
+shadow_enabled = true
+directional_shadow_max_distance = 2.0
+
+[node name="CyanBounce" type="OmniLight3D" parent="."]
+position = Vector3(-0.22, 0.02, 0.05)
+light_color = Color(0.08, 0.72, 1, 1)
+light_energy = 0.52
+light_indirect_energy = 0.35
+omni_range = 0.82
+omni_attenuation = 1.35
+shadow_enabled = false
+
+[node name="MagentaBounce" type="OmniLight3D" parent="."]
+position = Vector3(0.24, -0.035, -0.08)
+light_color = Color(1, 0.08, 0.46, 1)
+light_energy = 0.38
+light_indirect_energy = 0.28
+omni_range = 0.7
+omni_attenuation = 1.45
+shadow_enabled = false
+
+[node name="LocalReflections" type="ReflectionProbe" parent="."]
+position = Vector3(0, 0, -0.34)
+intensity = 0.62
+max_distance = 1.4
+size = Vector3(0.66, 0.42, 0.95)
+interior = true
+ambient_mode = 1
+ambient_color = Color(0.12, 0.2, 0.3, 1)
+ambient_color_energy = 0.42

@@ -44,6 +44,12 @@ extends Node3D
 	set(value):
 		bevel_meters = value
 		_rebuild_if_ready(true)
+@export var scene_shadows_enabled: bool = false :
+	set(value):
+		if scene_shadows_enabled == value:
+			return
+		scene_shadows_enabled = value
+		_sync_shadow_settings()
 
 @export_group("Spring")
 @export_range(0.005, 0.8, 0.005) var press_depth_meters: float = 0.5
@@ -72,14 +78,19 @@ extends Node3D
 @export_range(0, 250, 1) var haptic_cooldown_msec: int = 35
 
 const _TILE_ROOT_NAME := "Tiles"
+const _SHADOW_VISUAL_ROOT_NAME := "TileShadowVisuals"
 const _CONTACT_VISUAL_ROOT_NAME := "ContactVisuals"
 const _LIGHT_NAME := "SurfaceLight"
 const _MOUSE_CONTACT_ID := -1
 
 var _tile_root: Node3D
+var _shadow_visual_root: Node3D
 var _contact_visual_root: Node3D
-var _tiles: Array[MeshInstance3D] = []
-var _tile_sides: Array[MeshInstance3D] = []
+var _tile_top_instances: MultiMeshInstance3D
+var _tile_side_instances: MultiMeshInstance3D
+var _tile_top_multimesh: MultiMesh
+var _tile_side_multimesh: MultiMesh
+var _tile_shadow_visuals: Dictionary = {}
 var _tile_states: Array[Dictionary] = []
 var _columns: int = 0
 var _rows: int = 0
@@ -92,6 +103,7 @@ var _tile_mesh: ArrayMesh
 var _tile_side_mesh: ArrayMesh
 var _contact_visual_mesh: ArrayMesh
 var _contact_visual_material: StandardMaterial3D
+var _tile_shadow_material: StandardMaterial3D
 var _side_outline_material: StandardMaterial3D
 var _side_texture: Texture2D
 var _tile_mesh_size: Vector3 = Vector3.ZERO
@@ -184,11 +196,38 @@ func _ensure_roots() -> void:
 		_tile_root = Node3D.new()
 		_tile_root.name = _TILE_ROOT_NAME
 		add_child(_tile_root)
+	_shadow_visual_root = get_node_or_null(_SHADOW_VISUAL_ROOT_NAME) as Node3D
+	if _shadow_visual_root == null:
+		_shadow_visual_root = Node3D.new()
+		_shadow_visual_root.name = _SHADOW_VISUAL_ROOT_NAME
+		add_child(_shadow_visual_root)
 	_contact_visual_root = get_node_or_null(_CONTACT_VISUAL_ROOT_NAME) as Node3D
 	if _contact_visual_root == null:
 		_contact_visual_root = Node3D.new()
 		_contact_visual_root.name = _CONTACT_VISUAL_ROOT_NAME
 		add_child(_contact_visual_root)
+	_tile_top_instances = _tile_root.get_node_or_null("SpringTileTops") as MultiMeshInstance3D
+	if _tile_top_instances == null:
+		_tile_top_instances = MultiMeshInstance3D.new()
+		_tile_top_instances.name = "SpringTileTops"
+		_tile_root.add_child(_tile_top_instances)
+	_tile_side_instances = _tile_root.get_node_or_null("SpringTileSides") as MultiMeshInstance3D
+	if _tile_side_instances == null:
+		_tile_side_instances = MultiMeshInstance3D.new()
+		_tile_side_instances.name = "SpringTileSides"
+		_tile_root.add_child(_tile_side_instances)
+	_remove_legacy_tile_nodes()
+
+func _remove_legacy_tile_nodes() -> void:
+	for child in _tile_root.get_children():
+		if child == _tile_top_instances or child == _tile_side_instances:
+			continue
+		if child.name.begins_with("SpringTile_") or child.name.begins_with("SpringTileSide_"):
+			child.free()
+	for child in _shadow_visual_root.get_children():
+		if child.name.begins_with("SpringTileShadow_"):
+			child.free()
+	_tile_shadow_visuals.clear()
 
 func _ensure_materials() -> void:
 	if _top_material != null and _side_material != null and not _materials_dirty:
@@ -200,11 +239,11 @@ func _ensure_materials() -> void:
 
 	_side_texture = null
 	_side_material = StandardMaterial3D.new()
-	_side_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_side_material.albedo_color = side_color
 	_side_material.albedo_texture = _get_side_texture()
 	_side_material.roughness = 0.94
 	_side_material.metallic = 0.0
+	_apply_shadow_material_mode()
 
 	_side_outline_material = StandardMaterial3D.new()
 	_side_outline_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -215,6 +254,7 @@ func _ensure_materials() -> void:
 	_contact_visual_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_contact_visual_material.albedo_color = Color(0.42, 0.42, 0.42, 0.34)
 	_contact_visual_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_tile_shadow_material = null
 	_tile_mesh = null
 	_tile_side_mesh = null
 	_contact_visual_mesh = null
@@ -227,20 +267,7 @@ func _recalculate_grid(bounds_size: Vector2) -> void:
 
 func _sync_tiles() -> void:
 	var needed_count: int = _columns * _rows
-	while _tiles.size() < needed_count:
-		var tile: MeshInstance3D = MeshInstance3D.new()
-		tile.name = "SpringTile_%03d" % [_tiles.size() + 1]
-		tile.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_tile_root.add_child(tile)
-		_tiles.append(tile)
-
-		var side: MeshInstance3D = MeshInstance3D.new()
-		side.name = "SpringTileSide_%03d" % [_tile_sides.size() + 1]
-		side.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		side.visible = false
-		_tile_root.add_child(side)
-		_tile_sides.append(side)
-
+	while _tile_states.size() < needed_count:
 		_tile_states.append({
 			"offset": 0.0,
 			"velocity": 0.0,
@@ -249,17 +276,28 @@ func _sync_tiles() -> void:
 			"frozen": false,
 		})
 
-	for index in range(_tiles.size()):
-		var tile: MeshInstance3D = _tiles[index]
-		var side: MeshInstance3D = _tile_sides[index]
-		if index >= needed_count:
-			tile.visible = false
-			side.visible = false
-			continue
-		tile.visible = true
-		_configure_tile_mesh(tile)
-		_configure_tile_side_mesh(side)
+	_configure_tile_mesh()
+	_configure_tile_side_mesh()
+	_tile_top_multimesh = _make_tile_multimesh(_tile_mesh, needed_count)
+	_tile_side_multimesh = _make_tile_multimesh(_tile_side_mesh, needed_count)
+	_tile_top_instances.multimesh = _tile_top_multimesh
+	_tile_side_instances.multimesh = _tile_side_multimesh
+	_tile_top_instances.cast_shadow = _get_tile_top_shadow_casting_setting()
+	_tile_side_instances.cast_shadow = _get_tile_side_shadow_casting_setting()
+	for index in range(needed_count):
 		_apply_tile_transform(index)
+	for index_variant in _tile_shadow_visuals.keys():
+		var index: int = int(index_variant)
+		if index >= needed_count:
+			_hide_tile_shadow_visual(index)
+
+func _make_tile_multimesh(mesh: Mesh, instance_count: int) -> MultiMesh:
+	var multimesh := MultiMesh.new()
+	multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	multimesh.mesh = mesh
+	multimesh.instance_count = instance_count
+	multimesh.visible_instance_count = instance_count
+	return multimesh
 
 func _sync_contact_visuals() -> void:
 	if _contact_visual_root == null:
@@ -288,7 +326,7 @@ func _sync_contact_visuals() -> void:
 		visual.position = Vector3(point.x, point.y, 0.004)
 		visual.scale = Vector3(radius, radius, 1.0)
 
-func _configure_tile_mesh(tile: MeshInstance3D) -> void:
+func _configure_tile_mesh() -> void:
 	var mesh_size: Vector3 = Vector3(_tile_size.x, _tile_size.y, 0.0)
 	if bevel_meters > 0.0:
 		mesh_size = Vector3(
@@ -299,16 +337,14 @@ func _configure_tile_mesh(tile: MeshInstance3D) -> void:
 	if _tile_mesh == null or not _tile_mesh_size.is_equal_approx(mesh_size):
 		_tile_mesh = _make_tile_top_mesh(Vector2(mesh_size.x, mesh_size.y))
 		_tile_mesh_size = mesh_size
-	tile.mesh = _tile_mesh
 
-func _configure_tile_side_mesh(side: MeshInstance3D) -> void:
+func _configure_tile_side_mesh() -> void:
 	var mesh_size: Vector2 = _tile_size
 	if bevel_meters > 0.0:
 		mesh_size = Vector2(maxf(0.001, _tile_size.x - bevel_meters), maxf(0.001, _tile_size.y - bevel_meters))
 	if _tile_side_mesh == null or not _tile_side_mesh_size.is_equal_approx(mesh_size):
 		_tile_side_mesh = _make_tile_side_mesh(mesh_size)
 		_tile_side_mesh_size = mesh_size
-	side.mesh = _tile_side_mesh
 
 func _make_tile_top_mesh(size: Vector2) -> ArrayMesh:
 	var half_width: float = size.x * 0.5
@@ -432,29 +468,27 @@ func _add_mesh_surface(mesh: ArrayMesh, vertices: Array, normal: Vector3, materi
 	mesh.surface_set_material(mesh.get_surface_count() - 1, material)
 
 func _apply_tile_transform(index: int) -> void:
-	if index < 0 or index >= _tiles.size():
+	if index < 0 or index >= _tile_states.size() or _tile_top_multimesh == null:
 		return
-	var tile: MeshInstance3D = _tiles[index]
 	var state: Dictionary = _tile_states[index]
 	var column: int = index % _columns
 	var row: int = floori(float(index) / float(_columns))
 	var x: float = -_bounds_size.x * 0.5 + _tile_size.x * (float(column) + 0.5)
 	var y: float = -_bounds_size.y * 0.5 + _tile_size.y * (float(row) + 0.5)
 	var offset: float = float(state.get("offset", 0.0))
-	tile.position = Vector3(x, y, offset)
+	_tile_top_multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, Vector3(x, y, offset)))
 	_apply_tile_side_transform(index, Vector3(x, y, 0.0), offset)
+	_sync_tile_shadow_visual(index, Vector3(x, y, 0.0), offset)
 
 func _apply_tile_side_transform(index: int, tile_position: Vector3, offset: float) -> void:
-	if index < 0 or index >= _tile_sides.size():
+	if index < 0 or _tile_side_multimesh == null or index >= _tile_side_multimesh.instance_count:
 		return
-	var side: MeshInstance3D = _tile_sides[index]
 	var depth: float = absf(offset)
 	if depth <= snap_epsilon_meters:
-		side.visible = false
+		_tile_side_multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY.scaled(Vector3(1.0, 1.0, 0.0)), tile_position))
 		return
-	side.visible = true
-	side.position = Vector3(tile_position.x, tile_position.y, minf(0.0, offset))
-	side.scale = Vector3(1.0, 1.0, depth)
+	var transform := Transform3D(Basis.IDENTITY.scaled(Vector3(1.0, 1.0, depth)), Vector3(tile_position.x, tile_position.y, minf(0.0, offset)))
+	_tile_side_multimesh.set_instance_transform(index, transform)
 
 func _sync_light(bounds_size: Vector2) -> void:
 	var light: DirectionalLight3D = get_node_or_null(_LIGHT_NAME) as DirectionalLight3D
@@ -464,7 +498,128 @@ func _sync_light(bounds_size: Vector2) -> void:
 		add_child(light)
 	light.rotation_degrees = Vector3(-38.0, 24.0, 0.0)
 	light.light_energy = 1.15
+	light.shadow_enabled = scene_shadows_enabled
+	light.shadow_bias = 0.045
+	light.shadow_normal_bias = 1.25
+	light.shadow_opacity = 0.28
+	light.shadow_blur = 2.0
+	light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	light.directional_shadow_blend_splits = true
+	light.directional_shadow_max_distance = maxf(maxf(bounds_size.x, bounds_size.y) * 2.0, 1.0)
 	light.visible = true
+
+func set_scene_shadows_enabled(enabled: bool) -> void:
+	scene_shadows_enabled = enabled
+	_sync_shadow_settings()
+
+func are_scene_shadows_enabled() -> bool:
+	return scene_shadows_enabled
+
+func _sync_shadow_settings() -> void:
+	_apply_shadow_material_mode()
+	var top_shadow_setting := _get_tile_top_shadow_casting_setting()
+	var side_shadow_setting := _get_tile_side_shadow_casting_setting()
+	if _tile_top_instances != null:
+		_tile_top_instances.cast_shadow = top_shadow_setting
+	if _tile_side_instances != null:
+		_tile_side_instances.cast_shadow = side_shadow_setting
+	for index in range(mini(_columns * _rows, _tile_states.size())):
+		_apply_tile_transform(index)
+	var light: DirectionalLight3D = get_node_or_null(_LIGHT_NAME) as DirectionalLight3D
+	if light != null:
+		light.shadow_enabled = scene_shadows_enabled
+		light.shadow_bias = 0.045
+		light.shadow_normal_bias = 1.25
+		light.shadow_opacity = 0.28
+		light.shadow_blur = 2.0
+
+func _get_tile_top_shadow_casting_setting() -> GeometryInstance3D.ShadowCastingSetting:
+	return GeometryInstance3D.SHADOW_CASTING_SETTING_ON if scene_shadows_enabled else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+func _get_tile_side_shadow_casting_setting() -> GeometryInstance3D.ShadowCastingSetting:
+	return GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+func _apply_shadow_material_mode() -> void:
+	if _side_material != null:
+		_side_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL if scene_shadows_enabled else BaseMaterial3D.SHADING_MODE_UNSHADED
+
+func _sync_tile_shadow_visual(index: int, tile_position: Vector3, offset: float) -> void:
+	if index < 0:
+		return
+	var protrusion := maxf(offset, 0.0)
+	if not scene_shadows_enabled or protrusion <= snap_epsilon_meters:
+		_hide_tile_shadow_visual(index)
+		return
+	var visual: MeshInstance3D = _tile_shadow_visuals.get(index) as MeshInstance3D
+	if visual == null or not is_instance_valid(visual):
+		visual = MeshInstance3D.new()
+		visual.name = "SpringTileShadow_%03d" % [index + 1]
+		visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_shadow_visual_root.add_child(visual)
+		_tile_shadow_visuals[index] = visual
+	visual.visible = true
+	visual.mesh = _make_tile_shadow_cast_mesh(_tile_size, offset)
+	visual.material_override = _get_tile_shadow_material()
+	var light_direction := Vector2(0.74, -0.48).normalized()
+	var shadow_shift := clampf(protrusion * 0.45, 0.0, maxf(_tile_size.x, _tile_size.y) * 0.65)
+	visual.position = Vector3(
+		tile_position.x + light_direction.x * shadow_shift,
+		tile_position.y + light_direction.y * shadow_shift,
+		0.008
+	)
+	visual.scale = Vector3.ONE
+
+func _hide_tile_shadow_visual(index: int) -> void:
+	var visual: MeshInstance3D = _tile_shadow_visuals.get(index) as MeshInstance3D
+	if visual != null and is_instance_valid(visual):
+		visual.visible = false
+
+func _make_tile_shadow_cast_mesh(tile_size: Vector2, offset: float) -> ArrayMesh:
+	var protrusion := maxf(offset, 0.0)
+	var light_direction := Vector2(0.74, -0.48).normalized()
+	var perpendicular := Vector2(-light_direction.y, light_direction.x)
+	var base_length := maxf(tile_size.x, tile_size.y)
+	var width := minf(tile_size.x, tile_size.y) * 0.38
+	var near_length := base_length * 0.04
+	var far_length := clampf(base_length * 0.32 + protrusion * 0.72, base_length * 0.2, base_length * 1.35)
+	var near_width := width * 0.34
+	var far_width := width * 0.82
+
+	var points := PackedVector3Array()
+	points.append(Vector3((-light_direction * near_length - perpendicular * near_width).x, (-light_direction * near_length - perpendicular * near_width).y, 0.0))
+	points.append(Vector3((-light_direction * near_length + perpendicular * near_width).x, (-light_direction * near_length + perpendicular * near_width).y, 0.0))
+	points.append(Vector3((light_direction * far_length + perpendicular * far_width).x, (light_direction * far_length + perpendicular * far_width).y, 0.0))
+	points.append(Vector3((light_direction * far_length - perpendicular * far_width).x, (light_direction * far_length - perpendicular * far_width).y, 0.0))
+
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array([0, 1, 2, 0, 2, 3])
+	for index in range(points.size()):
+		vertices.append(points[index])
+		normals.append(Vector3(0.0, 0.0, 1.0))
+		uvs.append(Vector2(0.0 if index == 0 or index == 3 else 1.0, 0.0 if index < 2 else 1.0))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, _get_tile_shadow_material())
+	return mesh
+
+func _get_tile_shadow_material() -> StandardMaterial3D:
+	if _tile_shadow_material == null:
+		_tile_shadow_material = StandardMaterial3D.new()
+		_tile_shadow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_tile_shadow_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_tile_shadow_material.albedo_color = Color(0.0, 0.0, 0.0, 0.13)
+		_tile_shadow_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_tile_shadow_material.no_depth_test = false
+		_tile_shadow_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	return _tile_shadow_material
 
 func _get_side_texture() -> Texture2D:
 	if _side_texture != null:

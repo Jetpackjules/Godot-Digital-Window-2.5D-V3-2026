@@ -23,11 +23,23 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 			return
 		box_depth_meters = value
 		_rebuild_if_ready(true)
-@export var rounded_screen_corners_enabled: bool = true :
+@export var rounded_screen_corners_enabled: bool = false :
 	set(value):
 		if rounded_screen_corners_enabled == value:
 			return
 		rounded_screen_corners_enabled = value
+		_rebuild_if_ready(true)
+@export_enum("Curved Flat Normals", "Curved Radial Normals", "Generated Normals", "Faceted Strips", "Unshaded Albedo") var rounded_corner_implementation: int = 0 :
+	set(value):
+		if rounded_corner_implementation == value:
+			return
+		rounded_corner_implementation = clampi(value, ROUNDED_CORNER_IMPL_CURVED_FLAT_NORMALS, ROUNDED_CORNER_IMPL_UNSHADED_ALBEDO)
+		_rebuild_if_ready(true)
+@export_enum("Dominant Straight", "Blended Straight", "Arc Length", "Mirrored Dominant", "World XY") var rounded_corner_uv_mode: int = 0 :
+	set(value):
+		if rounded_corner_uv_mode == value:
+			return
+		rounded_corner_uv_mode = clampi(value, ROUNDED_CORNER_UV_DOMINANT_STRAIGHT, ROUNDED_CORNER_UV_WORLD_XY)
 		_rebuild_if_ready(true)
 @export_range(0.0, 1.5, 0.005) var screen_corner_radius_meters: float = 0.36 :
 	set(value):
@@ -40,6 +52,25 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 		if is_equal_approx(screen_corner_radius_ratio_of_bounds_height, value):
 			return
 		screen_corner_radius_ratio_of_bounds_height = value
+		_rebuild_if_ready(true)
+@export_range(0.0, 1.5, 0.005) var wall_end_inset_meters: float = 0.0 :
+	set(value):
+		if is_equal_approx(wall_end_inset_meters, value):
+			return
+		wall_end_inset_meters = value
+		_rebuild_if_ready(true)
+@export var rounded_corner_normal_map_enabled: bool = true :
+	set(value):
+		if rounded_corner_normal_map_enabled == value:
+			return
+		rounded_corner_normal_map_enabled = value
+		_box_piece_materials.clear()
+		_rebuild_if_ready(true)
+@export var rounded_corner_color_tint: Color = Color.WHITE :
+	set(value):
+		if rounded_corner_color_tint == value:
+			return
+		rounded_corner_color_tint = value
 		_rebuild_if_ready(true)
 @export_range(0.005, 0.5, 0.005) var wall_thickness_meters: float = 0.08 :
 	set(value):
@@ -68,12 +99,110 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 		box_wood_material = value
 		_box_piece_materials.clear()
 		_rebuild_if_ready(true)
+@export var use_uniform_wood_roughness: bool = false :
+	set(value):
+		if use_uniform_wood_roughness == value:
+			return
+		use_uniform_wood_roughness = value
+		_box_piece_materials.clear()
+		_clear_visual_polish_materials()
+		_rebuild_if_ready(true)
+@export_range(0.0, 1.0, 0.01) var uniform_wood_roughness: float = 0.68 :
+	set(value):
+		if is_equal_approx(uniform_wood_roughness, value):
+			return
+		uniform_wood_roughness = value
+		_box_piece_materials.clear()
+		_clear_visual_polish_materials()
+		_rebuild_if_ready(true)
+@export_range(0.0, 1.0, 0.01) var varnish: float = 0.0 :
+	set(value):
+		var next_value := clampf(value, 0.0, 1.0)
+		if is_equal_approx(varnish, next_value):
+			return
+		varnish = next_value
+		_box_piece_materials.clear()
+		_clear_visual_polish_materials()
+		_rebuild_if_ready(true)
 @export_range(0.05, 4.0, 0.01) var wood_texture_tile_size_meters: float = 3.68 :
 	set(value):
 		if is_equal_approx(wood_texture_tile_size_meters, value):
 			return
 		wood_texture_tile_size_meters = value
 		_rebuild_if_ready(true)
+
+@export_group("Visual Polish")
+@export var bevel_visuals_enabled: bool = false :
+	set(value):
+		if bevel_visuals_enabled == value:
+			return
+		bevel_visuals_enabled = value
+		_rebuild_visual_polish_only()
+@export_range(0.0, 0.08, 0.001) var bevel_visual_width_meters: float = 0.04 :
+	set(value):
+		if is_equal_approx(bevel_visual_width_meters, value):
+			return
+		bevel_visual_width_meters = value
+		_rebuild_visual_polish_only()
+@export_range(0.0, 1.0, 0.01) var bevel_visual_opacity: float = 0.2 :
+	set(value):
+		if is_equal_approx(bevel_visual_opacity, value):
+			return
+		bevel_visual_opacity = value
+		_bevel_material = null
+		_rebuild_visual_polish_only()
+@export var contact_shadows_enabled: bool = true :
+	set(value):
+		if contact_shadows_enabled == value:
+			return
+		contact_shadows_enabled = value
+		_rebuild_visual_polish_only()
+@export_range(0.0, 1.0, 0.01) var contact_shadow_strength: float = 0.36 :
+	set(value):
+		if is_equal_approx(contact_shadow_strength, value):
+			return
+		contact_shadow_strength = value
+		_contact_shadow_material = null
+		_rebuild_visual_polish_only()
+@export_range(0.5, 4.0, 0.01) var contact_shadow_radius_multiplier: float = 2.15 :
+	set(value):
+		if is_equal_approx(contact_shadow_radius_multiplier, value):
+			return
+		contact_shadow_radius_multiplier = value
+		_rebuild_visual_polish_only()
+@export var edge_grooves_enabled: bool = false :
+	set(value):
+		if edge_grooves_enabled == value:
+			return
+		edge_grooves_enabled = value
+		_rebuild_visual_polish_only()
+@export_range(0.0, 0.03, 0.0005) var edge_groove_width_meters: float = 0.009 :
+	set(value):
+		if is_equal_approx(edge_groove_width_meters, value):
+			return
+		edge_groove_width_meters = value
+		_rebuild_visual_polish_only()
+@export_range(0.0, 1.0, 0.01) var edge_groove_opacity: float = 0.18 :
+	set(value):
+		if is_equal_approx(edge_groove_opacity, value):
+			return
+		edge_groove_opacity = value
+		_groove_material = null
+		_rebuild_visual_polish_only()
+@export var local_reflections_enabled: bool = true :
+	set(value):
+		if local_reflections_enabled == value:
+			return
+		local_reflections_enabled = value
+		_sync_lighting()
+		_rebuild_if_ready(false)
+@export_range(0.0, 2.0, 0.01) var local_reflection_intensity: float = 0.62 :
+	set(value):
+		if is_equal_approx(local_reflection_intensity, value):
+			return
+		local_reflection_intensity = value
+		_sync_lighting()
+		_rebuild_if_ready(false)
 
 @export_group("Balls")
 @export_range(1, 48, 1) var ball_count: int = 6 :
@@ -120,6 +249,14 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 @export_range(0.0, 1.0, 0.01) var settle_planar_gravity_threshold: float = 0.05
 @export_range(0.0, 0.25, 0.005) var settle_linear_speed_threshold: float = 0.035
 @export_range(0.0, 8.0, 0.05) var settle_angular_speed_threshold: float = 5.0
+@export var shake_impulse_enabled: bool = true
+@export_enum("Stable High-Pass", "Raw Physical") var shake_acceleration_mode: int = 1
+@export_range(0.0, 5.0, 0.01) var shake_acceleration_multiplier: float = 0.75
+@export_range(0.0, 20.0, 0.05) var shake_deadzone_meters_per_second_squared: float = 0.45
+@export_range(1.0, 80.0, 0.5) var max_shake_acceleration_meters_per_second_squared: float = 18.0
+@export_range(0.0, 1.0, 0.01) var shake_smoothing: float = 0.22
+@export_range(0.0, 0.25, 0.005) var shake_kick_strength: float = 0.04
+@export var shake_uses_box_inertia: bool = true
 
 @export_group("Haptics")
 @export var haptics_enabled: bool = true
@@ -257,6 +394,7 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 		_box_piece_materials.clear()
 		_ball_materials.clear()
 		_micro_normal_textures.clear()
+		_clear_visual_polish_materials()
 		_sync_lighting()
 		_sync_generated_mesh_shadow_casting()
 @export_enum("Low", "High", "Insane") var cinematic_quality_level: int = 1 :
@@ -268,6 +406,7 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 		_box_piece_materials.clear()
 		_ball_materials.clear()
 		_micro_normal_textures.clear()
+		_clear_visual_polish_materials()
 		_sync_lighting()
 		_rebuild_if_ready(true)
 @export_range(0.0, 1.0, 0.01) var cinematic_shadow_opacity: float = 0.34 :
@@ -282,6 +421,7 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 		_box_piece_materials.clear()
 		_ball_materials.clear()
 		_micro_normal_textures.clear()
+		_clear_visual_polish_materials()
 		_rebuild_if_ready(true)
 @export_range(0.0, 1.0, 0.01) var cinematic_material_micro_detail: float = 0.38 :
 	set(value):
@@ -291,6 +431,7 @@ const DEFAULT_BALL_RADIUS_RATIO_OF_VIEW_HEIGHT: float = 0.2175
 		_box_piece_materials.clear()
 		_ball_materials.clear()
 		_micro_normal_textures.clear()
+		_clear_visual_polish_materials()
 		_rebuild_if_ready(true)
 @export_range(0.0, 3.0, 0.01) var cinematic_softbox_energy: float = 0.52 :
 	set(value):
@@ -307,19 +448,35 @@ const ENHANCED_GRAPHICS_INSANE := 3
 const CINEMATIC_QUALITY_LOW := 0
 const CINEMATIC_QUALITY_HIGH := 1
 const CINEMATIC_QUALITY_INSANE := 2
+const ROUNDED_CORNER_UV_DOMINANT_STRAIGHT := 0
+const ROUNDED_CORNER_UV_BLENDED_STRAIGHT := 1
+const ROUNDED_CORNER_UV_ARC_LENGTH := 2
+const ROUNDED_CORNER_UV_MIRRORED_DOMINANT := 3
+const ROUNDED_CORNER_UV_WORLD_XY := 4
+const ROUNDED_CORNER_IMPL_CURVED_FLAT_NORMALS := 0
+const ROUNDED_CORNER_IMPL_CURVED_RADIAL_NORMALS := 1
+const ROUNDED_CORNER_IMPL_GENERATED_NORMALS := 2
+const ROUNDED_CORNER_IMPL_FACETED_STRIPS := 3
+const ROUNDED_CORNER_IMPL_UNSHADED_ALBEDO := 4
+const SHAKE_ACCELERATION_STABLE_HIGH_PASS := 0
+const SHAKE_ACCELERATION_RAW_PHYSICAL := 1
 const _GEOMETRY_ROOT_NAME := "BoxGeometry"
 const _CORNER_ROOT_NAME := "RoundedCorners"
+const _POLISH_ROOT_NAME := "VisualPolish"
 const _MAZE_ROOT_NAME := "MazeGeometry"
 const _BALL_ROOT_NAME := "Balls"
+const _GENERATED_WALL_MESH_META := "tilt_ball_box_generated_wall_mesh"
 const _WORLD_ENVIRONMENT_NAME := "SoftWorldEnvironment"
 const _KEY_LIGHT_NAME := "DirectionalLight3D"
 const _FILL_LIGHT_NAME := "SoftFillLight"
 const _RIM_LIGHT_NAME := "SoftRimLight"
 const _FRONT_SOFTBOX_LIGHT_NAME := "CinematicFrontSoftbox"
 const _SKY_BOUNCE_LIGHT_NAME := "CinematicSkyBounce"
+const _REFLECTION_PROBE_NAME := "LocalReflectionProbe"
 
 var _geometry_root: Node3D
 var _corner_root: Node3D
+var _polish_root: Node3D
 var _maze_root: Node3D
 var _ball_root: Node3D
 var _world_environment: WorldEnvironment
@@ -328,15 +485,22 @@ var _fill_light: DirectionalLight3D
 var _rim_light: DirectionalLight3D
 var _front_softbox_light: OmniLight3D
 var _sky_bounce_light: OmniLight3D
+var _reflection_probe: ReflectionProbe
 var _balls: Array[RigidBody3D] = []
 var _last_bounds_size: Vector2 = Vector2.ZERO
 var _box_piece_materials: Dictionary = {}
+var _bevel_material: StandardMaterial3D
+var _groove_material: StandardMaterial3D
+var _contact_shadow_material: StandardMaterial3D
 var _maze_goal_material: StandardMaterial3D
 var _front_limiter_debug_material: StandardMaterial3D
 var _ball_materials: Array[StandardMaterial3D] = []
 var _ball_textures: Array[Texture2D] = []
 var _micro_normal_textures: Dictionary = {}
 var _smoothed_gravity: Vector3 = Vector3.ZERO
+var _smoothed_shake_acceleration: Vector3 = Vector3.ZERO
+var _smoothed_accelerometer: Vector3 = Vector3.ZERO
+var _has_accelerometer_sample: bool = false
 var _desktop_debug_preset_tilt: Vector2 = Vector2.ZERO
 var _active_maze_seed: int = 0
 var _generated_maze_start_position: Vector2 = Vector2.ZERO
@@ -347,6 +511,7 @@ var _logged_missing_native_haptics: bool = false
 var _debug_physics_log_elapsed: float = 0.0
 var _debug_rebuild_count: int = 0
 var _runtime_view_size_meters: Vector2 = Vector2.ZERO
+var _runtime_presentation_scale: float = 1.0
 
 func _enter_tree() -> void:
 	set_process(true)
@@ -362,6 +527,7 @@ func _process(_delta: float) -> void:
 	var bounds_size: Vector2 = _get_bounds_size()
 	if not _bounds_size_equal(bounds_size, _last_bounds_size):
 		_rebuild_if_ready(false)
+	_sync_contact_shadow_positions()
 
 func _physics_process(_delta: float) -> void:
 	if Engine.is_editor_hint():
@@ -375,17 +541,29 @@ func _physics_process(_delta: float) -> void:
 		+ (world_basis.y * _smoothed_gravity.y)
 		+ (world_basis.z * _smoothed_gravity.z)
 	)
+	var shake_acceleration: Vector3 = _read_box_shake_acceleration()
+	var shake_force_direction: Vector3 = (
+		(world_basis.x * shake_acceleration.x)
+		+ (world_basis.y * shake_acceleration.y)
+		+ (world_basis.z * shake_acceleration.z)
+	)
 
 	for ball in _balls:
 		if ball == null or not is_instance_valid(ball):
 			continue
 		var force: Vector3 = force_direction * tilt_gravity_multiplier * debug_extreme_gravity_boost * ball.mass
+		var inertial_shake_direction := -shake_force_direction if shake_uses_box_inertia else shake_force_direction
+		if shake_impulse_enabled and inertial_shake_direction.length_squared() > 0.000001:
+			force += inertial_shake_direction * shake_acceleration_multiplier * ball.mass
 		if force.length_squared() > 0.000001:
 			ball.sleeping = false
 		ball.apply_central_force(force)
+		if shake_impulse_enabled and shake_kick_strength > 0.0 and inertial_shake_direction.length_squared() > 0.000001:
+			ball.apply_central_impulse(inertial_shake_direction * shake_acceleration_multiplier * shake_kick_strength * ball.mass)
 		_apply_settle_assist(ball, force_direction, world_basis)
 
 	_debug_log_physics_state(_delta, raw_gravity, force_direction)
+	_sync_contact_shadow_positions()
 
 func _apply_settle_assist(ball: RigidBody3D, force_direction: Vector3, world_basis: Basis) -> void:
 	if not settle_assist_enabled:
@@ -484,8 +662,48 @@ func set_runtime_view_size_meters(size_meters: Vector2) -> void:
 	if _runtime_view_size_meters.is_equal_approx(next_size):
 		return
 	_runtime_view_size_meters = next_size
+	_clear_scale_dependent_generated_state()
 	_sync_view_bounds_runtime_size()
-	_rebuild_if_ready(false)
+	_rebuild_if_ready(true)
+
+func _clear_scale_dependent_generated_state() -> void:
+	_last_bounds_size = Vector2.ZERO
+	_box_piece_materials.clear()
+	_ball_materials.clear()
+	_ball_textures.clear()
+	_micro_normal_textures.clear()
+	_clear_visual_polish_materials()
+
+func _clear_visual_polish_materials() -> void:
+	_bevel_material = null
+	_groove_material = null
+	_contact_shadow_material = null
+
+func _rebuild_visual_polish_only() -> void:
+	_clear_visual_polish_materials()
+	if not is_inside_tree():
+		return
+	_ensure_roots()
+	var bounds_size: Vector2 = _get_bounds_size()
+	if bounds_size.x <= 0.0 or bounds_size.y <= 0.0:
+		return
+	if _last_bounds_size.x <= 0.0 or _last_bounds_size.y <= 0.0:
+		_last_bounds_size = bounds_size
+	_build_visual_polish(bounds_size)
+	var radius: float = _get_ball_radius(bounds_size)
+	for index in range(_balls.size()):
+		var ball: RigidBody3D = _balls[index]
+		if ball == null or not is_instance_valid(ball):
+			continue
+		_sync_ball_contact_shadow(index, radius, ball.position)
+	_sync_contact_shadow_positions()
+
+func set_runtime_presentation_scale(scale: float) -> void:
+	var next_scale := maxf(scale, 0.0001)
+	if is_equal_approx(_runtime_presentation_scale, next_scale):
+		return
+	_runtime_presentation_scale = next_scale
+	_sync_lighting()
 
 func _rebuild_if_ready(force: bool) -> void:
 	if not is_inside_tree():
@@ -507,8 +725,10 @@ func _rebuild_if_ready(force: bool) -> void:
 	_maze_runtime_ball_radius_override = -1.0
 	_build_box(bounds_size)
 	_build_rounded_corners(bounds_size)
+	_build_visual_polish(bounds_size)
 	_build_maze(bounds_size)
 	_build_balls(bounds_size)
+	_sync_contact_shadow_positions()
 	_sync_generated_mesh_shadow_casting()
 
 func _ensure_roots() -> void:
@@ -517,14 +737,21 @@ func _ensure_roots() -> void:
 		_geometry_root = Node3D.new()
 		_geometry_root.name = _GEOMETRY_ROOT_NAME
 		add_child(_geometry_root)
-		_set_scene_owner(_geometry_root)
+	_set_authorable_scene_owner(_geometry_root)
 
 	_corner_root = get_node_or_null(_CORNER_ROOT_NAME) as Node3D
 	if _corner_root == null:
 		_corner_root = Node3D.new()
 		_corner_root.name = _CORNER_ROOT_NAME
 		add_child(_corner_root)
-		_set_scene_owner(_corner_root)
+	_set_authorable_scene_owner(_corner_root)
+
+	_polish_root = get_node_or_null(_POLISH_ROOT_NAME) as Node3D
+	if _polish_root == null:
+		_polish_root = Node3D.new()
+		_polish_root.name = _POLISH_ROOT_NAME
+		add_child(_polish_root)
+		_set_scene_owner(_polish_root)
 
 	_maze_root = get_node_or_null(_MAZE_ROOT_NAME) as Node3D
 	if _maze_root == null:
@@ -550,12 +777,14 @@ func _sync_lighting() -> void:
 	_rim_light = _get_or_create_directional_light(_RIM_LIGHT_NAME)
 	_front_softbox_light = _get_or_create_omni_light(_FRONT_SOFTBOX_LIGHT_NAME)
 	_sky_bounce_light = _get_or_create_omni_light(_SKY_BOUNCE_LIGHT_NAME)
+	_reflection_probe = _get_or_create_reflection_probe()
 
 	_key_light.visible = soft_scene_lighting_enabled
 	_fill_light.visible = soft_scene_lighting_enabled
 	_rim_light.visible = soft_scene_lighting_enabled
 	_front_softbox_light.visible = soft_scene_lighting_enabled and cinematic_quality_lighting_enabled
 	_sky_bounce_light.visible = soft_scene_lighting_enabled and cinematic_quality_lighting_enabled
+	_sync_local_reflection_probe()
 	if not soft_scene_lighting_enabled:
 		_world_environment.environment = null
 		return
@@ -568,7 +797,7 @@ func _sync_lighting() -> void:
 
 	environment.ambient_light_color = ambient_light_color
 	environment.ambient_light_energy = ambient_light_energy * (_get_cinematic_ambient_multiplier() if cinematic_quality_lighting_enabled else 1.0)
-	environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+	environment.reflected_light_source = Environment.REFLECTION_SOURCE_BG if cinematic_quality_lighting_enabled and local_reflections_enabled else Environment.REFLECTION_SOURCE_DISABLED
 	_configure_environment_quality(environment)
 
 	_key_light.rotation_degrees = Vector3(-42.0, -32.0, -12.0)
@@ -579,7 +808,7 @@ func _sync_lighting() -> void:
 	_key_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	_key_light.directional_shadow_blend_splits = true
 	_key_light.directional_shadow_fade_start = 0.75
-	_key_light.directional_shadow_max_distance = 8.0
+	_key_light.directional_shadow_max_distance = maxf(_scale_rendered_length(8.0, _get_active_bounds_size()), 0.05)
 
 	_fill_light.rotation_degrees = Vector3(18.0, 152.0, 0.0)
 	_fill_light.light_color = fill_light_color
@@ -596,16 +825,17 @@ func _configure_environment_quality(environment: Environment) -> void:
 	if cinematic_quality_lighting_enabled:
 		var high_quality := cinematic_quality_level >= CINEMATIC_QUALITY_HIGH
 		var insane_quality := _is_cinematic_insane()
+		var bounds_size := _get_active_bounds_size()
 		environment.background_mode = Environment.BG_COLOR
 		environment.background_color = Color(0.015, 0.017, 0.02, 1.0)
 		environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 		environment.tonemap_exposure = 0.78
 		environment.tonemap_white = 1.75
 		environment.ssao_enabled = true
-		environment.ssao_radius = 1.5 if insane_quality else (1.25 if high_quality else 1.1)
+		environment.ssao_radius = maxf(_scale_rendered_length(1.5 if insane_quality else (1.25 if high_quality else 1.1), bounds_size), 0.01)
 		environment.ssao_intensity = 1.15
 		environment.ssil_enabled = high_quality
-		environment.ssil_radius = 1.35 if insane_quality else 1.0
+		environment.ssil_radius = maxf(_scale_rendered_length(1.35 if insane_quality else 1.0, bounds_size), 0.01)
 		environment.ssil_intensity = 0.38
 		environment.glow_enabled = high_quality
 		environment.glow_intensity = 0.012
@@ -627,8 +857,8 @@ func _configure_cinematic_omni_lights() -> void:
 	if _front_softbox_light == null or _sky_bounce_light == null:
 		return
 	var bounds_size: Vector2 = _last_bounds_size if _last_bounds_size.x > 0.0 and _last_bounds_size.y > 0.0 else _get_bounds_size()
-	var width: float = maxf(bounds_size.x, 1.0)
-	var height: float = maxf(bounds_size.y, 1.0)
+	var width: float = maxf(bounds_size.x, 0.001)
+	var height: float = maxf(bounds_size.y, 0.001)
 	var depth: float = _get_box_depth(bounds_size)
 	var scaled_softbox_min_z: float = _scale_authored_length(0.26, bounds_size)
 
@@ -636,14 +866,14 @@ func _configure_cinematic_omni_lights() -> void:
 	_front_softbox_light.light_color = Color(0.9, 0.96, 1.0, 1.0)
 	var safe_softbox_energy: float = minf(cinematic_softbox_energy, 0.35)
 	_front_softbox_light.light_energy = safe_softbox_energy
-	_front_softbox_light.omni_range = maxf(width, height) * 0.9
+	_front_softbox_light.omni_range = maxf(width, height) * 0.9 * _runtime_presentation_scale
 	_front_softbox_light.omni_attenuation = 0.55
 	_front_softbox_light.shadow_enabled = false
 
 	_sky_bounce_light.position = Vector3(-width * 0.22, height * 0.55, -depth * 0.35)
 	_sky_bounce_light.light_color = Color(1.0, 0.78, 0.52, 1.0)
 	_sky_bounce_light.light_energy = safe_softbox_energy * 0.28
-	_sky_bounce_light.omni_range = maxf(width, height) * 0.75
+	_sky_bounce_light.omni_range = maxf(width, height) * 0.75 * _runtime_presentation_scale
 	_sky_bounce_light.omni_attenuation = 0.85
 	_sky_bounce_light.shadow_enabled = false
 
@@ -694,6 +924,28 @@ func _get_or_create_omni_light(light_name: String) -> OmniLight3D:
 		_set_scene_owner(light)
 	return light
 
+func _get_or_create_reflection_probe() -> ReflectionProbe:
+	var probe: ReflectionProbe = get_node_or_null(_REFLECTION_PROBE_NAME) as ReflectionProbe
+	if probe == null:
+		probe = ReflectionProbe.new()
+		probe.name = _REFLECTION_PROBE_NAME
+		add_child(probe)
+	return probe
+
+func _sync_local_reflection_probe() -> void:
+	if _reflection_probe == null:
+		return
+	var bounds_size := _get_active_bounds_size()
+	var depth := _get_box_depth(bounds_size)
+	_reflection_probe.visible = soft_scene_lighting_enabled and cinematic_quality_lighting_enabled and local_reflections_enabled
+	_reflection_probe.position = Vector3(0.0, 0.0, -depth * 0.5)
+	_reflection_probe.size = Vector3(maxf(bounds_size.x * 1.08, 0.1), maxf(bounds_size.y * 1.08, 0.1), maxf(depth * 1.35, 0.1))
+	_reflection_probe.origin_offset = Vector3(0.0, 0.0, 0.0)
+	_reflection_probe.intensity = local_reflection_intensity
+	_reflection_probe.max_distance = maxf(maxf(bounds_size.x, bounds_size.y), depth) * 1.5
+	_reflection_probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	_reflection_probe.interior = true
+
 func _clear_children(parent: Node) -> void:
 	if parent == null:
 		return
@@ -706,14 +958,18 @@ func _build_box(bounds_size: Vector2) -> void:
 	var depth: float = _get_box_depth(bounds_size)
 	var thickness: float = _get_wall_thickness(bounds_size)
 	var corner_radius: float = _get_rounded_corner_radius(bounds_size)
-	var straight_width: float = maxf(thickness, width - corner_radius * 2.0)
-	var straight_height: float = maxf(thickness, height - corner_radius * 2.0)
+	var wall_end_inset: float = maxf(corner_radius, _get_wall_end_inset(bounds_size))
+	var straight_width: float = maxf(thickness, width - wall_end_inset * 2.0)
+	var straight_height: float = maxf(thickness, height - wall_end_inset * 2.0)
+	var wall_overlap: float = maxf(thickness * 0.02, 0.0001)
+	var horizontal_wall_width: float = minf(width, straight_width + wall_overlap * 2.0)
+	var vertical_wall_height: float = minf(height, straight_height + wall_overlap * 2.0)
 
 	_sync_box_piece("Back", Vector3(width, height, thickness), Vector3(0.0, 0.0, -depth - thickness * 0.5), _get_box_piece_material("Back", Vector2(width, height), true))
-	_sync_box_piece("LeftWall", Vector3(thickness, straight_height, depth), Vector3(-width * 0.5 - thickness * 0.5, 0.0, -depth * 0.5), _get_box_piece_material("LeftWall", Vector2(depth, straight_height), false))
-	_sync_box_piece("RightWall", Vector3(thickness, straight_height, depth), Vector3(width * 0.5 + thickness * 0.5, 0.0, -depth * 0.5), _get_box_piece_material("RightWall", Vector2(depth, straight_height), false))
-	_sync_box_piece("BottomWall", Vector3(straight_width + thickness * 2.0, thickness, depth), Vector3(0.0, -height * 0.5 - thickness * 0.5, -depth * 0.5), _get_box_piece_material("BottomWall", Vector2(straight_width + thickness * 2.0, depth), false))
-	_sync_box_piece("TopWall", Vector3(straight_width + thickness * 2.0, thickness, depth), Vector3(0.0, height * 0.5 + thickness * 0.5, -depth * 0.5), _get_box_piece_material("TopWall", Vector2(straight_width + thickness * 2.0, depth), false))
+	_sync_box_piece("LeftWall", Vector3(thickness, vertical_wall_height, depth), Vector3(-width * 0.5 + thickness * 0.5, 0.0, -depth * 0.5), _get_box_piece_material("LeftWall", Vector2(depth, vertical_wall_height), false))
+	_sync_box_piece("RightWall", Vector3(thickness, vertical_wall_height, depth), Vector3(width * 0.5 - thickness * 0.5, 0.0, -depth * 0.5), _get_box_piece_material("RightWall", Vector2(depth, vertical_wall_height), false))
+	_sync_box_piece("BottomWall", Vector3(horizontal_wall_width, thickness, depth), Vector3(0.0, -height * 0.5 + thickness * 0.5, -depth * 0.5), _get_box_piece_material("BottomWall", Vector2(horizontal_wall_width, depth), false))
+	_sync_box_piece("TopWall", Vector3(horizontal_wall_width, thickness, depth), Vector3(0.0, height * 0.5 - thickness * 0.5, -depth * 0.5), _get_box_piece_material("TopWall", Vector2(horizontal_wall_width, depth), false))
 
 	# Keep the invisible front lid just beyond the current ball front. It must
 	# track radius changes, but it cannot touch the ball at rest or the solver can
@@ -731,10 +987,23 @@ func _sync_box_piece_in_parent(parent: Node3D, piece_name: String, size: Vector3
 	body.position = local_position
 	body.rotation = local_rotation
 	body.physics_material_override = physics_material
+	if parent == _geometry_root:
+		_set_authorable_scene_owner(body)
 
 	var mesh_instance: MeshInstance3D = _get_or_create_mesh_instance(body, "Mesh")
+	var surface_override: Material = null
+	if mesh_instance.get_surface_override_material_count() > 0:
+		surface_override = mesh_instance.get_surface_override_material(0)
 	mesh_instance.cast_shadow = _get_mesh_shadow_setting()
-	mesh_instance.mesh = _make_textured_box_mesh(piece_name, size, material)
+	if parent == _geometry_root and _has_custom_authorable_wall_mesh(mesh_instance):
+		mesh_instance.scale = _get_authorable_mesh_fit_scale(mesh_instance.mesh, size)
+	else:
+		mesh_instance.scale = Vector3.ONE
+		mesh_instance.mesh = _make_textured_box_mesh(piece_name, size, local_position, material)
+		if surface_override != null:
+			mesh_instance.set_surface_override_material(0, surface_override)
+	if parent == _geometry_root:
+		_set_authorable_scene_owner(mesh_instance)
 
 	var collision: CollisionShape3D = _get_or_create_collision_shape(body, "Collision")
 	var shape: BoxShape3D = collision.shape as BoxShape3D
@@ -742,8 +1011,10 @@ func _sync_box_piece_in_parent(parent: Node3D, piece_name: String, size: Vector3
 		shape = BoxShape3D.new()
 	shape.size = size
 	collision.shape = shape
+	if parent == _geometry_root:
+		_set_authorable_scene_owner(collision)
 
-func _make_textured_box_mesh(piece_name: String, size: Vector3, material: Material) -> ArrayMesh:
+func _make_textured_box_mesh(piece_name: String, size: Vector3, local_position: Vector3, material: Material) -> ArrayMesh:
 	var safe_size := Vector3(
 		maxf(size.x, 0.0001),
 		maxf(size.y, 0.0001),
@@ -752,23 +1023,23 @@ func _make_textured_box_mesh(piece_name: String, size: Vector3, material: Materi
 	var half := safe_size * 0.5
 	var texture_tile_size := maxf(_get_wood_texture_tile_size(), 0.005)
 	var uv_scale := 1.0 / texture_tile_size
-	var rotate_horizontal_wall_uv := piece_name == "TopWall" or piece_name == "BottomWall"
+	var rotate_horizontal_wall_uv := _uses_depth_oriented_wall_uv(piece_name)
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	var tangents := PackedFloat32Array()
 	var indices := PackedInt32Array()
 
-	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, -half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, -half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
-	_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(-half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), Vector3(0.0, -half.y, 0.0), safe_size.x, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, -half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
+	_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(-half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), Vector3(0.0, half.y, 0.0), safe_size.z, safe_size.y, uv_scale)
 	if rotate_horizontal_wall_uv:
-		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, half.y, 0.0), Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), safe_size.z, safe_size.x, uv_scale)
-		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, -half.y, 0.0), Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), safe_size.z, safe_size.x, uv_scale)
+		_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(0.0, half.y, 0.0), Vector3(0.0, 0.0, half.z), Vector3(half.x, 0.0, 0.0), safe_size.z, safe_size.x, uv_scale)
+		_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(0.0, -half.y, 0.0), Vector3(0.0, 0.0, -half.z), Vector3(half.x, 0.0, 0.0), safe_size.z, safe_size.x, uv_scale)
 	else:
-		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, -half.z), safe_size.x, safe_size.z, uv_scale)
-		_add_box_face(vertices, normals, uvs, tangents, indices, Vector3(0.0, -half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), safe_size.x, safe_size.z, uv_scale)
+		_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(0.0, half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, -half.z), safe_size.x, safe_size.z, uv_scale)
+		_add_box_face(vertices, normals, uvs, tangents, indices, piece_name, local_position, Vector3(0.0, -half.y, 0.0), Vector3(half.x, 0.0, 0.0), Vector3(0.0, 0.0, half.z), safe_size.x, safe_size.z, uv_scale)
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -781,28 +1052,55 @@ func _make_textured_box_mesh(piece_name: String, size: Vector3, material: Materi
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh.surface_set_material(0, material)
+	mesh.set_meta(_GENERATED_WALL_MESH_META, true)
 	return mesh
 
-func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, tangents: PackedFloat32Array, indices: PackedInt32Array, center: Vector3, u_axis: Vector3, v_axis: Vector3, u_length: float, v_length: float, uv_scale: float) -> void:
+func _has_custom_authorable_wall_mesh(mesh_instance: MeshInstance3D) -> bool:
+	if mesh_instance == null or mesh_instance.mesh == null:
+		return false
+	if bool(mesh_instance.mesh.get_meta(_GENERATED_WALL_MESH_META, false)):
+		return false
+	if mesh_instance.mesh is ArrayMesh and mesh_instance.mesh.resource_path.is_empty():
+		return false
+	return true
+
+func _get_authorable_mesh_fit_scale(mesh: Mesh, target_size: Vector3) -> Vector3:
+	if mesh == null:
+		return Vector3.ONE
+	var source_size: Vector3 = mesh.get_aabb().size
+	return Vector3(
+		target_size.x / maxf(source_size.x, 0.0001),
+		target_size.y / maxf(source_size.y, 0.0001),
+		target_size.z / maxf(source_size.z, 0.0001)
+	)
+
+func _uses_depth_oriented_wall_uv(piece_name: String) -> bool:
+	return (
+		piece_name == "TopWall"
+		or piece_name == "BottomWall"
+		or piece_name.begins_with("RoundedAperture")
+	)
+
+func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, tangents: PackedFloat32Array, indices: PackedInt32Array, piece_name: String, local_position: Vector3, center: Vector3, u_axis: Vector3, v_axis: Vector3, u_length: float, v_length: float, uv_scale: float) -> void:
 	var base_index := vertices.size()
+	var face_vertices := [
+		center - u_axis - v_axis,
+		center + u_axis - v_axis,
+		center + u_axis + v_axis,
+		center - u_axis + v_axis,
+	]
 	var normal := u_axis.cross(v_axis).normalized()
 	var tangent := u_axis.normalized()
 	var bitangent := v_axis.normalized()
 	var tangent_sign := 1.0 if normal.cross(tangent).dot(bitangent) >= 0.0 else -1.0
-	vertices.append(center - u_axis - v_axis)
-	vertices.append(center + u_axis - v_axis)
-	vertices.append(center + u_axis + v_axis)
-	vertices.append(center - u_axis + v_axis)
-	for _index in range(4):
+	for vertex in face_vertices:
+		vertices.append(vertex)
 		normals.append(normal)
 		tangents.append(tangent.x)
 		tangents.append(tangent.y)
 		tangents.append(tangent.z)
 		tangents.append(tangent_sign)
-	uvs.append(Vector2(0.0, 0.0))
-	uvs.append(Vector2(u_length * uv_scale, 0.0))
-	uvs.append(Vector2(u_length * uv_scale, v_length * uv_scale))
-	uvs.append(Vector2(0.0, v_length * uv_scale))
+		uvs.append(_get_box_surface_uv(piece_name, local_position + vertex, normal, uv_scale, u_length, v_length))
 	indices.append_array(PackedInt32Array([
 		base_index,
 		base_index + 2,
@@ -811,6 +1109,16 @@ func _add_box_face(vertices: PackedVector3Array, normals: PackedVector3Array, uv
 		base_index + 3,
 		base_index + 2,
 	]))
+
+func _get_box_surface_uv(piece_name: String, box_position: Vector3, normal: Vector3, uv_scale: float, fallback_u_length: float, fallback_v_length: float) -> Vector2:
+	var normal_abs := normal.abs()
+	if normal_abs.z >= normal_abs.x and normal_abs.z >= normal_abs.y:
+		return Vector2(box_position.x, box_position.y) * uv_scale
+	if normal_abs.x >= normal_abs.y:
+		return Vector2(-box_position.z, box_position.y) * uv_scale
+	if _uses_depth_oriented_wall_uv(piece_name):
+		return Vector2(-box_position.z, box_position.x) * uv_scale
+	return Vector2(box_position.x, -box_position.z) * uv_scale
 
 func _build_rounded_corners(bounds_size: Vector2) -> void:
 	_clear_children(_corner_root)
@@ -826,10 +1134,11 @@ func _build_rounded_corners(bounds_size: Vector2) -> void:
 	if radius <= 0.0:
 		return
 
+	_sync_rounded_aperture_visual_mesh(bounds_size)
+
 	var segment_count: int = 10
 	var angle_step: float = (PI * 0.5) / float(segment_count)
 	var segment_length: float = radius * angle_step * 1.18
-	var material: Material = _get_box_piece_material("RoundedAperture", Vector2(segment_length, depth), false)
 	var corner_centers: Array[Vector2] = [
 		Vector2(width * 0.5 - radius, height * 0.5 - radius),
 		Vector2(-width * 0.5 + radius, height * 0.5 - radius),
@@ -841,11 +1150,379 @@ func _build_rounded_corners(bounds_size: Vector2) -> void:
 		for segment_index in range(segment_count):
 			var angle: float = start_angles[corner_index] + (float(segment_index) + 0.5) * angle_step
 			var outward: Vector2 = Vector2(cos(angle), sin(angle))
-			var arc_position: Vector2 = corner_centers[corner_index] + outward * (radius + thickness * 0.5)
+			var arc_position: Vector2 = corner_centers[corner_index] + outward * maxf(radius - thickness * 0.5, 0.0)
 			var body_position: Vector3 = Vector3(arc_position.x, arc_position.y, -depth * 0.5)
 			var body_rotation: Vector3 = Vector3(0.0, 0.0, angle + PI * 0.5)
 			var piece_name: String = "RoundedAperture_%02d_%02d" % [corner_index + 1, segment_index + 1]
-			_sync_box_piece_in_parent(_corner_root, piece_name, Vector3(segment_length, thickness, depth), body_position, material, _make_surface_physics_material(), body_rotation)
+			_sync_rounded_corner_collision_segment(piece_name, Vector3(segment_length, thickness, depth), body_position, body_rotation)
+
+func _sync_rounded_corner_collision_segment(piece_name: String, size: Vector3, local_position: Vector3, local_rotation: Vector3) -> void:
+	var body: StaticBody3D = _get_or_create_static_body(_corner_root, piece_name)
+	body.visible = false
+	body.position = local_position
+	body.rotation = local_rotation
+	body.physics_material_override = _make_surface_physics_material()
+
+	var collision: CollisionShape3D = _get_or_create_collision_shape(body, "Collision")
+	var shape: BoxShape3D = collision.shape as BoxShape3D
+	if shape == null:
+		shape = BoxShape3D.new()
+	shape.size = size
+	collision.shape = shape
+
+func _sync_rounded_aperture_visual_mesh(bounds_size: Vector2) -> void:
+	var mesh_instance := _corner_root.get_node_or_null("RoundedApertureVisual") as MeshInstance3D
+	if mesh_instance == null:
+		mesh_instance = MeshInstance3D.new()
+		mesh_instance.name = "RoundedApertureVisual"
+		_corner_root.add_child(mesh_instance)
+	_set_authorable_scene_owner(mesh_instance)
+	mesh_instance.cast_shadow = _get_mesh_shadow_setting()
+	mesh_instance.mesh = _make_rounded_aperture_visual_mesh(bounds_size)
+
+func _make_rounded_aperture_visual_mesh(bounds_size: Vector2) -> ArrayMesh:
+	var width: float = bounds_size.x
+	var height: float = bounds_size.y
+	var depth: float = _get_box_depth(bounds_size)
+	var thickness: float = _get_wall_thickness(bounds_size)
+	var radius: float = _get_rounded_corner_radius(bounds_size)
+	var inner_radius: float = maxf(radius - thickness, 0.001)
+	var outer_radius: float = maxf(radius, inner_radius + 0.001)
+	var segment_count: int = 16 if rounded_corner_implementation == ROUNDED_CORNER_IMPL_FACETED_STRIPS else 64
+	var uv_scale: float = 1.0 / maxf(_get_wood_texture_tile_size(), 0.005)
+	var material: Material = _get_rounded_aperture_material(bounds_size)
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	var corner_centers: Array[Vector2] = [
+		Vector2(width * 0.5 - radius, height * 0.5 - radius),
+		Vector2(-width * 0.5 + radius, height * 0.5 - radius),
+		Vector2(-width * 0.5 + radius, -height * 0.5 + radius),
+		Vector2(width * 0.5 - radius, -height * 0.5 + radius),
+	]
+	var start_angles: Array[float] = [0.0, PI * 0.5, PI, PI * 1.5]
+	for corner_index in range(corner_centers.size()):
+		var center: Vector2 = corner_centers[corner_index]
+		var start_angle: float = start_angles[corner_index]
+		for segment_index in range(segment_count):
+			var angle_a: float = start_angle + float(segment_index) * (PI * 0.5) / float(segment_count)
+			var angle_b: float = start_angle + float(segment_index + 1) * (PI * 0.5) / float(segment_count)
+			var outward_a := Vector2(cos(angle_a), sin(angle_a))
+			var outward_b := Vector2(cos(angle_b), sin(angle_b))
+			var inner_a := center + outward_a * inner_radius
+			var inner_b := center + outward_b * inner_radius
+			var outer_a := center + outward_a * outer_radius
+			var outer_b := center + outward_b * outer_radius
+			var inner_normal_a := _get_rounded_corner_visual_normal(outward_a)
+			var inner_normal_b := _get_rounded_corner_visual_normal(outward_b)
+			var outer_normal_a := _get_rounded_corner_visual_normal(outward_a)
+			var outer_normal_b := _get_rounded_corner_visual_normal(outward_b)
+			var inner_arc_a: float = float(segment_index) * inner_radius * (PI * 0.5) / float(segment_count)
+			var inner_arc_b: float = float(segment_index + 1) * inner_radius * (PI * 0.5) / float(segment_count)
+			var outer_arc_a: float = float(segment_index) * outer_radius * (PI * 0.5) / float(segment_count)
+			var outer_arc_b: float = float(segment_index + 1) * outer_radius * (PI * 0.5) / float(segment_count)
+			var inner_front_a := Vector3(inner_a.x, inner_a.y, 0.0)
+			var inner_front_b := Vector3(inner_b.x, inner_b.y, 0.0)
+			var inner_back_b := Vector3(inner_b.x, inner_b.y, -depth)
+			var inner_back_a := Vector3(inner_a.x, inner_a.y, -depth)
+			var outer_front_b := Vector3(outer_b.x, outer_b.y, 0.0)
+			var outer_front_a := Vector3(outer_a.x, outer_a.y, 0.0)
+			var outer_back_a := Vector3(outer_a.x, outer_a.y, -depth)
+			var outer_back_b := Vector3(outer_b.x, outer_b.y, -depth)
+			_add_rounded_aperture_quad(vertices, normals, uvs, indices,
+				inner_front_b, inner_normal_b, _get_rounded_wall_surface_uv(inner_front_b, inner_normal_b, inner_arc_b, uv_scale),
+				inner_front_a, inner_normal_a, _get_rounded_wall_surface_uv(inner_front_a, inner_normal_a, inner_arc_a, uv_scale),
+				inner_back_a, inner_normal_a, _get_rounded_wall_surface_uv(inner_back_a, inner_normal_a, inner_arc_a, uv_scale),
+				inner_back_b, inner_normal_b, _get_rounded_wall_surface_uv(inner_back_b, inner_normal_b, inner_arc_b, uv_scale)
+			)
+			_add_rounded_aperture_quad(vertices, normals, uvs, indices,
+				outer_front_b, outer_normal_b, _get_rounded_wall_surface_uv(outer_front_b, outer_normal_b, outer_arc_b, uv_scale),
+				outer_front_a, outer_normal_a, _get_rounded_wall_surface_uv(outer_front_a, outer_normal_a, outer_arc_a, uv_scale),
+				outer_back_a, outer_normal_a, _get_rounded_wall_surface_uv(outer_back_a, outer_normal_a, outer_arc_a, uv_scale),
+				outer_back_b, outer_normal_b, _get_rounded_wall_surface_uv(outer_back_b, outer_normal_b, outer_arc_b, uv_scale)
+			)
+
+	var commit_normals := PackedVector3Array()
+	if rounded_corner_implementation != ROUNDED_CORNER_IMPL_GENERATED_NORMALS:
+		commit_normals = normals
+	return _make_generated_surface_mesh(vertices, uvs, indices, material, false, commit_normals)
+
+func _get_rounded_aperture_material(bounds_size: Vector2) -> StandardMaterial3D:
+	var radius: float = _get_rounded_corner_radius(bounds_size)
+	var depth: float = _get_box_depth(bounds_size)
+	var straight_width: float = maxf(_get_wall_thickness(bounds_size), bounds_size.x - radius * 2.0)
+	var source_material := _get_box_piece_material("RoundedAperture", Vector2(straight_width, depth), false)
+	if source_material == null:
+		return null
+	if (
+		rounded_corner_normal_map_enabled
+		and rounded_corner_color_tint == Color.WHITE
+		and rounded_corner_implementation != ROUNDED_CORNER_IMPL_UNSHADED_ALBEDO
+	):
+		return source_material
+	var material := source_material.duplicate(true) as StandardMaterial3D
+	if material == null:
+		return source_material
+	material.resource_local_to_scene = true
+	material.albedo_color = Color(
+		material.albedo_color.r * rounded_corner_color_tint.r,
+		material.albedo_color.g * rounded_corner_color_tint.g,
+		material.albedo_color.b * rounded_corner_color_tint.b,
+		material.albedo_color.a * rounded_corner_color_tint.a
+	)
+	if rounded_corner_implementation == ROUNDED_CORNER_IMPL_UNSHADED_ALBEDO:
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.metallic = 0.0
+		material.roughness = 1.0
+		material.normal_enabled = false
+		material.normal_texture = null
+		material.heightmap_enabled = false
+		material.heightmap_texture = null
+	if not rounded_corner_normal_map_enabled:
+		material.normal_enabled = false
+		material.normal_texture = null
+		material.heightmap_enabled = false
+		material.heightmap_texture = null
+	return material
+
+func _get_rounded_wall_surface_uv(vertex: Vector3, normal: Vector3, arc_position: float, uv_scale: float) -> Vector2:
+	var normal_abs := Vector2(absf(normal.x), absf(normal.y))
+	var dominant_edge_v: float = vertex.y if normal_abs.x >= normal_abs.y else vertex.x
+	var weight_sum: float = maxf(normal_abs.x + normal_abs.y, 0.0001)
+	var blended_edge_v: float = (vertex.y * normal_abs.x + vertex.x * normal_abs.y) / weight_sum
+	match rounded_corner_uv_mode:
+		ROUNDED_CORNER_UV_BLENDED_STRAIGHT:
+			return Vector2(-vertex.z, blended_edge_v) * uv_scale
+		ROUNDED_CORNER_UV_ARC_LENGTH:
+			return Vector2(-vertex.z, -arc_position) * uv_scale
+		ROUNDED_CORNER_UV_MIRRORED_DOMINANT:
+			return Vector2(vertex.z, -dominant_edge_v) * uv_scale
+		ROUNDED_CORNER_UV_WORLD_XY:
+			return Vector2(vertex.x, vertex.y) * uv_scale
+		_:
+			return Vector2(-vertex.z, dominant_edge_v) * uv_scale
+
+func _get_rounded_corner_visual_normal(outward: Vector2) -> Vector3:
+	match rounded_corner_implementation:
+		ROUNDED_CORNER_IMPL_CURVED_RADIAL_NORMALS, ROUNDED_CORNER_IMPL_GENERATED_NORMALS:
+			return Vector3(outward.x, outward.y, 0.0).normalized()
+		ROUNDED_CORNER_IMPL_FACETED_STRIPS:
+			return Vector3(outward.x, outward.y, 0.0).normalized()
+		ROUNDED_CORNER_IMPL_UNSHADED_ALBEDO:
+			return Vector3(outward.x, outward.y, 0.0).normalized()
+		_:
+			return _get_rounded_flat_wall_normal(outward)
+
+func _get_rounded_flat_wall_normal(outward: Vector2) -> Vector3:
+	if absf(outward.x) >= absf(outward.y):
+		return Vector3(signf(outward.x), 0.0, 0.0)
+	return Vector3(0.0, signf(outward.y), 0.0)
+
+func _add_rounded_aperture_quad(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, indices: PackedInt32Array, vertex_0: Vector3, normal_0: Vector3, uv_0: Vector2, vertex_1: Vector3, normal_1: Vector3, uv_1: Vector2, vertex_2: Vector3, normal_2: Vector3, uv_2: Vector2, vertex_3: Vector3, normal_3: Vector3, uv_3: Vector2) -> void:
+	var base_index := vertices.size()
+	_append_rounded_aperture_vertex(vertices, normals, uvs, vertex_0, normal_0, uv_0)
+	_append_rounded_aperture_vertex(vertices, normals, uvs, vertex_1, normal_1, uv_1)
+	_append_rounded_aperture_vertex(vertices, normals, uvs, vertex_2, normal_2, uv_2)
+	_append_rounded_aperture_vertex(vertices, normals, uvs, vertex_3, normal_3, uv_3)
+	indices.append_array(PackedInt32Array([
+		base_index,
+		base_index + 1,
+		base_index + 2,
+		base_index,
+		base_index + 2,
+		base_index + 3,
+	]))
+
+func _append_rounded_aperture_vertex(vertices: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, vertex: Vector3, normal: Vector3, uv: Vector2) -> void:
+	vertices.append(vertex)
+	normals.append(normal)
+	uvs.append(uv)
+
+func _add_mesh_quad(vertices: PackedVector3Array, uvs: PackedVector2Array, indices: PackedInt32Array, vertex_0: Vector3, uv_0: Vector2, vertex_1: Vector3, uv_1: Vector2, vertex_2: Vector3, uv_2: Vector2, vertex_3: Vector3, uv_3: Vector2) -> void:
+	var base_index := vertices.size()
+	_append_mesh_vertex(vertices, uvs, vertex_0, uv_0)
+	_append_mesh_vertex(vertices, uvs, vertex_1, uv_1)
+	_append_mesh_vertex(vertices, uvs, vertex_2, uv_2)
+	_append_mesh_vertex(vertices, uvs, vertex_3, uv_3)
+	indices.append_array(PackedInt32Array([
+		base_index,
+		base_index + 1,
+		base_index + 2,
+		base_index,
+		base_index + 2,
+		base_index + 3,
+	]))
+
+func _append_mesh_vertex(vertices: PackedVector3Array, uvs: PackedVector2Array, vertex: Vector3, uv: Vector2) -> void:
+	vertices.append(vertex)
+	uvs.append(uv)
+
+func _make_generated_surface_mesh(vertices: PackedVector3Array, uvs: PackedVector2Array, indices: PackedInt32Array, material: Material, merge_matching_vertices: bool, normals: PackedVector3Array = PackedVector3Array()) -> ArrayMesh:
+	var has_normals := normals.size() == vertices.size()
+	var surface_tool := SurfaceTool.new()
+	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for index in indices:
+		if index < 0 or index >= vertices.size() or index >= uvs.size():
+			continue
+		if has_normals:
+			surface_tool.set_normal(normals[index])
+		surface_tool.set_uv(uvs[index])
+		surface_tool.add_vertex(vertices[index])
+	if merge_matching_vertices:
+		surface_tool.index()
+	if not has_normals:
+		surface_tool.generate_normals()
+	surface_tool.generate_tangents()
+	surface_tool.set_material(material)
+	return surface_tool.commit()
+
+func _build_visual_polish(bounds_size: Vector2) -> void:
+	_clear_children(_polish_root)
+	if _polish_root == null:
+		return
+	var width: float = bounds_size.x
+	var height: float = bounds_size.y
+	var depth: float = _get_box_depth(bounds_size)
+	var thickness: float = _get_wall_thickness(bounds_size)
+	var bevel_width: float = minf(_scale_authored_length(bevel_visual_width_meters, bounds_size), thickness * 0.45)
+	var groove_width: float = minf(_scale_authored_length(edge_groove_width_meters, bounds_size), thickness * 0.3)
+	var inner_left: float = -width * 0.5 + thickness
+	var inner_right: float = width * 0.5 - thickness
+	var inner_bottom: float = -height * 0.5 + thickness
+	var inner_top: float = height * 0.5 - thickness
+	var corner_radius: float = _get_rounded_corner_radius(bounds_size)
+	var straight_left: float = -width * 0.5 + corner_radius
+	var straight_right: float = width * 0.5 - corner_radius
+	var straight_bottom: float = -height * 0.5 + corner_radius
+	var straight_top: float = height * 0.5 - corner_radius
+	var back_z: float = -depth
+	var floor_bevel_z: float = back_z + 0.003
+	var wall_bevel_z: float = back_z + bevel_width
+
+	if bevel_visuals_enabled and bevel_width > 0.0001 and bevel_visual_opacity > 0.0:
+		_sync_visual_quad("BevelTop", PackedVector3Array([
+			Vector3(straight_left, inner_top - bevel_width, floor_bevel_z),
+			Vector3(straight_right, inner_top - bevel_width, floor_bevel_z),
+			Vector3(straight_right, inner_top, wall_bevel_z),
+			Vector3(straight_left, inner_top, wall_bevel_z),
+		]), _get_bevel_material())
+		_sync_visual_quad("BevelBottom", PackedVector3Array([
+			Vector3(straight_right, inner_bottom + bevel_width, floor_bevel_z),
+			Vector3(straight_left, inner_bottom + bevel_width, floor_bevel_z),
+			Vector3(straight_left, inner_bottom, wall_bevel_z),
+			Vector3(straight_right, inner_bottom, wall_bevel_z),
+		]), _get_bevel_material())
+		_sync_visual_quad("BevelLeft", PackedVector3Array([
+			Vector3(inner_left + bevel_width, straight_bottom, floor_bevel_z),
+			Vector3(inner_left + bevel_width, straight_top, floor_bevel_z),
+			Vector3(inner_left, straight_top, wall_bevel_z),
+			Vector3(inner_left, straight_bottom, wall_bevel_z),
+		]), _get_bevel_material())
+		_sync_visual_quad("BevelRight", PackedVector3Array([
+			Vector3(inner_right - bevel_width, straight_top, floor_bevel_z),
+			Vector3(inner_right - bevel_width, straight_bottom, floor_bevel_z),
+			Vector3(inner_right, straight_bottom, wall_bevel_z),
+			Vector3(inner_right, straight_top, wall_bevel_z),
+		]), _get_bevel_material())
+
+	if edge_grooves_enabled and groove_width > 0.0001 and edge_groove_opacity > 0.0:
+		var groove_z: float = back_z + maxf(bevel_width, groove_width) + 0.007
+		_sync_visual_quad("GrooveTop", PackedVector3Array([
+			Vector3(straight_left, inner_top - groove_width, groove_z),
+			Vector3(straight_right, inner_top - groove_width, groove_z),
+			Vector3(straight_right, inner_top, groove_z),
+			Vector3(straight_left, inner_top, groove_z),
+		]), _get_groove_material())
+		_sync_visual_quad("GrooveBottom", PackedVector3Array([
+			Vector3(straight_right, inner_bottom + groove_width, groove_z),
+			Vector3(straight_left, inner_bottom + groove_width, groove_z),
+			Vector3(straight_left, inner_bottom, groove_z),
+			Vector3(straight_right, inner_bottom, groove_z),
+		]), _get_groove_material())
+		_sync_visual_quad("GrooveLeft", PackedVector3Array([
+			Vector3(inner_left + groove_width, straight_bottom, groove_z),
+			Vector3(inner_left + groove_width, straight_top, groove_z),
+			Vector3(inner_left, straight_top, groove_z),
+			Vector3(inner_left, straight_bottom, groove_z),
+		]), _get_groove_material())
+		_sync_visual_quad("GrooveRight", PackedVector3Array([
+			Vector3(inner_right - groove_width, straight_top, groove_z),
+			Vector3(inner_right - groove_width, straight_bottom, groove_z),
+			Vector3(inner_right, straight_bottom, groove_z),
+			Vector3(inner_right, straight_top, groove_z),
+		]), _get_groove_material())
+
+func _sync_visual_quad(node_name: String, points: PackedVector3Array, material: Material) -> void:
+	if points.size() != 4:
+		return
+	var mesh_instance: MeshInstance3D = _polish_root.get_node_or_null(node_name) as MeshInstance3D
+	if mesh_instance == null:
+		mesh_instance = MeshInstance3D.new()
+		mesh_instance.name = node_name
+		_polish_root.add_child(mesh_instance)
+		_set_scene_owner(mesh_instance)
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mesh_instance.mesh = _make_visual_quad_mesh(points, material)
+
+func _make_visual_quad_mesh(points: PackedVector3Array, material: Material) -> ArrayMesh:
+	var vertices := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	_add_mesh_quad(vertices, uvs, indices,
+		points[0], Vector2(0.0, 0.0),
+		points[1], Vector2(1.0, 0.0),
+		points[2], Vector2(1.0, 1.0),
+		points[3], Vector2(0.0, 1.0)
+	)
+	return _make_generated_surface_mesh(vertices, uvs, indices, material, false)
+
+func _sync_ball_contact_shadow(index: int, radius: float, local_position: Vector3) -> void:
+	if _polish_root == null:
+		return
+	var node_name := "BallContactShadow_%02d" % [index + 1]
+	var mesh_instance: MeshInstance3D = _polish_root.get_node_or_null(node_name) as MeshInstance3D
+	if mesh_instance == null:
+		mesh_instance = MeshInstance3D.new()
+		mesh_instance.name = node_name
+		_polish_root.add_child(mesh_instance)
+		_set_scene_owner(mesh_instance)
+	mesh_instance.visible = contact_shadows_enabled and contact_shadow_strength > 0.0
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var mesh: QuadMesh = mesh_instance.mesh as QuadMesh
+	if mesh == null:
+		mesh = QuadMesh.new()
+	var shadow_radius := radius * contact_shadow_radius_multiplier
+	mesh.size = Vector2(shadow_radius * 2.0, shadow_radius * 2.0)
+	mesh.material = _get_contact_shadow_material()
+	mesh_instance.mesh = mesh
+	mesh_instance.rotation = Vector3.ZERO
+	mesh_instance.position = Vector3(local_position.x, local_position.y, -_get_box_depth(_get_active_bounds_size()) + 0.002)
+
+func _hide_unused_contact_shadows(active_count: int) -> void:
+	if _polish_root == null:
+		return
+	for child in _polish_root.get_children():
+		if not child is MeshInstance3D or not String(child.name).begins_with("BallContactShadow_"):
+			continue
+		var shadow_index: int = int(String(child.name).get_slice("_", 1)) - 1
+		if shadow_index >= active_count:
+			(child as MeshInstance3D).visible = false
+
+func _sync_contact_shadow_positions() -> void:
+	if _polish_root == null or not contact_shadows_enabled:
+		return
+	var depth := _get_box_depth(_get_active_bounds_size())
+	for index in range(_balls.size()):
+		var ball: RigidBody3D = _balls[index]
+		if ball == null or not is_instance_valid(ball):
+			continue
+		var shadow := _polish_root.get_node_or_null("BallContactShadow_%02d" % [index + 1]) as MeshInstance3D
+		if shadow == null:
+			continue
+		shadow.visible = ball.visible and contact_shadow_strength > 0.0
+		shadow.global_position = to_global(Vector3(ball.position.x, ball.position.y, -depth + 0.002))
+		shadow.global_rotation = global_rotation
 
 func _get_rounded_corner_radius(bounds_size: Vector2) -> float:
 	if not rounded_screen_corners_enabled:
@@ -853,6 +1530,9 @@ func _get_rounded_corner_radius(bounds_size: Vector2) -> float:
 	var ratio_radius: float = bounds_size.y * screen_corner_radius_ratio_of_bounds_height
 	var target_radius: float = maxf(_scale_authored_length(screen_corner_radius_meters, bounds_size), ratio_radius)
 	return clampf(target_radius, 0.0, minf(bounds_size.x, bounds_size.y) * 0.34)
+
+func _get_wall_end_inset(bounds_size: Vector2) -> float:
+	return clampf(_scale_authored_length(wall_end_inset_meters, bounds_size), 0.0, minf(bounds_size.x, bounds_size.y) * 0.45)
 
 func _build_maze(bounds_size: Vector2) -> void:
 	_clear_children(_maze_root)
@@ -868,8 +1548,9 @@ func _build_maze(bounds_size: Vector2) -> void:
 	var z: float = -depth * 0.5
 
 	var radius: float = _get_ball_radius(bounds_size)
-	var maze_width: float = width
-	var maze_height: float = height
+	var outer_wall_thickness: float = _get_wall_thickness(bounds_size)
+	var maze_width: float = maxf(thickness, width - outer_wall_thickness * 2.0)
+	var maze_height: float = maxf(thickness, height - outer_wall_thickness * 2.0)
 	var requested_columns: int = maxi(3, maze_columns)
 	var requested_rows: int = maxi(3, maze_rows)
 	var minimum_cell_size: float = radius * 2.0 * maze_cell_clearance_ball_diameters + thickness
@@ -1188,6 +1869,7 @@ func _build_balls(bounds_size: Vector2) -> void:
 	var usable_height: float = float(layout["usable_height"])
 	var spawn_radius: float = float(layout["spawn_radius"])
 	_hide_unused_balls(active_ball_count)
+	_hide_unused_contact_shadows(active_ball_count)
 
 	for index in range(active_ball_count):
 		var column: int = index % columns
@@ -1207,9 +1889,10 @@ func _build_balls(bounds_size: Vector2) -> void:
 			clampf(y + jitter.y, -usable_height * 0.5, usable_height * 0.5)
 		)
 		_sync_ball(index, radius, Vector3(clamped_position.x, clamped_position.y, _get_ball_plane_z(radius)))
+		_sync_ball_contact_shadow(index, radius, Vector3(clamped_position.x, clamped_position.y, _get_ball_plane_z(radius)))
 
 func _get_ball_spawn_layout(bounds_size: Vector2, radius: float, active_ball_count: int) -> Dictionary:
-	var edge_margin: float = radius * 1.04
+	var edge_margin: float = radius * 1.04 + _get_wall_thickness(bounds_size)
 	var usable_width: float = maxf(0.001, bounds_size.x - edge_margin * 2.0)
 	var usable_height: float = maxf(0.001, bounds_size.y - edge_margin * 2.0)
 	var best_columns: int = maxi(1, ceili(sqrt(float(active_ball_count))))
@@ -1290,9 +1973,12 @@ func _on_ball_body_entered(_other_body: Node, source_ball: RigidBody3D) -> void:
 	if source_ball == null or not is_instance_valid(source_ball):
 		return
 	var impact_speed: float = source_ball.linear_velocity.length()
-	if impact_speed < haptic_min_impact_speed:
+	var haptic_speed_scale := _get_haptic_speed_scale()
+	var effective_min_speed := haptic_min_impact_speed * haptic_speed_scale
+	if impact_speed < effective_min_speed:
 		return
-	var amplitude: float = clampf((impact_speed - haptic_min_impact_speed) / 4.0, 0.16, 0.8)
+	var amplitude_range := maxf(4.0 * haptic_speed_scale, 0.2)
+	var amplitude: float = clampf((impact_speed - effective_min_speed) / amplitude_range, 0.16, 0.8)
 	_trigger_haptic(amplitude, 18)
 
 func _get_or_create_static_body(parent: Node3D, node_name: String) -> StaticBody3D:
@@ -1330,6 +2016,7 @@ func _get_or_create_collision_shape(parent: Node, node_name: String) -> Collisio
 		collision.name = node_name
 		parent.add_child(collision)
 		_set_scene_owner(collision)
+	collision.visible = false
 	return collision
 
 func _hide_unused_balls(active_count: int) -> void:
@@ -1364,6 +2051,14 @@ func _set_scene_owner(node: Node) -> void:
 	# Generated preview/runtime pieces contain procedural textures and meshes.
 	# Leaving them unowned keeps the text scene small when the editor saves it.
 	pass
+
+func _set_authorable_scene_owner(node: Node) -> void:
+	if node == null or not Engine.is_editor_hint() or get_tree() == null:
+		return
+	var scene_root: Node = get_tree().edited_scene_root
+	if scene_root == null or node == scene_root:
+		return
+	node.owner = scene_root
 
 func _make_ball_physics_material() -> PhysicsMaterial:
 	var material: PhysicsMaterial = PhysicsMaterial.new()
@@ -1408,7 +2103,7 @@ func _make_front_cover_physics_material() -> PhysicsMaterial:
 	return material
 
 func _read_box_gravity() -> Vector3:
-	var gravity: Vector3 = Input.get_gravity()
+	var gravity: Vector3 = _get_device_motion_vector("get_gravity", Input.get_gravity())
 	if gravity.length() < 0.01:
 		return _read_desktop_debug_gravity()
 
@@ -1424,6 +2119,73 @@ func _read_box_gravity() -> Vector3:
 	if contact_gravity > 0.0:
 		box_gravity.z = -maxf(absf(box_gravity.z), contact_gravity)
 	return box_gravity.limit_length(GRAVITY_METERS_PER_SECOND_SQUARED)
+
+func _read_box_shake_acceleration() -> Vector3:
+	if not shake_impulse_enabled:
+		_smoothed_shake_acceleration = Vector3.ZERO
+		_has_accelerometer_sample = false
+		return Vector3.ZERO
+	var acceleration: Vector3 = _get_device_motion_vector("get_accelerometer", Input.get_accelerometer())
+	if acceleration.length_squared() < 0.0001:
+		_smoothed_shake_acceleration = _smoothed_shake_acceleration.lerp(Vector3.ZERO, clampf(1.0 - shake_smoothing, 0.0, 1.0))
+		return _smoothed_shake_acceleration
+	if shake_acceleration_mode == SHAKE_ACCELERATION_RAW_PHYSICAL:
+		return _read_raw_physical_box_acceleration(acceleration)
+
+	if not _has_accelerometer_sample:
+		_smoothed_accelerometer = acceleration
+		_has_accelerometer_sample = true
+		return Vector3.ZERO
+
+	var linear_acceleration := acceleration - _smoothed_accelerometer
+	_smoothed_accelerometer = _smoothed_accelerometer.lerp(acceleration, clampf(shake_smoothing, 0.02, 0.95))
+
+	var box_acceleration := _map_device_acceleration_to_box(linear_acceleration)
+
+	var deadzone := maxf(shake_deadzone_meters_per_second_squared, 0.0)
+	var magnitude := box_acceleration.length()
+	if magnitude <= deadzone:
+		box_acceleration = Vector3.ZERO
+	else:
+		box_acceleration = box_acceleration.normalized() * minf(magnitude - deadzone, max_shake_acceleration_meters_per_second_squared)
+	_smoothed_shake_acceleration = _smoothed_shake_acceleration.lerp(box_acceleration, clampf(1.0 - shake_smoothing, 0.0, 1.0))
+	return _smoothed_shake_acceleration
+
+func _read_raw_physical_box_acceleration(acceleration: Vector3) -> Vector3:
+	var linear_acceleration := _get_device_motion_vector("get_linear_acceleration", Vector3.ZERO)
+	if linear_acceleration.length_squared() < 0.0001:
+		linear_acceleration = acceleration - _get_device_motion_vector("get_gravity", Input.get_gravity())
+	if not _has_accelerometer_sample:
+		_smoothed_accelerometer = linear_acceleration
+		_has_accelerometer_sample = true
+	_smoothed_accelerometer = _smoothed_accelerometer.lerp(linear_acceleration, clampf(1.0 - shake_smoothing, 0.02, 1.0))
+	var box_acceleration := _map_device_acceleration_to_box(_smoothed_accelerometer)
+	var deadzone := maxf(shake_deadzone_meters_per_second_squared * 0.25, 0.0)
+	var magnitude := box_acceleration.length()
+	if magnitude <= deadzone:
+		box_acceleration = Vector3.ZERO
+	else:
+		box_acceleration = box_acceleration.normalized() * minf(magnitude - deadzone, max_shake_acceleration_meters_per_second_squared)
+	_smoothed_shake_acceleration = _smoothed_shake_acceleration.lerp(box_acceleration, clampf(1.0 - shake_smoothing, 0.0, 1.0))
+	return _smoothed_shake_acceleration
+
+func _get_device_motion_vector(method_name: StringName, fallback: Vector3) -> Vector3:
+	var device_motion := get_node_or_null("/root/DeviceMotion")
+	if device_motion != null and device_motion.has_method(method_name):
+		var value: Variant = device_motion.call(method_name)
+		if value is Vector3:
+			return value
+	return fallback
+
+func _map_device_acceleration_to_box(device_acceleration: Vector3) -> Vector3:
+	var box_acceleration := Vector3(device_acceleration.x, device_acceleration.y, device_acceleration.z)
+	if swap_tilt_axes:
+		box_acceleration = Vector3(box_acceleration.y, box_acceleration.x, box_acceleration.z)
+	if invert_tilt_x:
+		box_acceleration.x *= -1.0
+	if invert_tilt_y:
+		box_acceleration.y *= -1.0
+	return box_acceleration
 
 func _read_desktop_debug_gravity() -> Vector3:
 	var keyboard_tilt: Vector2 = _read_desktop_keyboard_tilt()
@@ -1519,6 +2281,13 @@ func _scale_authored_length(length_meters: float, bounds_size: Vector2) -> float
 		return 0.0
 	return length_meters * _get_view_physical_scale(bounds_size)
 
+func _scale_rendered_length(length_meters: float, bounds_size: Vector2) -> float:
+	return _scale_authored_length(length_meters, bounds_size) * _runtime_presentation_scale
+
+func _get_haptic_speed_scale() -> float:
+	var physical_scale := _get_view_physical_scale(_get_active_bounds_size())
+	return clampf(sqrt(maxf(physical_scale, 0.0001)), 0.12, 1.0)
+
 func _get_box_depth(bounds_size: Vector2) -> float:
 	return maxf(_scale_authored_length(box_depth_meters, bounds_size), 0.001)
 
@@ -1594,22 +2363,34 @@ func get_enhanced_graphics_quality() -> int:
 			return ENHANCED_GRAPHICS_HIGH
 
 func _get_box_piece_material(piece_name: String, face_size: Vector2, is_back: bool) -> StandardMaterial3D:
-	var material_key: String = "%s:%.3f:%.3f:%.3f:%s" % [
+	if box_wood_material != null:
+		var shared_material_key: String = "shared_box_wood:%.3f:%s:%.3f:%.3f:%s:%.3f" % [
+			_get_wood_texture_tile_size(),
+			str(cinematic_quality_lighting_enabled),
+			cinematic_reflection_strength,
+			uniform_wood_roughness,
+			str(use_uniform_wood_roughness),
+			varnish,
+		]
+		if _box_piece_materials.has(shared_material_key):
+			return _box_piece_materials[shared_material_key] as StandardMaterial3D
+		var shared_material: StandardMaterial3D = _make_box_wood_material(face_size)
+		if shared_material != null:
+			_box_piece_materials[shared_material_key] = shared_material
+			return shared_material
+
+	var material_key: String = "%s:%.3f:%.3f:%.3f:%s:%.3f" % [
 		piece_name,
 		face_size.x,
 		face_size.y,
 		_get_wood_texture_tile_size(),
 		str(is_back),
+		varnish,
 	]
 	if _box_piece_materials.has(material_key):
 		return _box_piece_materials[material_key] as StandardMaterial3D
 
-	var material: StandardMaterial3D = _make_box_wood_material(face_size)
-	if material != null:
-		_box_piece_materials[material_key] = material
-		return material
-
-	material = StandardMaterial3D.new()
+	var material := StandardMaterial3D.new()
 	var dark: Color = Color(0.48, 0.29, 0.14, 1.0) if is_back else Color(0.44, 0.25, 0.11, 1.0)
 	var light: Color = Color(0.9, 0.66, 0.38, 1.0) if is_back else Color(0.82, 0.55, 0.28, 1.0)
 	var insane_quality := _is_cinematic_insane()
@@ -1621,6 +2402,8 @@ func _get_box_piece_material(piece_name: String, face_size: Vector2, is_back: bo
 		material.normal_enabled = true
 		material.normal_scale = 0.055 + cinematic_material_micro_detail * (0.18 if insane_quality else 0.12)
 		material.normal_texture = _get_micro_normal_texture("wood", Vector2(192.0, 192.0))
+	_apply_wood_roughness_test(material)
+	_apply_wood_varnish(material)
 	_box_piece_materials[material_key] = material
 	return material
 
@@ -1637,7 +2420,88 @@ func _make_box_wood_material(face_size: Vector2) -> StandardMaterial3D:
 		material.roughness = minf(material.roughness, 0.7)
 		if material.normal_texture != null:
 			material.normal_enabled = true
+	_apply_wood_roughness_test(material)
+	_apply_wood_varnish(material)
 	return material
+
+func _apply_wood_roughness_test(material: StandardMaterial3D) -> void:
+	if material == null or not use_uniform_wood_roughness:
+		return
+	material.roughness_texture = null
+	material.roughness = clampf(uniform_wood_roughness, 0.0, 1.0)
+
+func _apply_wood_varnish(material: StandardMaterial3D) -> void:
+	if material == null:
+		return
+	var amount := clampf(varnish, 0.0, 1.0)
+	if amount <= 0.0:
+		return
+	material.roughness_texture = null
+	material.roughness = lerpf(material.roughness, 0.16, amount)
+	material.metallic_specular = maxf(material.metallic_specular, lerpf(0.5, 0.92, amount))
+	material.metallic = maxf(material.metallic, cinematic_reflection_strength * lerpf(0.04, 0.1, amount))
+	material.clearcoat_enabled = true
+	material.clearcoat = maxf(material.clearcoat, lerpf(0.25, 1.0, amount))
+	material.clearcoat_roughness = minf(material.clearcoat_roughness, lerpf(0.35, 0.06, amount))
+
+func _get_bevel_material() -> StandardMaterial3D:
+	if _bevel_material == null:
+		var bounds_size := _get_active_bounds_size()
+		var face_size := Vector2(maxf(bounds_size.x, 0.1), maxf(_get_box_depth(bounds_size), 0.1))
+		var source_material := _get_box_piece_material("BevelVisual", face_size, false)
+		if source_material != null:
+			_bevel_material = source_material.duplicate(true) as StandardMaterial3D
+		if _bevel_material == null:
+			_bevel_material = StandardMaterial3D.new()
+		_bevel_material.resource_local_to_scene = true
+		_bevel_material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		_bevel_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_bevel_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		_bevel_material.no_depth_test = false
+		_bevel_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+		var edge_tint := clampf(bevel_visual_opacity, 0.0, 1.0)
+		_bevel_material.albedo_color = Color(1.0 - edge_tint * 0.32, 1.0 - edge_tint * 0.22, 1.0 - edge_tint * 0.12, 1.0)
+		_bevel_material.roughness = minf(_bevel_material.roughness, 0.58 if cinematic_quality_lighting_enabled else 0.76)
+		_bevel_material.metallic = maxf(_bevel_material.metallic, cinematic_reflection_strength * 0.04 if cinematic_quality_lighting_enabled else 0.0)
+	return _bevel_material
+
+func _get_groove_material() -> StandardMaterial3D:
+	if _groove_material == null:
+		_groove_material = StandardMaterial3D.new()
+		_groove_material.resource_local_to_scene = true
+		_groove_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_groove_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_groove_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_groove_material.no_depth_test = true
+		_groove_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		_groove_material.albedo_color = Color(0.0, 0.0, 0.0, edge_groove_opacity)
+	return _groove_material
+
+func _get_contact_shadow_material() -> StandardMaterial3D:
+	if _contact_shadow_material == null:
+		_contact_shadow_material = StandardMaterial3D.new()
+		_contact_shadow_material.resource_local_to_scene = true
+		_contact_shadow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_contact_shadow_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_contact_shadow_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_contact_shadow_material.no_depth_test = true
+		_contact_shadow_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		_contact_shadow_material.albedo_color = Color(0.0, 0.0, 0.0, contact_shadow_strength)
+		_contact_shadow_material.albedo_texture = _make_contact_shadow_texture()
+	return _contact_shadow_material
+
+func _make_contact_shadow_texture() -> ImageTexture:
+	var size := 128
+	var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var center := Vector2(float(size - 1) * 0.5, float(size - 1) * 0.5)
+	var max_radius := float(size) * 0.5
+	for y in range(size):
+		for x in range(size):
+			var distance := Vector2(float(x), float(y)).distance_to(center) / max_radius
+			var alpha := clampf(1.0 - smoothstep(0.05, 1.0, distance), 0.0, 1.0)
+			alpha = pow(alpha, 1.55)
+			image.set_pixel(x, y, Color(0.0, 0.0, 0.0, alpha))
+	return ImageTexture.create_from_image(image)
 
 func _get_maze_goal_material() -> StandardMaterial3D:
 	if _maze_goal_material == null:

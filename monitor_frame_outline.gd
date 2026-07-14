@@ -37,8 +37,8 @@ func _update_outline(force: bool) -> void:
 	if _screen_scaler == null:
 		return
 
-	var width := _screen_scaler.physical_width_meters
-	var height := _screen_scaler.physical_height_meters
+	var width := _get_window_width_meters()
+	var height := _get_window_height_meters()
 	var thickness := border_thickness_meters
 	var depth_offset := border_depth_offset_meters
 
@@ -75,6 +75,22 @@ func _update_border(border: MeshInstance3D, quad_size: Vector2, local_pos: Vecto
 	border.material_override = _get_border_material()
 	border.position = local_pos
 	border.rotation = Vector3.ZERO
+
+func _get_window_width_meters() -> float:
+	if _screen_scaler == null:
+		return 0.0
+	if _screen_scaler.has_method("get_virtual_window_width_meters"):
+		return float(_screen_scaler.call("get_virtual_window_width_meters"))
+	if _screen_scaler.physical_width_meters <= 0.0 or _screen_scaler.physical_height_meters <= 0.0:
+		return 0.0
+	return _screen_scaler.physical_width_meters * _screen_scaler.tracking_scale_multiplier
+
+func _get_window_height_meters() -> float:
+	if _screen_scaler == null:
+		return 0.0
+	if _screen_scaler.has_method("get_virtual_window_height_meters"):
+		return float(_screen_scaler.call("get_virtual_window_height_meters"))
+	return _screen_scaler.virtual_window_height
 
 func _get_border_material() -> StandardMaterial3D:
 	if _border_material == null:

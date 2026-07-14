@@ -11,7 +11,7 @@ func _ready():
 	pass
 
 func _process(_delta):
-	if Input.is_action_just_pressed("open_menu"):
+	if InputMap.has_action("open_menu") and Input.is_action_just_pressed("open_menu"):
 		if visible:
 			close()
 		else:
@@ -19,7 +19,7 @@ func _process(_delta):
 	if fps_label.visible:
 		fps_label.text = "FPS: " + str(Engine.get_frames_per_second())
 
-	if Input.is_action_just_pressed("toggle_fullscreen"):
+	if InputMap.has_action("toggle_fullscreen") and Input.is_action_just_pressed("toggle_fullscreen"):
 		toggle_fullscreen()
 		
 func toggle_fullscreen():

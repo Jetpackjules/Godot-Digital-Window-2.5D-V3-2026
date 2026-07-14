@@ -2,6 +2,15 @@
 .godot/
 /android/
 /IPhoneWindowExport/
+/IPhoneWindow.ipa
+/IPhoneWindow.xcarchive/
+/IPhoneWindow.xcframework/
+/IPhoneWindow.xcodeproj/
+/IPhoneWindow/
+/MoltenVK.xcframework/
+/DistributionSummary.plist
+/ExportOptions.plist
+/PrivacyInfo.xcprivacy
 /.DS_Store
 **/.DS_Store
 /extension_api.json

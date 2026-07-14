@@ -1,1 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="124" height="124" x="2" y="2" fill="#363d52" stroke="#212532" stroke-width="4" rx="14"/><g fill="#fff" transform="translate(12.322 12.322)scale(.101)"><path d="M105 673v33q407 354 814 0v-33z"/><path fill="#478cbf" d="m105 673 152 14q12 1 15 14l4 67 132 10 8-61q2-11 15-15h162q13 4 15 15l8 61 132-10 4-67q3-13 15-14l152-14V427q30-39 56-81-35-59-83-108-43 20-82 47-40-37-88-64 7-51 8-102-59-28-123-42-26 43-46 89-49-7-98 0-20-46-46-89-64 14-123 42 1 51 8 102-48 27-88 64-39-27-82-47-48 49-83 108 26 42 56 81zm0 33v39c0 276 813 276 814 0v-39l-134 12-5 69q-2 10-14 13l-162 11q-12 0-16-11l-10-65H446l-10 65q-4 11-16 11l-162-11q-12-3-14-13l-5-69z"/><path d="M483 600c0 34 58 34 58 0v-86c0-34-58-34-58 0z"/><circle cx="725" cy="526" r="90"/><circle cx="299" cy="526" r="90"/></g><g fill="#414042" transform="translate(12.322 12.322)scale(.101)"><circle cx="307" cy="532" r="60"/><circle cx="717" cy="532" r="60"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="16" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.58" stop-color="#1b2740"/>
+      <stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+    <linearGradient id="room" x1="33" y1="31" x2="97" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f4c36d"/>
+      <stop offset="0.46" stop-color="#c47738"/>
+      <stop offset="1" stop-color="#5c3524"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="30" y1="34" x2="103" y2="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4ed5ff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#4c7dff" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="25" fill="url(#bg)"/>
+  <rect x="7" y="7" width="114" height="114" rx="22" fill="none" stroke="#2e3c5c" stroke-width="3"/>
+
+  <g>
+    <path d="M30 35 L101 25 L101 93 L30 83 Z" fill="#08111f"/>
+    <path d="M39 42 L92 36 L92 84 L39 78 Z" fill="url(#room)"/>
+    <path d="M39 42 L92 36 L92 84 L39 78 Z" fill="url(#glass)"/>
+
+    <path d="M30 35 L101 25 L101 93 L30 83 Z" fill="none" stroke="#4cc9ff" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M39 42 L92 36 L92 84 L39 78 Z" fill="none" stroke="#f0f7ff" stroke-opacity="0.32" stroke-width="1.5"/>
+    <path d="M39 42 L53 49 L53 74 L39 78 Z" fill="#8fd8ff" fill-opacity="0.12"/>
+    <path d="M92 36 L79 46 L79 74 L92 84 Z" fill="#000" fill-opacity="0.18"/>
+
+    <path d="M46 56 L82 51 L82 71 L46 73 Z" fill="none" stroke="#ff4d57" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M64 38 L64 84" stroke="#ffd166" stroke-width="2" stroke-opacity="0.7"/>
+    <path d="M31 60 L100 50" stroke="#9de8ff" stroke-width="2" stroke-opacity="0.45"/>
+  </g>
+
+  <g>
+    <circle cx="42" cy="50" r="7" fill="#ff4d57"/>
+    <circle cx="82" cy="41" r="6" fill="#4ade80"/>
+    <circle cx="88" cy="78" r="8" fill="#ffd166"/>
+    <circle cx="52" cy="83" r="6.5" fill="#5b8cff"/>
+  </g>
+
+  <circle cx="64" cy="64" r="6.2" fill="#f8fafc"/>
+  <circle cx="64" cy="64" r="3.2" fill="#1b2740"/>
+  <path d="M57 96 C63 91 70 91 76 96" fill="none" stroke="#4cc9ff" stroke-width="4" stroke-linecap="round"/>
+</svg>

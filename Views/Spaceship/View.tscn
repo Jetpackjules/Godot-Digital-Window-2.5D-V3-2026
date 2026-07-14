@@ -8,15 +8,18 @@
 
 [node name="Main" type="Node3D" unique_id=772339064]
 
-[node name="Hangar" parent="." unique_id=1333878908 instance=ExtResource("1_fos0i")]
+[node name="ViewerAlignedContent" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.4, -6.875415)
 
-[node name="Outside" parent="." unique_id=1568526060 instance=ExtResource("2_3dxm6")]
+[node name="Hangar" parent="ViewerAlignedContent" unique_id=1333878908 instance=ExtResource("1_fos0i")]
+
+[node name="Outside" parent="ViewerAlignedContent" unique_id=1568526060 instance=ExtResource("2_3dxm6")]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=392463312]
 environment = ExtResource("3_lgr22")
 
 [node name="MenuLayer" parent="." unique_id=550720892 instance=ExtResource("4_trn2v")]
 
-[node name="FPSCharacter" parent="." unique_id=1915561018 instance=ExtResource("5_03owx")]
+[node name="FPSCharacter" parent="ViewerAlignedContent" unique_id=1915561018 instance=ExtResource("5_03owx")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 8.39674)
 script = null

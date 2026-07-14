@@ -4,6 +4,10 @@ extends Camera3D
 @export var window_center_path: NodePath
 @export var screen_scaling_path: NodePath
 @export var minimum_window_distance_meters: float = 0.005
+@export var contain_physical_window_in_viewport: bool = true
+@export var minimum_dynamic_far_meters: float = 16.0
+@export var maximum_dynamic_far_meters: float = 120.0
+@export var dynamic_far_margin_multiplier: float = 4.0
 
 var virtual_window_height: float = 4.0
 
@@ -17,6 +21,7 @@ var _last_screen_scaling_path: NodePath
 func _ready() -> void:
 	# Force the camera into frustum mode
 	projection = Camera3D.PROJECTION_FRUSTUM
+	keep_aspect = Camera3D.KEEP_HEIGHT
 	_refresh_bindings()
 
 func _refresh_bindings() -> void:
@@ -50,10 +55,9 @@ func refresh_off_axis_projection() -> void:
 		return
 		
 	if _screen_scaler:
-		# The frustum plane is the physical glass on this client. Keep tracking
-		# scale separate; otherwise smaller secondary screens inherit the primary
-		# screen height and render zoomed out past their real window frame.
-		virtual_window_height = _screen_scaler.physical_height_meters
+		# The frustum plane follows the active virtual window. On iPhone this can
+		# be the authored ViewBounds size while ARKit stays in physical meters.
+		virtual_window_height = _get_virtual_window_height_meters()
 
 	# The projection plane must inherit the solved physical screen orientation.
 	# Without this, rotated secondary screens keep their border transform but the
@@ -67,7 +71,8 @@ func refresh_off_axis_projection() -> void:
 
 	# 2. Handle Field of View (Z-Axis distance from target eye to window plane)
 	var target_z_dist: float = max(min_window_distance, abs(t_local.z - w_local.z))
-	size = virtual_window_height * (near / target_z_dist)
+	_update_dynamic_far_clip(target_z_dist)
+	size = _get_contained_frustum_plane_height() * (near / target_z_dist)
 
 	# 3. Handle Frustum Shear / Offset (X/Y-Axis movement)
 	var window_depth: float = max(min_window_distance, abs(-w_local.z))
@@ -77,3 +82,39 @@ func refresh_off_axis_projection() -> void:
 	
 	# Apply similar triangles math to scale the world shift down to the tiny near plane
 	frustum_offset = raw_shift * (near / window_depth)
+
+func _update_dynamic_far_clip(target_z_dist: float) -> void:
+	var virtual_extent := maxf(virtual_window_height, _get_virtual_window_width_meters())
+	var required_far := target_z_dist + virtual_extent * maxf(dynamic_far_margin_multiplier, 0.0)
+	var maximum_far := maxf(maximum_dynamic_far_meters, minimum_dynamic_far_meters)
+	far = clampf(required_far, minimum_dynamic_far_meters, maximum_far)
+
+func _get_contained_frustum_plane_height() -> float:
+	var plane_height := virtual_window_height
+	if not contain_physical_window_in_viewport or _screen_scaler == null:
+		return plane_height
+	var viewport_size := get_viewport().get_visible_rect().size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return plane_height
+	var viewport_aspect := viewport_size.x / viewport_size.y
+	var virtual_width := _get_virtual_window_width_meters()
+	if viewport_aspect <= 0.0 or virtual_width <= 0.0:
+		return plane_height
+	var height_needed_for_width := virtual_width / viewport_aspect
+	return maxf(plane_height, height_needed_for_width)
+
+func _get_virtual_window_height_meters() -> float:
+	if _screen_scaler == null:
+		return virtual_window_height
+	if _screen_scaler.has_method("get_virtual_window_height_meters"):
+		return float(_screen_scaler.call("get_virtual_window_height_meters"))
+	return _screen_scaler.virtual_window_height
+
+func _get_virtual_window_width_meters() -> float:
+	if _screen_scaler == null:
+		return 0.0
+	if _screen_scaler.has_method("get_virtual_window_width_meters"):
+		return float(_screen_scaler.call("get_virtual_window_width_meters"))
+	if _screen_scaler.physical_width_meters <= 0.0 or _screen_scaler.physical_height_meters <= 0.0:
+		return 0.0
+	return _screen_scaler.physical_width_meters * _screen_scaler.tracking_scale_multiplier

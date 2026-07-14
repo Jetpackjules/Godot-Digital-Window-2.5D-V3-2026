@@ -8,6 +8,7 @@ class_name IPhoneWindowRuntime
 @export var status_label_path: NodePath
 @export var head_plane_debug_dot_path: NodePath
 @export var view_switcher_path: NodePath
+@export var settings_ui_path: NodePath
 
 @export var fallback_head_position_meters: Vector3 = Vector3(0.0, 0.0, 0.35)
 @export_range(0.02, 1.5, 0.01) var minimum_head_distance_meters: float = 0.08
@@ -30,15 +31,14 @@ class_name IPhoneWindowRuntime
 @export var desktop_debug_cycle_views: bool = true
 
 @export_group("Tracking Loss Fallback")
-@export var inertial_tracking_loss_fallback_enabled: bool = false
+@export var inertial_tracking_loss_fallback_enabled: bool = true
 @export var map_inertial_gravity_to_screen_axes: bool = true
 
-@export_group("Camera Reactive Lighting")
-@export var camera_reactive_lighting_enabled: bool = false
-@export var desktop_debug_camera_reactive_lighting_enabled: bool = true
-@export_range(1.0, 30.0, 1.0) var desktop_debug_camera_light_sample_fps: float = 12.0
-@export var desktop_debug_camera_light_mirror_x: bool = true
-@export var desktop_debug_camera_light_flip_y: bool = false
+@export_group("Tracking Smoothing")
+@export var adaptive_tracking_filter_enabled: bool = false
+@export_range(0.1, 8.0, 0.05) var tracking_filter_min_cutoff_hz: float = 1.25
+@export_range(0.0, 2.0, 0.01) var tracking_filter_beta: float = 0.18
+@export_range(0.1, 8.0, 0.05) var tracking_filter_derivative_cutoff_hz: float = 1.0
 
 const FRONT_CAMERA_EDGE_AUTO := 0
 const FRONT_CAMERA_EDGE_TOP := 1
@@ -61,12 +61,18 @@ var _status_label: Label
 var _status_panel: Control
 var _head_plane_debug_dot: Node3D
 var _view_switcher: Node
+var _settings_ui: Control
 var _settings_panel: Control
+var _scene_browser_panel: Control
+var _scene_browser_grid: GridContainer
+var _settings_fps_label: Label
 var _settings_offset_x_label: Label
 var _settings_offset_y_label: Label
 var _settings_offset_x_slider: HSlider
 var _settings_offset_y_slider: HSlider
+var _settings_scene_option: OptionButton
 var _settings_scale_mode_option: OptionButton
+var _settings_scale_handling_option: OptionButton
 var _settings_viewbox_scale_label: Label
 var _settings_viewbox_scale_slider: HSlider
 var _settings_ball_size_label: Label
@@ -78,11 +84,11 @@ var _settings_pop_height_slider: HSlider
 var _settings_tile_size_label: Label
 var _settings_tile_size_slider: HSlider
 var _settings_black_fill_check: CheckBox
+var _settings_scene_cache_check: CheckBox
+var _settings_scene_shadows_check: CheckBox
 var _settings_enhanced_graphics_option: OptionButton
-var _settings_camera_reactive_lighting_check: CheckBox
-var _settings_camera_reactive_lighting_mode_option: OptionButton
-var _settings_camera_reactive_lighting_status_label: Label
-var _settings_camera_reactive_preview_rect: TextureRect
+var _settings_studio_lighting_option: OptionButton
+var _settings_tracking_smoothing_check: CheckBox
 var _settings_inertial_fallback_check: CheckBox
 var _settings_screen_reference_option: OptionButton
 var _active_touches: Dictionary = {}
@@ -108,33 +114,34 @@ var _inertial_anchor_gravity: Vector3 = Vector3.ZERO
 var _was_provider_active: bool = false
 var _tracking_reacquire_blend_remaining_seconds: float = 0.0
 var _nodes_resolved: bool = false
-var _last_native_camera_light_enabled: bool = false
-var _desktop_camera_feed: CameraFeed
-var _desktop_camera_texture: CameraTexture
-var _desktop_camera_cbcr_texture: CameraTexture
-var _desktop_camera_preview_texture: ImageTexture
-var _desktop_camera_light_sample: Dictionary = {}
-var _desktop_camera_light_sample_elapsed: float = 999.0
-var _desktop_camera_light_active: bool = false
-var _desktop_camera_light_logged_no_feed: bool = false
-var _desktop_camera_feed_monitoring_enabled: bool = false
-var _desktop_camera_feed_debug_text: String = ""
+var _smoothed_fps: float = 0.0
+var _filtered_head_position: Vector3 = Vector3.ZERO
+var _filtered_head_derivative: Vector3 = Vector3.ZERO
+var _previous_raw_head_position: Vector3 = Vector3.ZERO
+var _tracking_filter_initialized: bool = false
+var _settings_values_dirty: bool = true
+var _settings_display_elapsed: float = 0.0
 
 func _ready() -> void:
 	_resolve_nodes()
 	_apply_initial_screen_defaults()
 	_apply_desktop_debug_window_aspect()
-	_sync_native_camera_light_estimation_enabled(true)
+	_bind_settings_ui()
+	_apply_scene_far_clip_profile()
+	if get_viewport() != null and not get_viewport().size_changed.is_connected(_on_viewport_size_changed):
+		get_viewport().size_changed.connect(_on_viewport_size_changed)
+	_apply_settings_safe_area()
 	set_process(true)
 	set_process_input(true)
 
 func _input(event: InputEvent) -> void:
 	_handle_settings_toggle_input(event)
 	_handle_view_cycle_input(event)
-	if _settings_panel != null and _settings_panel.visible:
+	if _is_settings_interface_visible():
 		return
 
 func _process(delta: float) -> void:
+	_update_fps_sample(delta)
 	if not _nodes_resolved or _camera_node == null or _window_center == null:
 		_resolve_nodes()
 	if _camera_node == null or _window_center == null:
@@ -145,7 +152,7 @@ func _process(delta: float) -> void:
 	if provider_active and _pose_provider.has_method("get_head_position_meters"):
 		var head_position_raw: Variant = _pose_provider.call("get_head_position_meters")
 		if head_position_raw is Vector3:
-			local_head_position = head_position_raw
+			local_head_position = _filter_head_position(head_position_raw, delta, _get_tracking_confidence(provider_active))
 		local_head_position += _get_front_camera_origin_offset_meters()
 		local_head_position.z = maxf(local_head_position.z, minimum_head_distance_meters)
 		_capture_inertial_tracking_anchor(local_head_position)
@@ -155,6 +162,7 @@ func _process(delta: float) -> void:
 		local_head_position += _get_front_camera_origin_offset_meters()
 		local_head_position.z = maxf(local_head_position.z, minimum_head_distance_meters)
 
+	local_head_position *= _get_tracking_space_scale()
 	if provider_active and not _was_provider_active and _has_initialized_camera_pose:
 		_tracking_reacquire_blend_remaining_seconds = TRACKING_REACQUIRE_BLEND_SECONDS
 
@@ -174,13 +182,75 @@ func _process(delta: float) -> void:
 		_tracking_reacquire_blend_remaining_seconds = maxf(0.0, _tracking_reacquire_blend_remaining_seconds - delta)
 	_was_provider_active = provider_active
 	_has_initialized_camera_pose = true
+	# Keep the camera transform and off-axis frustum on the same pose. The camera
+	# node may have processed earlier in this frame, before this tracking update.
 	if _camera_node.has_method("refresh_off_axis_projection"):
 		_camera_node.call("refresh_off_axis_projection")
 
 	_update_head_plane_debug_dot(local_head_position)
 	_update_status_label(provider_active, local_head_position)
-	_sync_camera_reactive_lighting(delta)
-	_sync_settings_values_from_runtime()
+	_update_settings_display(delta)
+
+func _filter_head_position(raw_position: Vector3, delta: float, confidence: float) -> Vector3:
+	if not adaptive_tracking_filter_enabled or delta <= 0.0:
+		_reset_tracking_filter()
+		return raw_position
+	if not _tracking_filter_initialized:
+		_tracking_filter_initialized = true
+		_filtered_head_position = raw_position
+		_previous_raw_head_position = raw_position
+		_filtered_head_derivative = Vector3.ZERO
+		return raw_position
+
+	var raw_derivative := (raw_position - _previous_raw_head_position) / maxf(delta, 0.0001)
+	var derivative_alpha := _low_pass_alpha(tracking_filter_derivative_cutoff_hz, delta)
+	_filtered_head_derivative = _filtered_head_derivative.lerp(raw_derivative, derivative_alpha)
+	var confidence_weight := clampf(confidence, 0.0, 1.0)
+	var base_cutoff := tracking_filter_min_cutoff_hz * lerpf(0.55, 1.0, confidence_weight)
+	var adaptive_beta := tracking_filter_beta * lerpf(0.35, 1.0, confidence_weight)
+	var adaptive_cutoff := base_cutoff + adaptive_beta * _filtered_head_derivative.length()
+	var position_alpha := _low_pass_alpha(adaptive_cutoff, delta)
+	_filtered_head_position = _filtered_head_position.lerp(raw_position, position_alpha)
+	_previous_raw_head_position = raw_position
+	return _filtered_head_position
+
+func _reset_tracking_filter() -> void:
+	_tracking_filter_initialized = false
+	_filtered_head_derivative = Vector3.ZERO
+
+func _get_tracking_confidence(provider_active: bool) -> float:
+	if _pose_provider == null or not _pose_provider.has_method("get_tracking_status"):
+		return 1.0 if provider_active else 0.0
+	var status_raw: Variant = _pose_provider.call("get_tracking_status")
+	if not status_raw is Dictionary:
+		return 1.0 if provider_active else 0.0
+	var status := status_raw as Dictionary
+	for key in ["confidence", "tracking_confidence"]:
+		var value: Variant = status.get(key)
+		if value is float or value is int:
+			return clampf(float(value), 0.0, 1.0)
+	if bool(status.get("face_tracked", status.get("active", provider_active))):
+		return 1.0
+	return 0.25 if bool(status.get("started", false)) else 0.0
+
+func _low_pass_alpha(cutoff_hz: float, delta: float) -> float:
+	var time_constant := 1.0 / (TAU * maxf(cutoff_hz, 0.001))
+	return clampf(delta / (time_constant + delta), 0.0, 1.0)
+
+func _update_settings_display(delta: float) -> void:
+	if not _is_settings_interface_visible():
+		return
+	_settings_display_elapsed += maxf(delta, 0.0)
+	if _settings_values_dirty:
+		_settings_values_dirty = false
+		_sync_settings_values_from_runtime(true)
+	if _settings_display_elapsed >= 0.25:
+		_settings_display_elapsed = 0.0
+		if _settings_fps_label != null:
+			var profile_suffix := ""
+			if _view_switcher != null and _view_switcher.has_method("get_effective_graphics_quality_name"):
+				profile_suffix = " | %s" % [str(_view_switcher.call("get_effective_graphics_quality_name"))]
+			_settings_fps_label.text = "FPS: %.0f%s" % [_get_display_fps(), profile_suffix]
 
 func _capture_inertial_tracking_anchor(local_head_position: Vector3) -> void:
 	_inertial_anchor_head_position = local_head_position
@@ -215,7 +285,12 @@ func _map_device_gravity_to_window_axes(device_gravity: Vector3) -> Vector3:
 			return device_gravity
 
 func _get_normalized_device_gravity() -> Vector3:
-	var gravity: Vector3 = Input.get_gravity()
+	var gravity: Vector3 = Vector3.ZERO
+	var device_motion := get_node_or_null("/root/DeviceMotion")
+	if device_motion != null and device_motion.has_method("get_gravity"):
+		gravity = device_motion.call("get_gravity")
+	else:
+		gravity = Input.get_gravity()
 	if gravity.length_squared() < 0.0001:
 		return Vector3.ZERO
 	return gravity.normalized()
@@ -293,22 +368,24 @@ func _apply_desktop_debug_window_aspect() -> void:
 	DisplayServer.window_set_size(Vector2i(width_pixels, height_pixels))
 
 func _get_best_runtime_screen_size() -> Vector2i:
-	var candidates: Array[Vector2i] = []
+	var viewport_size := Vector2i.ZERO
 	if get_viewport() != null:
-		var viewport_size := get_viewport().get_visible_rect().size
-		candidates.append(Vector2i(roundi(viewport_size.x), roundi(viewport_size.y)))
-
-	candidates.append(DisplayServer.window_get_size())
-	candidates.append(DisplayServer.screen_get_size())
-
-	var best := Vector2i.ZERO
-	var best_area := 0
+		var viewport_rect_size := get_viewport().get_visible_rect().size
+		viewport_size = Vector2i(roundi(viewport_rect_size.x), roundi(viewport_rect_size.y))
+	var window_size := DisplayServer.window_get_size()
+	var screen_size := DisplayServer.screen_get_size()
+	var candidates: Array[Vector2i] = []
+	if OS.has_feature("ios"):
+		candidates.append(window_size)
+		candidates.append(viewport_size)
+	else:
+		candidates.append(viewport_size)
+		candidates.append(window_size)
+	candidates.append(screen_size)
 	for candidate in candidates:
-		var area := candidate.x * candidate.y
-		if candidate.x > 0 and candidate.y > 0 and area > best_area:
-			best = candidate
-			best_area = area
-	return best
+		if candidate.x > 0 and candidate.y > 0:
+			return candidate
+	return Vector2i.ZERO
 
 func _lookup_ios_screen_profile(runtime_size: Vector2i) -> Dictionary:
 	var known_profiles: Array[Dictionary] = [
@@ -416,7 +493,7 @@ func _finish_multi_touch_gesture() -> void:
 func _handle_view_cycle_input(event: InputEvent) -> void:
 	if not tap_to_cycle_views:
 		return
-	if _settings_panel != null and _settings_panel.visible:
+	if _is_settings_interface_visible():
 		return
 	if _current_view_wants_primary_touch_input() and not (event is InputEventKey):
 		return
@@ -510,15 +587,20 @@ func _toggle_settings_panel_with_cooldown() -> void:
 
 func _toggle_settings_panel() -> void:
 	if _settings_panel == null:
-		_build_settings_panel()
+		_bind_settings_ui()
 	if _settings_panel == null:
 		return
 
-	_settings_panel.visible = not _settings_panel.visible
+	var should_open := not _is_settings_interface_visible()
+	_settings_panel.visible = should_open
+	if _scene_browser_panel != null:
+		_scene_browser_panel.visible = false
 	_play_native_selection_haptic()
-	_set_debug_overlay_visible(_settings_panel.visible)
-	_set_view_bounds_preview_visible(_settings_panel.visible)
-	if _settings_panel.visible:
+	_set_debug_overlay_visible(should_open)
+	_set_view_bounds_preview_visible(should_open)
+	if should_open:
+		_settings_values_dirty = true
+		_apply_settings_safe_area()
 		_sync_settings_values_from_runtime(true)
 
 func _play_native_selection_haptic() -> void:
@@ -548,180 +630,198 @@ func _set_view_bounds_preview_visible(visible: bool) -> void:
 	else:
 		_view_switcher.set("view_bounds_preview_enabled", visible)
 
-func _build_settings_panel() -> void:
-	var parent := get_node_or_null("../UI") as Node
-	if parent == null:
-		var layer := CanvasLayer.new()
-		layer.name = "IPhoneSettingsLayer"
-		get_tree().current_scene.add_child(layer)
-		parent = layer
+func _bind_settings_ui() -> void:
+	_settings_ui = get_node_or_null(settings_ui_path) as Control
+	if _settings_ui == null:
+		push_warning("IPhoneWindowRuntime could not find the authored settings UI.")
+		return
+	_settings_panel = _settings_ui.get_node_or_null("SettingsPanel") as Control
+	_scene_browser_panel = _settings_ui.get_node_or_null("SceneBrowserPanel") as Control
+	_scene_browser_grid = _settings_ui.get_node_or_null("SceneBrowserPanel/Margin/Column/Scroll/SceneGrid") as GridContainer
+	var column := _settings_ui.get_node_or_null("SettingsPanel/Scroll/Margin/Column")
+	if column == null:
+		push_warning("IPhoneSettingsUI is missing its settings column.")
+		return
 
-	var panel := PanelContainer.new()
-	panel.name = "IPhoneSettingsPanel"
-	panel.visible = false
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	panel.offset_left = 18.0
-	panel.offset_top = 60.0
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size if get_viewport() != null else Vector2(540.0, 720.0)
-	var panel_width: float = clampf(viewport_size.x - 36.0, 320.0, 500.0)
-	var panel_height: float = clampf(viewport_size.y - 78.0, 240.0, 580.0)
-	panel.offset_right = panel.offset_left + panel_width
-	panel.offset_bottom = panel.offset_top + panel_height
-	parent.add_child(panel)
-	_settings_panel = panel
+	_settings_fps_label = column.get_node_or_null("FPSLabel") as Label
+	_settings_offset_x_label = column.get_node_or_null("OffsetXLabel") as Label
+	_settings_offset_y_label = column.get_node_or_null("OffsetYLabel") as Label
+	_settings_offset_x_slider = column.get_node_or_null("OffsetXSlider") as HSlider
+	_settings_offset_y_slider = column.get_node_or_null("OffsetYSlider") as HSlider
+	_settings_scene_option = column.get_node_or_null("SceneRow/SceneOption") as OptionButton
+	_settings_scale_mode_option = column.get_node_or_null("ScaleModeOption") as OptionButton
+	_settings_scale_handling_option = column.get_node_or_null("ScaleHandlingOption") as OptionButton
+	_settings_viewbox_scale_label = column.get_node_or_null("ViewboxScaleLabel") as Label
+	_settings_viewbox_scale_slider = column.get_node_or_null("ViewboxScaleSlider") as HSlider
+	_settings_ball_size_label = column.get_node_or_null("BallSizeLabel") as Label
+	_settings_ball_size_slider = column.get_node_or_null("BallSizeSlider") as HSlider
+	_settings_press_depth_label = column.get_node_or_null("PressDepthLabel") as Label
+	_settings_press_depth_slider = column.get_node_or_null("PressDepthSlider") as HSlider
+	_settings_pop_height_label = column.get_node_or_null("PopHeightLabel") as Label
+	_settings_pop_height_slider = column.get_node_or_null("PopHeightSlider") as HSlider
+	_settings_tile_size_label = column.get_node_or_null("TileSizeLabel") as Label
+	_settings_tile_size_slider = column.get_node_or_null("TileSizeSlider") as HSlider
+	_settings_black_fill_check = column.get_node_or_null("BlackFillCheck") as CheckBox
+	_settings_scene_cache_check = column.get_node_or_null("SceneCacheCheck") as CheckBox
+	_settings_scene_shadows_check = column.get_node_or_null("SceneShadowsCheck") as CheckBox
+	_settings_enhanced_graphics_option = column.get_node_or_null("GraphicsOption") as OptionButton
+	_settings_studio_lighting_option = column.get_node_or_null("StudioOption") as OptionButton
+	_settings_tracking_smoothing_check = column.get_node_or_null("TrackingSmoothingCheck") as CheckBox
+	_settings_inertial_fallback_check = column.get_node_or_null("InertialFallbackCheck") as CheckBox
+	_settings_screen_reference_option = column.get_node_or_null("ScreenReferenceOption") as OptionButton
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	panel.add_child(scroll)
-
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 16)
-	margin.add_theme_constant_override("margin_top", 12)
-	margin.add_theme_constant_override("margin_right", 16)
-	margin.add_theme_constant_override("margin_bottom", 12)
-	scroll.add_child(margin)
-
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	margin.add_child(column)
-
-	var title := Label.new()
-	title.text = "iPhone Settings"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(title)
-
-	var offset_header := Label.new()
-	offset_header.text = "Tracking Offset"
-	column.add_child(offset_header)
-
-	_settings_offset_x_label = Label.new()
-	column.add_child(_settings_offset_x_label)
-	_settings_offset_x_slider = _make_offset_slider()
+	_settings_offset_x_slider.max_value = maximum_manual_offset_meters * 1000.0
+	_settings_offset_x_slider.min_value = -_settings_offset_x_slider.max_value
+	_settings_offset_y_slider.max_value = maximum_manual_offset_meters * 1000.0
+	_settings_offset_y_slider.min_value = -_settings_offset_y_slider.max_value
 	_settings_offset_x_slider.value_changed.connect(_on_offset_slider_changed.bind("x"))
-	column.add_child(_settings_offset_x_slider)
-
-	_settings_offset_y_label = Label.new()
-	column.add_child(_settings_offset_y_label)
-	_settings_offset_y_slider = _make_offset_slider()
 	_settings_offset_y_slider.value_changed.connect(_on_offset_slider_changed.bind("y"))
-	column.add_child(_settings_offset_y_slider)
-
-	var scale_label := Label.new()
-	scale_label.text = "Scale Mode"
-	column.add_child(scale_label)
-
-	_settings_scale_mode_option = OptionButton.new()
-	_populate_scale_mode_options()
+	_settings_scene_option.item_selected.connect(_on_scene_selected)
 	_settings_scale_mode_option.item_selected.connect(_on_scale_mode_selected)
-	column.add_child(_settings_scale_mode_option)
-
-	_settings_viewbox_scale_label = Label.new()
-	column.add_child(_settings_viewbox_scale_label)
-	_settings_viewbox_scale_slider = _make_viewbox_scale_slider()
+	_settings_scale_handling_option.item_selected.connect(_on_scale_handling_selected)
 	_settings_viewbox_scale_slider.value_changed.connect(_on_viewbox_scale_slider_changed)
-	column.add_child(_settings_viewbox_scale_slider)
-
-	_settings_ball_size_label = Label.new()
-	column.add_child(_settings_ball_size_label)
-	_settings_ball_size_slider = _make_ball_size_slider()
 	_settings_ball_size_slider.value_changed.connect(_on_ball_size_slider_changed)
-	column.add_child(_settings_ball_size_slider)
-
-	_settings_press_depth_label = Label.new()
-	column.add_child(_settings_press_depth_label)
-	_settings_press_depth_slider = _make_press_depth_slider()
 	_settings_press_depth_slider.value_changed.connect(_on_press_depth_slider_changed)
-	column.add_child(_settings_press_depth_slider)
-
-	_settings_pop_height_label = Label.new()
-	column.add_child(_settings_pop_height_label)
-	_settings_pop_height_slider = _make_pop_height_slider()
 	_settings_pop_height_slider.value_changed.connect(_on_pop_height_slider_changed)
-	column.add_child(_settings_pop_height_slider)
-
-	_settings_tile_size_label = Label.new()
-	column.add_child(_settings_tile_size_label)
-	_settings_tile_size_slider = _make_tile_size_slider()
 	_settings_tile_size_slider.value_changed.connect(_on_tile_size_slider_changed)
-	column.add_child(_settings_tile_size_slider)
-
-	_settings_black_fill_check = CheckBox.new()
-	_settings_black_fill_check.text = "Blackfill"
 	_settings_black_fill_check.toggled.connect(_on_black_fill_toggled)
-	column.add_child(_settings_black_fill_check)
-
-	var enhanced_graphics_label := Label.new()
-	enhanced_graphics_label.text = "Enhanced Graphics"
-	column.add_child(enhanced_graphics_label)
-
-	_settings_enhanced_graphics_option = OptionButton.new()
-	_populate_enhanced_graphics_options()
+	_settings_scene_cache_check.toggled.connect(_on_scene_cache_toggled)
+	_settings_scene_shadows_check.toggled.connect(_on_scene_shadows_toggled)
 	_settings_enhanced_graphics_option.item_selected.connect(_on_enhanced_graphics_selected)
-	column.add_child(_settings_enhanced_graphics_option)
-
-	_settings_camera_reactive_lighting_check = CheckBox.new()
-	_settings_camera_reactive_lighting_check.text = "Camera Lighting"
-	_settings_camera_reactive_lighting_check.toggled.connect(_on_camera_reactive_lighting_toggled)
-	column.add_child(_settings_camera_reactive_lighting_check)
-
-	_settings_camera_reactive_lighting_mode_option = OptionButton.new()
-	_populate_camera_reactive_lighting_mode_options()
-	_settings_camera_reactive_lighting_mode_option.item_selected.connect(_on_camera_reactive_lighting_mode_selected)
-	column.add_child(_settings_camera_reactive_lighting_mode_option)
-
-	_settings_camera_reactive_lighting_status_label = Label.new()
-	_settings_camera_reactive_lighting_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(_settings_camera_reactive_lighting_status_label)
-
-	_settings_camera_reactive_preview_rect = TextureRect.new()
-	_settings_camera_reactive_preview_rect.custom_minimum_size = Vector2(220.0, 124.0)
-	_settings_camera_reactive_preview_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_settings_camera_reactive_preview_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_settings_camera_reactive_preview_rect.visible = false
-	column.add_child(_settings_camera_reactive_preview_rect)
-
-	_settings_inertial_fallback_check = CheckBox.new()
-	_settings_inertial_fallback_check.text = "Inertial Tracking Fallback"
+	_settings_studio_lighting_option.item_selected.connect(_on_studio_lighting_selected)
+	_settings_tracking_smoothing_check.toggled.connect(_on_tracking_smoothing_toggled)
 	_settings_inertial_fallback_check.toggled.connect(_on_inertial_fallback_toggled)
-	column.add_child(_settings_inertial_fallback_check)
-
-	var screen_reference_label := Label.new()
-	screen_reference_label.text = "Screen Reference"
-	column.add_child(screen_reference_label)
-
-	_settings_screen_reference_option = OptionButton.new()
-	_populate_screen_reference_options()
 	_settings_screen_reference_option.item_selected.connect(_on_screen_reference_mode_selected)
-	column.add_child(_settings_screen_reference_option)
+	(column.get_node("SceneRow/BrowseScenesButton") as Button).pressed.connect(_open_scene_browser)
+	(column.get_node("ZeroOffsetButton") as Button).pressed.connect(_on_zero_manual_offset_pressed)
+	(column.get_node("ViewButtons/PreviousViewButton") as Button).pressed.connect(_cycle_previous_view)
+	(column.get_node("ViewButtons/NextViewButton") as Button).pressed.connect(_cycle_next_view)
+	(column.get_node("CloseButton") as Button).pressed.connect(_toggle_settings_panel)
+	var back_button := _settings_ui.get_node_or_null("SceneBrowserPanel/Margin/Column/Header/BackButton") as Button
+	if back_button != null:
+		back_button.pressed.connect(_close_scene_browser)
+	if _view_switcher != null:
+		if _view_switcher.has_signal("current_view_changed"):
+			_view_switcher.connect("current_view_changed", _on_current_view_changed)
+		if _view_switcher.has_signal("available_views_changed"):
+			_view_switcher.connect("available_views_changed", _on_available_views_changed)
+		if _view_switcher.has_signal("graphics_quality_changed"):
+			_view_switcher.connect("graphics_quality_changed", _on_graphics_quality_changed)
+	_populate_scene_options()
+	_populate_scale_mode_options()
+	_populate_scale_handling_options()
+	_populate_enhanced_graphics_options()
+	_populate_studio_lighting_options()
+	_populate_screen_reference_options()
 
-	var reset_button := Button.new()
-	reset_button.text = "Zero Manual Offset"
-	reset_button.pressed.connect(_on_zero_manual_offset_pressed)
-	column.add_child(reset_button)
+func _open_scene_browser() -> void:
+	if _scene_browser_panel == null:
+		return
+	_populate_scene_browser()
+	if _settings_panel != null:
+		_settings_panel.visible = false
+	_scene_browser_panel.visible = true
+	_apply_settings_safe_area()
 
-	var view_buttons := HBoxContainer.new()
-	view_buttons.add_theme_constant_override("separation", 8)
-	column.add_child(view_buttons)
+func _close_scene_browser() -> void:
+	if _scene_browser_panel != null:
+		_scene_browser_panel.visible = false
+	if _settings_panel != null:
+		_settings_panel.visible = true
+	_settings_values_dirty = true
 
-	var previous_view_button := Button.new()
-	previous_view_button.text = "Previous View"
-	previous_view_button.pressed.connect(_cycle_previous_view)
-	view_buttons.add_child(previous_view_button)
+func _populate_scene_browser() -> void:
+	if _scene_browser_grid == null or _view_switcher == null:
+		return
+	for child in _scene_browser_grid.get_children():
+		child.queue_free()
+	var count := _variant_to_int(_view_switcher.call("get_available_view_count"), 0)
+	for index in range(count):
+		var view_name := str(_view_switcher.call("get_available_view_name", index))
+		var category := "Other"
+		if _view_switcher.has_method("get_available_view_category"):
+			category = str(_view_switcher.call("get_available_view_category", index))
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(0.0, 136.0)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.text = "%s\n%s" % [view_name, category]
+		button.expand_icon = true
+		if _view_switcher.has_method("get_available_view_thumbnail_path"):
+			var thumbnail_path := str(_view_switcher.call("get_available_view_thumbnail_path", index))
+			if thumbnail_path != "" and ResourceLoader.exists(thumbnail_path):
+				button.icon = load(thumbnail_path) as Texture2D
+		button.pressed.connect(_on_scene_browser_scene_selected.bind(index))
+		_scene_browser_grid.add_child(button)
 
-	var next_view_button := Button.new()
-	next_view_button.text = "Next View"
-	next_view_button.pressed.connect(_cycle_next_view)
-	view_buttons.add_child(next_view_button)
+func _on_scene_browser_scene_selected(index: int) -> void:
+	if _view_switcher != null and _view_switcher.has_method("set_current_view_index"):
+		_view_switcher.call("set_current_view_index", index)
+	_play_native_selection_haptic()
+	_close_scene_browser()
 
-	var close_button := Button.new()
-	close_button.text = "Close"
-	close_button.pressed.connect(_toggle_settings_panel)
-	column.add_child(close_button)
+func _on_current_view_changed(_index: int, _view_name: String) -> void:
+	_apply_scene_far_clip_profile()
+	_settings_values_dirty = true
 
-	_sync_settings_values_from_runtime(true)
+func _on_available_views_changed() -> void:
+	_populate_scene_options()
+	if _scene_browser_panel != null and _scene_browser_panel.visible:
+		_populate_scene_browser()
+	_settings_values_dirty = true
+
+func _on_graphics_quality_changed(_selected: int, _effective: int) -> void:
+	_settings_values_dirty = true
+
+func _on_viewport_size_changed() -> void:
+	if OS.has_feature("ios") and auto_configure_ios_screen_size and _screen_scaler != null:
+		_apply_ios_screen_profile()
+		_screen_scaler.refresh_from_diagonal()
+		_capture_base_screen_size()
+	_apply_settings_safe_area()
+
+func _apply_scene_far_clip_profile() -> void:
+	if _camera_node == null or _view_switcher == null or not _view_switcher.has_method("get_current_view_performance_tier"):
+		return
+	var tier := _variant_to_int(_view_switcher.call("get_current_view_performance_tier"), 1)
+	var minimum_far := 16.0
+	var maximum_far := 80.0
+	match tier:
+		0:
+			minimum_far = 8.0
+			maximum_far = 40.0
+		2:
+			minimum_far = 32.0
+			maximum_far = 120.0
+		3:
+			minimum_far = 60.0
+			maximum_far = 180.0
+	_camera_node.set("minimum_dynamic_far_meters", minimum_far)
+	_camera_node.set("maximum_dynamic_far_meters", maximum_far)
+
+func _apply_settings_safe_area() -> void:
+	if _settings_ui == null or get_viewport() == null:
+		return
+	var viewport_size := get_viewport().get_visible_rect().size
+	var safe_rect := Rect2(Vector2.ZERO, viewport_size)
+	if OS.has_feature("ios"):
+		var display_safe := DisplayServer.get_display_safe_area()
+		var window_size := DisplayServer.window_get_size()
+		if display_safe.size.x > 0 and display_safe.size.y > 0 and window_size.x > 0 and window_size.y > 0:
+			var scale := Vector2(viewport_size.x / float(window_size.x), viewport_size.y / float(window_size.y))
+			safe_rect = Rect2(Vector2(display_safe.position) * scale, Vector2(display_safe.size) * scale)
+	var inset := 18.0
+	if _settings_panel != null:
+		_settings_panel.position = safe_rect.position + Vector2(inset, inset)
+		_settings_panel.size = Vector2(
+			minf(500.0, maxf(240.0, safe_rect.size.x - inset * 2.0)),
+			minf(640.0, maxf(220.0, safe_rect.size.y - inset * 2.0))
+		)
+	if _scene_browser_panel != null:
+		_scene_browser_panel.position = safe_rect.position + Vector2(inset, inset)
+		_scene_browser_panel.size = Vector2(maxf(240.0, safe_rect.size.x - inset * 2.0), maxf(220.0, safe_rect.size.y - inset * 2.0))
+		if _scene_browser_grid != null:
+			_scene_browser_grid.columns = 2 if _scene_browser_panel.size.x >= 430.0 else 1
+
 
 func _variant_to_int(value: Variant, fallback: int = 0) -> int:
 	match typeof(value):
@@ -735,53 +835,21 @@ func _variant_to_int(value: Variant, fallback: int = 0) -> int:
 				return text.to_int()
 	return fallback
 
-func _make_offset_slider() -> HSlider:
-	var slider := HSlider.new()
-	slider.min_value = -maximum_manual_offset_meters * 1000.0
-	slider.max_value = maximum_manual_offset_meters * 1000.0
-	slider.step = 1.0
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return slider
 
-func _make_viewbox_scale_slider() -> HSlider:
-	var slider := HSlider.new()
-	slider.min_value = 50.0
-	slider.max_value = 120.0
-	slider.step = 1.0
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return slider
-
-func _make_ball_size_slider() -> HSlider:
-	var slider := HSlider.new()
-	slider.min_value = 50.0
-	slider.max_value = 400.0
-	slider.step = 1.0
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return slider
-
-func _make_press_depth_slider() -> HSlider:
-	var slider := HSlider.new()
-	slider.min_value = 5.0
-	slider.max_value = 800.0
-	slider.step = 1.0
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return slider
-
-func _make_pop_height_slider() -> HSlider:
-	var slider := HSlider.new()
-	slider.min_value = 0.0
-	slider.max_value = 300.0
-	slider.step = 1.0
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return slider
-
-func _make_tile_size_slider() -> HSlider:
-	var slider := HSlider.new()
-	slider.min_value = 40.0
-	slider.max_value = 3000.0
-	slider.step = 1.0
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return slider
+func _populate_scene_options() -> void:
+	if _settings_scene_option == null:
+		return
+	_settings_scene_option.clear()
+	if _view_switcher == null or not _view_switcher.has_method("get_available_view_count"):
+		return
+	var count := _variant_to_int(_view_switcher.call("get_available_view_count"), 0)
+	for index in range(count):
+		var view_name := ""
+		if _view_switcher.has_method("get_available_view_name"):
+			view_name = str(_view_switcher.call("get_available_view_name", index))
+		if view_name == "":
+			view_name = "Scene %d" % [index + 1]
+		_settings_scene_option.add_item(view_name, index)
 
 func _populate_scale_mode_options() -> void:
 	if _settings_scale_mode_option == null:
@@ -809,6 +877,25 @@ func _get_scale_mode_name(mode: int) -> String:
 		_:
 			return "No Scaling"
 
+func _populate_scale_handling_options() -> void:
+	if _settings_scale_handling_option == null:
+		return
+	_settings_scale_handling_option.clear()
+	var count := 2
+	if _view_switcher != null and _view_switcher.has_method("get_view_scale_handling_mode_count"):
+		count = _variant_to_int(_view_switcher.call("get_view_scale_handling_mode_count"), count)
+	for index in range(count):
+		_settings_scale_handling_option.add_item(_get_scale_handling_mode_name(index), index)
+
+func _get_scale_handling_mode_name(mode: int) -> String:
+	if _view_switcher != null and _view_switcher.has_method("get_view_scale_handling_mode_name"):
+		return str(_view_switcher.call("get_view_scale_handling_mode_name", mode))
+	match mode:
+		1:
+			return "Viewer Scaled Authored"
+		_:
+			return "Scene Preferred"
+
 func _populate_screen_reference_options() -> void:
 	if _settings_screen_reference_option == null:
 		return
@@ -831,24 +918,16 @@ func _populate_enhanced_graphics_options() -> void:
 		var quality_name := _get_enhanced_graphics_quality_name(index)
 		_settings_enhanced_graphics_option.add_item(quality_name, index)
 
-func _populate_camera_reactive_lighting_mode_options() -> void:
-	if _settings_camera_reactive_lighting_mode_option == null:
+func _populate_studio_lighting_options() -> void:
+	if _settings_studio_lighting_option == null:
 		return
-	_settings_camera_reactive_lighting_mode_option.clear()
+	_settings_studio_lighting_option.clear()
 	var count := 1
-	if _view_switcher != null and _view_switcher.has_method("get_current_view_camera_reactive_lighting_mode_count"):
-		count = maxi(1, _variant_to_int(_view_switcher.call("get_current_view_camera_reactive_lighting_mode_count"), count))
+	if _view_switcher != null and _view_switcher.has_method("get_studio_lighting_mode_count"):
+		count = maxi(1, _variant_to_int(_view_switcher.call("get_studio_lighting_mode_count"), count))
 	for index in range(count):
-		_settings_camera_reactive_lighting_mode_option.add_item(_get_camera_reactive_lighting_mode_name(index), index)
+		_settings_studio_lighting_option.add_item(_get_studio_lighting_mode_name(index), index)
 
-func _get_camera_reactive_lighting_mode_name(mode: int) -> String:
-	if _view_switcher != null and _view_switcher.has_method("get_current_view_camera_reactive_lighting_mode_name"):
-		return str(_view_switcher.call("get_current_view_camera_reactive_lighting_mode_name", mode))
-	match mode:
-		1:
-			return "Projected Feed"
-		_:
-			return "Grid Lights"
 
 func _get_screen_reference_mode_name(mode: int) -> String:
 	if _view_switcher != null and _view_switcher.has_method("get_screen_plane_reference_mode_name"):
@@ -876,9 +955,23 @@ func _get_enhanced_graphics_quality_name(quality: int) -> String:
 		_:
 			return "Off"
 
+func _get_studio_lighting_mode_name(mode: int) -> String:
+	if _view_switcher != null and _view_switcher.has_method("get_studio_lighting_mode_name"):
+		return str(_view_switcher.call("get_studio_lighting_mode_name", mode))
+	match mode:
+		1:
+			return "Soft Studio"
+		2:
+			return "Punchy Studio"
+		_:
+			return "Off"
+
 func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_panel == null or (not force and not _settings_panel.visible):
 		return
+
+	if _settings_fps_label != null:
+		_settings_fps_label.text = "FPS: %.0f" % [_get_display_fps()]
 
 	if _settings_offset_x_slider != null and not _settings_offset_x_slider.has_focus():
 		_settings_offset_x_slider.value = manual_front_camera_origin_offset_meters.x * 1000.0
@@ -890,6 +983,16 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 	if _settings_offset_y_label != null:
 		_settings_offset_y_label.text = "Manual Y: %.0f mm" % [manual_front_camera_origin_offset_meters.y * 1000.0]
 
+	if _settings_scene_option != null and _view_switcher != null:
+		_populate_scene_options()
+		var scene_index := -1
+		if _view_switcher.has_method("get_current_view_index"):
+			scene_index = _variant_to_int(_view_switcher.call("get_current_view_index"), scene_index)
+		if scene_index >= 0:
+			var scene_item_index := _settings_scene_option.get_item_index(scene_index)
+			if scene_item_index >= 0 and _settings_scene_option.selected != scene_item_index:
+				_settings_scene_option.select(scene_item_index)
+
 	if _settings_scale_mode_option != null and _view_switcher != null:
 		var mode := 0
 		if _view_switcher.has_method("get_view_scale_mode"):
@@ -898,6 +1001,16 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 			mode = _variant_to_int(_view_switcher.get("view_scale_mode"), mode)
 		if _settings_scale_mode_option.selected != mode:
 			_settings_scale_mode_option.select(mode)
+
+	if _settings_scale_handling_option != null and _view_switcher != null:
+		var handling_mode := 0
+		if _view_switcher.has_method("get_view_scale_handling_mode"):
+			handling_mode = _variant_to_int(_view_switcher.call("get_view_scale_handling_mode"), handling_mode)
+		else:
+			handling_mode = _variant_to_int(_view_switcher.get("view_scale_handling_mode"), handling_mode)
+		var handling_mode_index := _settings_scale_handling_option.get_item_index(handling_mode)
+		if handling_mode_index >= 0 and _settings_scale_handling_option.selected != handling_mode_index:
+			_settings_scale_handling_option.select(handling_mode_index)
 
 	if _view_switcher != null:
 		var viewbox_scale: float = 1.0
@@ -955,6 +1068,22 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 			enabled = bool(_view_switcher.get("black_fill_enabled"))
 		_settings_black_fill_check.button_pressed = enabled
 
+	if _settings_scene_cache_check != null and _view_switcher != null:
+		var scene_cache_enabled := true
+		if _view_switcher.has_method("is_adjacent_scene_cache_enabled"):
+			scene_cache_enabled = bool(_view_switcher.call("is_adjacent_scene_cache_enabled"))
+		else:
+			scene_cache_enabled = bool(_view_switcher.get("adjacent_scene_cache_enabled"))
+		_settings_scene_cache_check.button_pressed = scene_cache_enabled
+
+	if _settings_scene_shadows_check != null and _view_switcher != null:
+		var scene_shadows_enabled := false
+		if _view_switcher.has_method("are_scene_shadows_enabled"):
+			scene_shadows_enabled = bool(_view_switcher.call("are_scene_shadows_enabled"))
+		else:
+			scene_shadows_enabled = bool(_view_switcher.get("scene_shadows_enabled"))
+		_settings_scene_shadows_check.button_pressed = scene_shadows_enabled
+
 	if _settings_enhanced_graphics_option != null and _view_switcher != null:
 		var enhanced_quality := 0
 		if _view_switcher.has_method("get_enhanced_graphics_quality"):
@@ -964,32 +1093,16 @@ func _sync_settings_values_from_runtime(force: bool = false) -> void:
 		if _settings_enhanced_graphics_option.selected != enhanced_quality:
 			_settings_enhanced_graphics_option.select(enhanced_quality)
 
-	if _settings_camera_reactive_lighting_check != null:
-		_settings_camera_reactive_lighting_check.button_pressed = camera_reactive_lighting_enabled
+	if _settings_studio_lighting_option != null and _view_switcher != null:
+		_populate_studio_lighting_options()
+		var studio_mode := 0
+		if _view_switcher.has_method("get_studio_lighting_mode"):
+			studio_mode = _variant_to_int(_view_switcher.call("get_studio_lighting_mode"), studio_mode)
+		if _settings_studio_lighting_option.selected != studio_mode:
+			_settings_studio_lighting_option.select(studio_mode)
 
-	if _settings_camera_reactive_lighting_mode_option != null:
-		_populate_camera_reactive_lighting_mode_options()
-		var camera_mode := 0
-		if _view_switcher != null and _view_switcher.has_method("get_current_view_camera_reactive_lighting_mode"):
-			camera_mode = _variant_to_int(_view_switcher.call("get_current_view_camera_reactive_lighting_mode"), camera_mode)
-		if _settings_camera_reactive_lighting_mode_option.selected != camera_mode:
-			_settings_camera_reactive_lighting_mode_option.select(camera_mode)
-
-	if _settings_camera_reactive_lighting_status_label != null:
-		_settings_camera_reactive_lighting_status_label.text = _get_camera_light_debug_text()
-
-	if _settings_camera_reactive_preview_rect != null:
-		var show_desktop_preview := (
-			camera_reactive_lighting_enabled
-			and _desktop_camera_light_active
-			and (_desktop_camera_preview_texture != null or _desktop_camera_texture != null)
-			and not OS.has_feature("ios")
-		)
-		_settings_camera_reactive_preview_rect.visible = show_desktop_preview
-		if show_desktop_preview and _desktop_camera_preview_texture != null:
-			_settings_camera_reactive_preview_rect.texture = _desktop_camera_preview_texture
-		else:
-			_settings_camera_reactive_preview_rect.texture = _desktop_camera_texture if show_desktop_preview else null
+	if _settings_tracking_smoothing_check != null:
+		_settings_tracking_smoothing_check.button_pressed = adaptive_tracking_filter_enabled
 
 	if _settings_inertial_fallback_check != null:
 		_settings_inertial_fallback_check.button_pressed = inertial_tracking_loss_fallback_enabled
@@ -1011,6 +1124,16 @@ func _on_offset_slider_changed(value: float, axis: String) -> void:
 			manual_front_camera_origin_offset_meters.y = value / 1000.0
 	_sync_settings_values_from_runtime(true)
 
+func _on_scene_selected(index: int) -> void:
+	if _view_switcher == null:
+		return
+	var scene_index := index
+	if _settings_scene_option != null:
+		scene_index = _settings_scene_option.get_item_id(index)
+	if _view_switcher.has_method("set_current_view_index"):
+		_view_switcher.call("set_current_view_index", scene_index)
+	_sync_settings_values_from_runtime(true)
+
 func _on_scale_mode_selected(index: int) -> void:
 	if _view_switcher == null:
 		return
@@ -1018,6 +1141,17 @@ func _on_scale_mode_selected(index: int) -> void:
 		_view_switcher.call("set_view_scale_mode", index)
 	else:
 		_view_switcher.set("view_scale_mode", index)
+
+func _on_scale_handling_selected(index: int) -> void:
+	if _view_switcher == null:
+		return
+	var mode := index
+	if _settings_scale_handling_option != null:
+		mode = _settings_scale_handling_option.get_item_id(index)
+	if _view_switcher.has_method("set_view_scale_handling_mode"):
+		_view_switcher.call("set_view_scale_handling_mode", mode)
+	else:
+		_view_switcher.set("view_scale_handling_mode", mode)
 
 func _on_viewbox_scale_slider_changed(value: float) -> void:
 	if _view_switcher == null:
@@ -1066,6 +1200,24 @@ func _on_black_fill_toggled(enabled: bool) -> void:
 	else:
 		_view_switcher.set("black_fill_enabled", enabled)
 
+func _on_scene_cache_toggled(enabled: bool) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_adjacent_scene_cache_enabled"):
+		_view_switcher.call("set_adjacent_scene_cache_enabled", enabled)
+	else:
+		_view_switcher.set("adjacent_scene_cache_enabled", enabled)
+	_sync_settings_values_from_runtime(true)
+
+func _on_scene_shadows_toggled(enabled: bool) -> void:
+	if _view_switcher == null:
+		return
+	if _view_switcher.has_method("set_scene_shadows_enabled"):
+		_view_switcher.call("set_scene_shadows_enabled", enabled)
+	else:
+		_view_switcher.set("scene_shadows_enabled", enabled)
+	_sync_settings_values_from_runtime(true)
+
 func _on_enhanced_graphics_selected(index: int) -> void:
 	if _view_switcher == null:
 		return
@@ -1075,18 +1227,20 @@ func _on_enhanced_graphics_selected(index: int) -> void:
 		_view_switcher.call("set_current_view_cinematic_lighting_enabled", index > 0)
 	_sync_settings_values_from_runtime(true)
 
-func _on_camera_reactive_lighting_toggled(enabled: bool) -> void:
-	camera_reactive_lighting_enabled = enabled
-	_sync_camera_reactive_lighting()
-	_sync_settings_values_from_runtime(true)
-
-func _on_camera_reactive_lighting_mode_selected(index: int) -> void:
+func _on_studio_lighting_selected(index: int) -> void:
 	if _view_switcher == null:
 		return
-	if _view_switcher.has_method("set_current_view_camera_reactive_lighting_mode"):
-		_view_switcher.call("set_current_view_camera_reactive_lighting_mode", index)
-	_sync_camera_reactive_lighting()
+	if _view_switcher.has_method("set_studio_lighting_mode"):
+		_view_switcher.call("set_studio_lighting_mode", index)
+	else:
+		_view_switcher.set("studio_lighting_mode", index)
 	_sync_settings_values_from_runtime(true)
+
+func _on_tracking_smoothing_toggled(enabled: bool) -> void:
+	adaptive_tracking_filter_enabled = enabled
+	_reset_tracking_filter()
+	_sync_settings_values_from_runtime(true)
+
 
 func _on_inertial_fallback_toggled(enabled: bool) -> void:
 	inertial_tracking_loss_fallback_enabled = enabled
@@ -1134,302 +1288,6 @@ func _apply_touch_calibration_drag(pixel_delta: Vector2) -> void:
 		maximum_manual_offset_meters
 	)
 
-func _sync_camera_reactive_lighting(delta: float = 0.0) -> void:
-	_sync_native_camera_light_estimation_enabled(false)
-	_sync_desktop_camera_light_estimation(delta)
-	if _view_switcher == null:
-		return
-	if _view_switcher.has_method("set_camera_reactive_lighting_enabled"):
-		_view_switcher.call("set_camera_reactive_lighting_enabled", camera_reactive_lighting_enabled)
-	elif _view_switcher.has_method("set"):
-		_view_switcher.set("camera_reactive_lighting_enabled", camera_reactive_lighting_enabled)
-	if not camera_reactive_lighting_enabled:
-		return
-	var sample := _get_camera_light_estimate()
-	if sample.is_empty():
-		return
-	if _view_switcher.has_method("set_camera_reactive_lighting_sample"):
-		_view_switcher.call("set_camera_reactive_lighting_sample", sample)
-
-func _sync_native_camera_light_estimation_enabled(force: bool) -> void:
-	if not force and _last_native_camera_light_enabled == camera_reactive_lighting_enabled:
-		return
-	_last_native_camera_light_enabled = camera_reactive_lighting_enabled
-	if not Engine.has_singleton("IPhoneARKitHeadTracker"):
-		return
-	var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
-	if tracker != null and tracker.has_method("set_camera_light_estimation_enabled"):
-		tracker.call("set_camera_light_estimation_enabled", camera_reactive_lighting_enabled)
-
-func _get_camera_light_estimate() -> Dictionary:
-	if Engine.has_singleton("IPhoneARKitHeadTracker"):
-		var tracker: Object = Engine.get_singleton("IPhoneARKitHeadTracker")
-		if tracker != null and tracker.has_method("get_camera_light_estimate"):
-			var raw_sample: Variant = tracker.call("get_camera_light_estimate")
-			if raw_sample is Dictionary:
-				return raw_sample
-	if _desktop_camera_light_active and not _desktop_camera_light_sample.is_empty():
-		return _desktop_camera_light_sample
-	return {}
-
-func _get_camera_light_debug_text() -> String:
-	if not camera_reactive_lighting_enabled:
-		return "Camera Light: off"
-
-	var source := _get_camera_light_source_text()
-	var sample := _get_camera_light_estimate()
-	if sample.is_empty() or not bool(sample.get("active", false)):
-		if not OS.has_feature("ios") and not Engine.has_singleton("IPhoneARKitHeadTracker"):
-			var feed_count := CameraServer.get_feed_count()
-			if feed_count <= 0:
-				if _desktop_camera_feed_monitoring_enabled:
-					return "Camera Light: monitoring, no desktop feed"
-				return "Camera Light: no desktop camera feed"
-			if _desktop_camera_feed == null:
-				return "Camera Light: desktop feed count %d, not selected" % [feed_count]
-			return "Camera Light: desktop feed '%s', waiting for image" % [_desktop_camera_feed.get_name()]
-		if Engine.has_singleton("IPhoneARKitHeadTracker"):
-			return "Camera Light: arkit waiting for sample"
-		return "Camera Light: waiting"
-
-	var average_luma := float(sample.get("average_luma", 0.0))
-	var average_color := _variant_to_color(sample.get("average_color", Color.WHITE), Color.WHITE)
-	var brightest_luma := float(sample.get("brightest_luma", 0.0))
-	var brightest_index := _variant_to_int(sample.get("brightest_index", -1), -1)
-	var grid_width := _variant_to_int(sample.get("grid_width", 3), 3)
-	var bright_x: int = brightest_index % max(1, grid_width) if brightest_index >= 0 else -1
-	var bright_y: int = int(brightest_index / max(1, grid_width)) if brightest_index >= 0 else -1
-	return "Camera Light: %s %s avg %.2f rgb %.2f %.2f %.2f bright %.2f cell %d,%d" % [
-		source,
-		_desktop_camera_feed_debug_text,
-		average_luma,
-		average_color.r,
-		average_color.g,
-		average_color.b,
-		brightest_luma,
-		bright_x,
-		bright_y,
-	]
-
-func _sync_desktop_camera_light_estimation(delta: float) -> void:
-	var should_enable := (
-		camera_reactive_lighting_enabled
-		and desktop_debug_camera_reactive_lighting_enabled
-		and not OS.has_feature("ios")
-		and not Engine.has_singleton("IPhoneARKitHeadTracker")
-	)
-	if not should_enable:
-		_stop_desktop_camera_light_feed()
-		return
-	_set_desktop_camera_feed_monitoring(true)
-	if not _ensure_desktop_camera_light_feed():
-		return
-
-	_desktop_camera_light_sample_elapsed += maxf(delta, 0.0)
-	var min_interval := 1.0 / maxf(desktop_debug_camera_light_sample_fps, 1.0)
-	if _desktop_camera_light_sample_elapsed < min_interval:
-		return
-	_desktop_camera_light_sample_elapsed = 0.0
-
-	if _desktop_camera_texture == null:
-		return
-	var image: Image = _desktop_camera_texture.get_image()
-	if image == null or image.is_empty():
-		return
-	var cbcr_image: Image = null
-	if _desktop_camera_cbcr_texture != null:
-		cbcr_image = _desktop_camera_cbcr_texture.get_image()
-		if cbcr_image != null and cbcr_image.is_empty():
-			cbcr_image = null
-	_update_desktop_camera_feed_debug_text()
-	_desktop_camera_preview_texture = ImageTexture.create_from_image(_make_desktop_camera_preview_image(image, cbcr_image))
-	_desktop_camera_light_sample = _sample_camera_light_image(image, cbcr_image)
-
-func _ensure_desktop_camera_light_feed() -> bool:
-	if _desktop_camera_feed != null:
-		if not _desktop_camera_feed.is_active():
-			_desktop_camera_feed.set_active(true)
-		if _desktop_camera_texture != null:
-			_desktop_camera_texture.set_camera_active(true)
-		if _desktop_camera_cbcr_texture != null:
-			_desktop_camera_cbcr_texture.set_camera_active(true)
-		_desktop_camera_light_active = true
-		return true
-	var feed_count := CameraServer.get_feed_count()
-	if feed_count <= 0:
-		if not _desktop_camera_light_logged_no_feed:
-			print("[IPhoneWindowRuntime] desktop camera lighting requested, but no CameraServer feeds are available.")
-			_desktop_camera_light_logged_no_feed = true
-		_desktop_camera_light_active = false
-		return false
-	for index in range(feed_count):
-		var feed := CameraServer.get_feed(index)
-		if feed == null:
-			continue
-		_desktop_camera_feed = feed
-		_desktop_camera_feed.set_active(true)
-		_desktop_camera_texture = CameraTexture.new()
-		_desktop_camera_texture.set_camera_feed_id(feed.get_id())
-		_desktop_camera_texture.set_which_feed(CameraServer.FEED_RGBA_IMAGE)
-		_desktop_camera_texture.set_camera_active(true)
-		_desktop_camera_cbcr_texture = CameraTexture.new()
-		_desktop_camera_cbcr_texture.set_camera_feed_id(feed.get_id())
-		_desktop_camera_cbcr_texture.set_which_feed(CameraServer.FEED_CBCR_IMAGE)
-		_desktop_camera_cbcr_texture.set_camera_active(true)
-		_desktop_camera_light_active = true
-		_desktop_camera_light_logged_no_feed = false
-		_desktop_camera_light_sample_elapsed = 999.0
-		_update_desktop_camera_feed_debug_text()
-		print("[IPhoneWindowRuntime] desktop camera lighting feed='%s'" % [_desktop_camera_feed.get_name()])
-		return true
-	return false
-
-func _stop_desktop_camera_light_feed() -> void:
-	if _desktop_camera_cbcr_texture != null:
-		_desktop_camera_cbcr_texture.set_camera_active(false)
-	_desktop_camera_cbcr_texture = null
-	if _desktop_camera_texture != null:
-		_desktop_camera_texture.set_camera_active(false)
-	_desktop_camera_texture = null
-	_desktop_camera_preview_texture = null
-	if _desktop_camera_feed != null and _desktop_camera_feed.is_active():
-		_desktop_camera_feed.set_active(false)
-	_desktop_camera_feed = null
-	_desktop_camera_light_active = false
-	_desktop_camera_light_sample = {}
-	_desktop_camera_light_sample_elapsed = 999.0
-	_desktop_camera_light_logged_no_feed = false
-	_desktop_camera_feed_debug_text = ""
-	_set_desktop_camera_feed_monitoring(false)
-
-func _set_desktop_camera_feed_monitoring(enabled: bool) -> void:
-	if _desktop_camera_feed_monitoring_enabled == enabled:
-		return
-	_desktop_camera_feed_monitoring_enabled = enabled
-	CameraServer.set_monitoring_feeds(enabled)
-	if enabled:
-		_desktop_camera_light_logged_no_feed = false
-
-func _update_desktop_camera_feed_debug_text() -> void:
-	if _desktop_camera_feed == null:
-		_desktop_camera_feed_debug_text = ""
-		return
-	_desktop_camera_feed_debug_text = "type %d" % [_desktop_camera_feed.get_datatype()]
-
-func _sample_camera_light_image(image: Image, cbcr_image: Image = null) -> Dictionary:
-	var width := image.get_width()
-	var height := image.get_height()
-	var estimate := {"active": false}
-	if width <= 0 or height <= 0:
-		return estimate
-
-	const GRID_WIDTH := 3
-	const GRID_HEIGHT := 3
-	const SAMPLES_PER_AXIS := 6
-	var grid_luma := PackedFloat32Array()
-	var grid_colors := PackedColorArray()
-	var grid_peak_luma := PackedFloat32Array()
-	var total_luma := 0.0
-	var total_color := Color(0.0, 0.0, 0.0, 0.0)
-	var total_cells := GRID_WIDTH * GRID_HEIGHT
-	var brightest_index := 0
-	var brightest_luma := -1.0
-
-	for gy in range(GRID_HEIGHT):
-		for gx in range(GRID_WIDTH):
-			var cell_luma := 0.0
-			var cell_color := Color(0.0, 0.0, 0.0, 0.0)
-			var cell_peak_luma := 0.0
-			var sample_count := 0
-			var mapped_gx: int = GRID_WIDTH - 1 - gx if desktop_debug_camera_light_mirror_x else gx
-			var mapped_gy: int = GRID_HEIGHT - 1 - gy if desktop_debug_camera_light_flip_y else gy
-			for sy in range(SAMPLES_PER_AXIS):
-				for sx in range(SAMPLES_PER_AXIS):
-					var px := int(((float(mapped_gx) + (float(sx) + 0.5) / float(SAMPLES_PER_AXIS)) * float(width)) / float(GRID_WIDTH))
-					var py := int(((float(mapped_gy) + (float(sy) + 0.5) / float(SAMPLES_PER_AXIS)) * float(height)) / float(GRID_HEIGHT))
-					px = clampi(px, 0, width - 1)
-					py = clampi(py, 0, height - 1)
-					var color := _sample_desktop_camera_color(image, cbcr_image, px, py)
-					var luma := color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
-					cell_luma += luma
-					cell_color += color
-					cell_peak_luma = maxf(cell_peak_luma, luma)
-					sample_count += 1
-			var divisor := maxf(float(sample_count), 1.0)
-			var averaged_luma := cell_luma / divisor
-			var averaged_color := cell_color * (1.0 / divisor)
-			if averaged_luma > brightest_luma:
-				brightest_luma = averaged_luma
-				brightest_index = gy * GRID_WIDTH + gx
-			grid_luma.push_back(averaged_luma)
-			grid_colors.push_back(averaged_color)
-			grid_peak_luma.push_back(cell_peak_luma)
-			total_luma += averaged_luma
-			total_color += averaged_color
-
-	var cell_divisor := maxf(float(total_cells), 1.0)
-	estimate["active"] = true
-	estimate["source"] = "desktop-camera"
-	estimate["grid_width"] = GRID_WIDTH
-	estimate["grid_height"] = GRID_HEIGHT
-	estimate["grid_luma"] = grid_luma
-	estimate["grid_colors"] = grid_colors
-	estimate["grid_peak_luma"] = grid_peak_luma
-	estimate["average_luma"] = total_luma / cell_divisor
-	estimate["average_color"] = total_color * (1.0 / cell_divisor)
-	estimate["brightest_index"] = brightest_index
-	estimate["brightest_luma"] = brightest_luma
-	estimate["ambient_intensity"] = 1000.0
-	estimate["ambient_color_temperature"] = 6500.0
-	if _desktop_camera_preview_texture != null:
-		estimate["projector_texture"] = _desktop_camera_preview_texture
-	return estimate
-
-func _make_desktop_camera_preview_image(image: Image, cbcr_image: Image = null) -> Image:
-	var source_width := image.get_width()
-	var source_height := image.get_height()
-	if source_width <= 0 or source_height <= 0:
-		return Image.create(1, 1, false, Image.FORMAT_RGBA8)
-	var preview_width := 160
-	var preview_height := maxi(1, int(round(float(preview_width) * float(source_height) / float(source_width))))
-	var preview := Image.create(preview_width, preview_height, false, Image.FORMAT_RGBA8)
-	for y in range(preview_height):
-		for x in range(preview_width):
-			var source_x := clampi(int((float(x) + 0.5) * float(source_width) / float(preview_width)), 0, source_width - 1)
-			var source_y := clampi(int((float(y) + 0.5) * float(source_height) / float(preview_height)), 0, source_height - 1)
-			preview.set_pixel(x, y, _sample_desktop_camera_color(image, cbcr_image, source_x, source_y))
-	return preview
-
-func _sample_desktop_camera_color(image: Image, cbcr_image: Image, x: int, y: int) -> Color:
-	var raw := image.get_pixel(x, y)
-	if _desktop_camera_feed == null:
-		return raw
-	var datatype := _desktop_camera_feed.get_datatype()
-	if datatype == CameraFeed.FEED_RGB:
-		return raw
-	if datatype == CameraFeed.FEED_YCBCR_SEP and cbcr_image != null and not cbcr_image.is_empty():
-		var cbcr_width := cbcr_image.get_width()
-		var cbcr_height := cbcr_image.get_height()
-		if cbcr_width > 0 and cbcr_height > 0:
-			var cbcr_x := clampi(int(float(x) * float(cbcr_width) / float(maxi(image.get_width(), 1))), 0, cbcr_width - 1)
-			var cbcr_y := clampi(int(float(y) * float(cbcr_height) / float(maxi(image.get_height(), 1))), 0, cbcr_height - 1)
-			var cbcr := cbcr_image.get_pixel(cbcr_x, cbcr_y)
-			return _convert_ycbcr_to_rgb(raw.r, cbcr.r, cbcr.g)
-	var luma := raw.r
-	return Color(luma, luma, luma, raw.a)
-
-func _convert_ycbcr_to_rgb(y: float, cb_raw: float, cr_raw: float) -> Color:
-	var cb := cb_raw - 0.5
-	var cr := cr_raw - 0.5
-	var red := y + 1.402 * cr
-	var green := y - 0.344136 * cb - 0.714136 * cr
-	var blue := y + 1.772 * cb
-	return Color(clampf(red, 0.0, 1.0), clampf(green, 0.0, 1.0), clampf(blue, 0.0, 1.0), 1.0)
-
-func _variant_to_color(value: Variant, fallback: Color = Color.WHITE) -> Color:
-	if value is Color:
-		return value
-	return fallback
 
 func _update_head_plane_debug_dot(local_head_position: Vector3) -> void:
 	if _head_plane_debug_dot == null:
@@ -1446,6 +1304,13 @@ func _get_front_camera_origin_offset_meters() -> Vector3:
 		return manual_front_camera_origin_offset_meters
 
 	return manual_front_camera_origin_offset_meters + _get_estimated_front_camera_origin_offset_meters()
+
+func _get_tracking_space_scale() -> float:
+	if _screen_scaler == null:
+		return 1.0
+	if _screen_scaler.has_method("get_tracking_scale_multiplier"):
+		return maxf(float(_screen_scaler.call("get_tracking_scale_multiplier")), 0.0001)
+	return maxf(_screen_scaler.tracking_scale_multiplier, 0.0001)
 
 func _get_estimated_front_camera_origin_offset_meters() -> Vector3:
 	if _screen_scaler == null:
@@ -1499,8 +1364,6 @@ func _update_status_label(provider_active: bool, local_head_position: Vector3) -
 		source = "ios-inertial"
 		state_text = "tracking-lost"
 		detail_text += " | inertial fallback"
-	if camera_reactive_lighting_enabled:
-		detail_text += " | cam-light:%s" % [_get_camera_light_source_text()]
 	var estimated_camera_offset := _get_estimated_front_camera_origin_offset_meters()
 	var camera_offset := _get_front_camera_origin_offset_meters()
 	_status_label.text = "%s | %s | %s | %.2f %.2f %.2f m | base %.0f %.0fmm | tweak %.0f %.0fmm | camOff %.0f %.0fmm | %s | %s%s" % [
@@ -1521,18 +1384,12 @@ func _update_status_label(provider_active: bool, local_head_position: Vector3) -
 		detail_text,
 	]
 
-func _get_camera_light_source_text() -> String:
-	var sample := _get_camera_light_estimate()
-	if sample.has("source"):
-		return str(sample["source"])
-	if Engine.has_singleton("IPhoneARKitHeadTracker"):
-		return "arkit"
-	if _desktop_camera_light_active:
-		return "desktop-camera"
-	return "waiting"
 
 func _is_settings_panel_visible() -> bool:
 	return _settings_panel != null and _settings_panel.visible
+
+func _is_settings_interface_visible() -> bool:
+	return _is_settings_panel_visible() or (_scene_browser_panel != null and _scene_browser_panel.visible)
 
 func _get_screen_status_text() -> String:
 	if _screen_scaler == null:
@@ -1575,3 +1432,17 @@ func _get_view_status_text() -> String:
 	if load_status == "":
 		return "view %s (%d)" % [view_name, view_count]
 	return "view %s/%d %s" % [view_name, view_count, load_status]
+
+func _update_fps_sample(delta: float) -> void:
+	if delta <= 0.0:
+		return
+	var instant_fps := 1.0 / delta
+	if _smoothed_fps <= 0.0:
+		_smoothed_fps = instant_fps
+	else:
+		_smoothed_fps = lerpf(_smoothed_fps, instant_fps, 0.08)
+
+func _get_display_fps() -> float:
+	if _smoothed_fps > 0.0:
+		return _smoothed_fps
+	return float(Engine.get_frames_per_second())

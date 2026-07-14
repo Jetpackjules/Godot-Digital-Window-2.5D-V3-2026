@@ -1,0 +1,217 @@
+[gd_resource type="Resource" script_class="ViewCatalog" load_steps=26 format=3]
+
+[ext_resource type="Script" path="res://view_catalog.gd" id="1_catalog"]
+[ext_resource type="Script" path="res://view_descriptor.gd" id="2_descriptor"]
+
+[sub_resource type="Resource" id="View_test_box"]
+script = ExtResource("2_descriptor")
+title = "Test Box"
+scene_path = "res://Views/test_box.tscn"
+category = "Diagnostics"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 0
+
+[sub_resource type="Resource" id="View_point_cloud"]
+script = ExtResource("2_descriptor")
+title = "Stereo Point Cloud"
+scene_path = "res://Views/Stereo Point Cloud/View.tscn"
+category = "Experiments"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_construction"]
+script = ExtResource("2_descriptor")
+title = "Construction"
+scene_path = "res://Views/Construction/View.tscn"
+category = "Characters"
+thumbnail_path = "res://Views/Construction/Construction/low-poly_construction_workers_animated_0.png"
+lighting_ownership = 2
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_crab"]
+script = ExtResource("2_descriptor")
+title = "Crab Stab"
+scene_path = "res://Views/Crab Stab/View.tscn"
+category = "Characters"
+thumbnail_path = "res://Views/Crab Stab/crabe_with_minespear_0.png"
+lighting_ownership = 1
+performance_tier = 1
+
+[sub_resource type="Resource" id="View_dragon"]
+script = ExtResource("2_descriptor")
+title = "Dragon Stab"
+scene_path = "res://Views/Dragon Stab/View.tscn"
+category = "Characters"
+thumbnail_path = "res://Views/Dragon Stab/zilong_-_spear_of_dragon_0.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_fight"]
+script = ExtResource("2_descriptor")
+title = "Fight"
+scene_path = "res://Views/Fight/View.tscn"
+category = "Characters"
+thumbnail_path = "res://Views/Fight/character_fight_0.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_fish"]
+script = ExtResource("2_descriptor")
+title = "Fish Box"
+scene_path = "res://Views/Fish Box/View.tscn"
+category = "Dioramas"
+thumbnail_path = "res://Views/Fish Box/Box/box_aquarium_0.jpg"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_neon"]
+script = ExtResource("2_descriptor")
+title = "Neon Gallery"
+scene_path = "res://Views/Box Neon Gallery/View.tscn"
+category = "Procedural Boxes"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 1
+
+[sub_resource type="Resource" id="View_rain"]
+script = ExtResource("2_descriptor")
+title = "Rain Shrine"
+scene_path = "res://Views/Box Rain Shrine/View.tscn"
+category = "Procedural Boxes"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_rainy_city"]
+script = ExtResource("2_descriptor")
+title = "Rainy City Window"
+scene_path = "res://Views/Rainy City Window/View.tscn"
+category = "Living Windows"
+thumbnail_path = "res://Views/Rainy City Window/thumbnail.png"
+lighting_ownership = 2
+performance_tier = 1
+expected_node_budget = 220
+preferred_scale_handling = 1
+
+[sub_resource type="Resource" id="View_archive"]
+script = ExtResource("2_descriptor")
+title = "Archive Tunnel"
+scene_path = "res://Views/Box Archive Tunnel/View.tscn"
+category = "Procedural Boxes"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 1
+
+[sub_resource type="Resource" id="View_crystal"]
+script = ExtResource("2_descriptor")
+title = "Crystal Cave"
+scene_path = "res://Views/Box Crystal Cave/View.tscn"
+category = "Procedural Boxes"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_city"]
+script = ExtResource("2_descriptor")
+title = "Mini City"
+scene_path = "res://Views/Box Mini City/View.tscn"
+category = "Procedural Boxes"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_planetarium"]
+script = ExtResource("2_descriptor")
+title = "Planetarium"
+scene_path = "res://Views/Box Planetarium/View.tscn"
+category = "Procedural Boxes"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_floater"]
+script = ExtResource("2_descriptor")
+title = "Floater"
+scene_path = "res://Views/Floater/View.tscn"
+category = "Showcase"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_isometric"]
+script = ExtResource("2_descriptor")
+title = "Isometric Rooms"
+scene_path = "res://Views/Isometric Rooms/View.tscn"
+category = "Dioramas"
+thumbnail_path = "res://Views/Isometric Rooms/tiny_isometric_room_2.jpg"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_flat"]
+script = ExtResource("2_descriptor")
+title = "Flat"
+scene_path = "res://Views/flat.tscn"
+category = "Diagnostics"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 0
+
+[sub_resource type="Resource" id="View_smoker"]
+script = ExtResource("2_descriptor")
+title = "Smoker"
+scene_path = "res://Views/Smoker/View.tscn"
+category = "Dioramas"
+thumbnail_path = "res://Views/Smoker/hey_good_lookin_-_vinnie_0.png"
+lighting_ownership = 1
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_shallow"]
+script = ExtResource("2_descriptor")
+title = "Shallow Box"
+scene_path = "res://Views/shallow_box.tscn"
+category = "Diagnostics"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 1
+performance_tier = 0
+
+[sub_resource type="Resource" id="View_spaceship"]
+script = ExtResource("2_descriptor")
+title = "Spaceship"
+scene_path = "res://Views/Spaceship/View.tscn"
+category = "Dioramas"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 2
+performance_tier = 3
+
+[sub_resource type="Resource" id="View_tilt_box"]
+script = ExtResource("2_descriptor")
+title = "Tilt Ball Box"
+scene_path = "res://Views/Tilt Ball Box/View.tscn"
+category = "Interactive"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 3
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_tilt_maze"]
+script = ExtResource("2_descriptor")
+title = "Tilt Ball Maze"
+scene_path = "res://Views/Tilt Ball Maze/View.tscn"
+category = "Interactive"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 3
+performance_tier = 2
+
+[sub_resource type="Resource" id="View_spring"]
+script = ExtResource("2_descriptor")
+title = "Spring Surface"
+scene_path = "res://Views/Spring Surface/View.tscn"
+category = "Interactive"
+thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
+lighting_ownership = 3
+performance_tier = 1
+
+[resource]
+script = ExtResource("1_catalog")
+views = [SubResource("View_test_box"), SubResource("View_point_cloud"), SubResource("View_construction"), SubResource("View_crab"), SubResource("View_dragon"), SubResource("View_fight"), SubResource("View_fish"), SubResource("View_neon"), SubResource("View_rain"), SubResource("View_rainy_city"), SubResource("View_archive"), SubResource("View_crystal"), SubResource("View_city"), SubResource("View_planetarium"), SubResource("View_floater"), SubResource("View_isometric"), SubResource("View_flat"), SubResource("View_smoker"), SubResource("View_shallow"), SubResource("View_spaceship"), SubResource("View_tilt_box"), SubResource("View_tilt_maze"), SubResource("View_spring")]

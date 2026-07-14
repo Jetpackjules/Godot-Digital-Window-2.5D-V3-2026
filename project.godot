@@ -13,13 +13,14 @@ config_version=5
 config/name="2.5D window V3"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
-run/max_fps=240
-config/icon="res://icon.svg"
+run/max_fps=60
+config/icon="res://Assets/AppIcons/Icon-512.png"
 run/main_scene.iphone_window="res://ios/IPhoneWindow.tscn"
 
 [autoload]
 
 Globals="*res://Views/Spaceship/Scripts/Globals.gd"
+DeviceMotion="*res://device_motion_service.gd"
 
 [display]
 
@@ -80,3 +81,13 @@ rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
 lights_and_shadows/positional_shadow/soft_shadow_filter_quality=4
+reflections/sky_reflections/fast_filter_high_quality=true
+reflections/reflection_atlas/reflection_size=1024
+global_illumination/gi/use_half_resolution=true
+global_illumination/voxel_gi/quality=1
+textures/default_filters/anisotropic_filtering_level=4
+camera/depth_of_field/depth_of_field_bokeh_quality=2
+environment/ssil/blur_passes=2
+anti_aliasing/quality/msaa_3d=1
+anti_aliasing/quality/use_debanding=true
+global_illumination/sdfgi/probe_ray_count=2

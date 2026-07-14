@@ -226,7 +226,7 @@ var _active_screen_width_inches: float = 0.0
 var _active_screen_height_inches: float = 0.0
 var _active_screen_preset_name: String = ""
 var _status_panel_hidden_by_user: bool = false
-var _show_connect_debug_details: bool = true
+var _show_connect_debug_details: bool = false
 var _next_viewer_pose_send_msec: int = 0
 var _next_pose_diagnostics_send_msec: int = 0
 var _last_broadcast_player_position: Vector3 = Vector3.INF
@@ -631,7 +631,9 @@ func _setup_debug_view():
 	setup_status_panel.position = Vector2(24, 24)
 
 	setup_status_stylebox = StyleBoxFlat.new()
-	setup_status_stylebox.bg_color = Color(0.05, 0.05, 0.05, 0.82)
+	setup_status_stylebox.bg_color = Color(0.035, 0.04, 0.045, 0.74)
+	setup_status_stylebox.border_color = Color(0.55, 0.66, 0.74, 0.28)
+	setup_status_stylebox.set_border_width_all(1)
 	setup_status_panel.add_theme_stylebox_override("panel", setup_status_stylebox)
 
 	setup_status_scroll = ScrollContainer.new()
@@ -653,6 +655,7 @@ func _setup_debug_view():
 	setup_body_label = Label.new()
 	setup_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	setup_body_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	setup_body_label.add_theme_color_override("font_color", Color(0.93, 0.95, 0.96, 0.96))
 	setup_status_box.add_child(setup_body_label)
 
 	setup_hint_label = Label.new()
@@ -712,7 +715,8 @@ func _setup_debug_view():
 	setup_diagnostics_label = Label.new()
 	setup_diagnostics_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	setup_diagnostics_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	setup_diagnostics_label.add_theme_color_override("font_color", Color(0.92, 0.92, 0.92, 1))
+	setup_diagnostics_label.visible = false
+	setup_diagnostics_label.add_theme_color_override("font_color", Color(0.78, 0.86, 0.9, 0.92))
 	setup_status_box.add_child(setup_diagnostics_label)
 
 	setup_overlay.add_child(setup_status_panel)
@@ -3043,23 +3047,32 @@ func _refresh_connecting_debug(state: int = -1) -> void:
 	var connect_age = max(0.0, float(Time.get_ticks_msec() - _ws_connect_started_msec) / 1000.0) if _ws_connect_started_msec > 0 else 0.0
 	var page_host = _runtime_page_host if _runtime_page_host != "" else "unknown"
 
-	setup_body_label.text = "Connecting to the sync bridge and waiting for device setup.\n\nPage host: %s\nWS target: %s\nWS state: %s\nConnect attempts: %d\nLast connect error: %d\nConnect age: %.1fs\nNext retry: %.1fs\nDisplay mode: %s" % [
-		page_host,
-		websocket_url,
-		_ws_state_label(state),
-		_ws_connect_attempt_count,
-		_last_ws_connect_error,
-		connect_age,
-		retry_in,
-		_runtime_display_mode
-	]
-	setup_hint_label.text = ""
+	if _show_connect_debug_details:
+		setup_body_label.text = "Connecting to the sync bridge and waiting for device setup.\n\nPage host: %s\nWS target: %s\nWS state: %s\nConnect attempts: %d\nLast connect error: %d\nConnect age: %.1fs\nNext retry: %.1fs\nDisplay mode: %s" % [
+			page_host,
+			websocket_url,
+			_ws_state_label(state),
+			_ws_connect_attempt_count,
+			_last_ws_connect_error,
+			connect_age,
+			retry_in,
+			_runtime_display_mode
+		]
+		setup_hint_label.text = ""
+	else:
+		setup_body_label.text = "Waiting for the sync bridge and device setup.\nBridge: %s | Attempts: %d | Retry: %.1fs" % [
+			_ws_state_label(state),
+			_ws_connect_attempt_count,
+			retry_in
+		]
+		setup_hint_label.text = "Use Details only when the connection needs debugging."
 
 func _apply_global_ui_visibility() -> void:
 	var show_full_ui := _tab_ui_mode == TAB_UI_MODE_NORMAL
 	var show_preview := _tab_ui_mode == TAB_UI_MODE_PREVIEW or _tab_ui_mode == TAB_UI_MODE_FIRST_PERSON_PREVIEW
 	var show_orbit_gizmos := show_preview and _tab_ui_mode != TAB_UI_MODE_FIRST_PERSON_PREVIEW
 	var show_debug_overlay := show_preview or show_debug_view
+	var show_debug_text := show_debug_view or _show_connect_debug_details
 	if setup_overlay:
 		setup_overlay.visible = show_full_ui
 	if aruco_canvas:
@@ -3080,13 +3093,13 @@ func _apply_global_ui_visibility() -> void:
 			if frame is MeshInstance3D:
 				frame.visible = show_preview
 	if debug_preview_coords_label:
-		debug_preview_coords_label.visible = show_debug_overlay
+		debug_preview_coords_label.visible = show_debug_overlay and show_debug_text
 	if debug_preview_world_coords_label:
-		debug_preview_world_coords_label.visible = show_debug_overlay
+		debug_preview_world_coords_label.visible = show_debug_overlay and show_debug_text
 	if debug_preview_head_hint_label:
-		debug_preview_head_hint_label.visible = show_debug_overlay and debug_preview_head_hint_label.visible
+		debug_preview_head_hint_label.visible = show_debug_overlay and show_debug_text and debug_preview_head_hint_label.visible
 	if debug_preview_camera_hint_label:
-		debug_preview_camera_hint_label.visible = show_debug_overlay and debug_preview_camera_hint_label.visible
+		debug_preview_camera_hint_label.visible = show_debug_overlay and show_debug_text and debug_preview_camera_hint_label.visible
 	_refresh_projector_canvas()
 
 func _advance_tab_ui_mode() -> void:
@@ -3135,7 +3148,9 @@ func _refresh_setup_controls() -> void:
 	if setup_hint_label:
 		setup_hint_label.visible = setup_hint_label.text != ""
 	if setup_diagnostics_label:
-		setup_diagnostics_label.visible = true
+		setup_diagnostics_label.visible = _show_connect_debug_details
+		if not _show_connect_debug_details:
+			setup_diagnostics_label.text = ""
 
 	if rescan_button:
 		rescan_button.text = "Rescan All Screens"
@@ -3168,8 +3183,8 @@ func _refresh_setup_controls() -> void:
 		status_toggle_button.text = "Show Status" if _status_panel_hidden_by_user else "Hide Status"
 
 	if connect_details_button:
-		connect_details_button.visible = false
-		connect_details_button.text = "Hide Details" if _show_connect_debug_details else "Show Details"
+		connect_details_button.visible = not marker_mode_active
+		connect_details_button.text = "Hide Details" if _show_connect_debug_details else "Details"
 
 func _toggle_connect_details() -> void:
 	_show_connect_debug_details = not _show_connect_debug_details
@@ -3208,7 +3223,7 @@ func _apply_setup_ui_metrics() -> void:
 	var button_font = int(round(clampf(14.0 * ui_scale, 12.0, 14.0)))
 	var control_height = clampf(36.0 * ui_scale, 30.0, 36.0)
 	var available_width = maxf(180.0, effective_size.x - gutter * 2.0)
-	var status_width = minf(clampf(effective_size.x * 0.28, 320.0, 520.0), available_width)
+	var status_width = minf(clampf(effective_size.x * (0.34 if _show_connect_debug_details else 0.24), 300.0, 560.0 if _show_connect_debug_details else 430.0), available_width)
 	var setup_width = minf(clampf(effective_size.x * 0.34, 260.0, 460.0), available_width)
 	var projector_width = minf(clampf(effective_size.x * 0.42, 320.0, 620.0), available_width)
 	var status_content_width = max(140.0, status_width - padding_x * 2.0)
@@ -3250,7 +3265,7 @@ func _apply_setup_ui_metrics() -> void:
 		projector_setup_info_label.add_theme_font_size_override("font_size", body_font)
 		projector_setup_info_label.custom_minimum_size = Vector2(projector_content_width, 0.0)
 
-	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, far_plane_button, fullscreen_button, projector_mode_button, status_toggle_button, start_scan_button, save_preset_button, projector_mapping_button, projector_mapping_finish_button, projector_mapping_cancel_button, projector_face_count_dropdown, preset_dropdown, w_input, h_input]:
+	for control in [rescan_button, edit_size_button, sync_mode_button, render_mode_button, far_plane_button, fullscreen_button, projector_mode_button, connect_details_button, status_toggle_button, start_scan_button, save_preset_button, projector_mapping_button, projector_mapping_finish_button, projector_mapping_cancel_button, projector_face_count_dropdown, preset_dropdown, w_input, h_input]:
 		if control == null:
 			continue
 		control.custom_minimum_size = Vector2(0.0, control_height)

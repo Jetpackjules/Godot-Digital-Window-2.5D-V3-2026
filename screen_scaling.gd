@@ -47,6 +47,7 @@ class_name ScreenScaling
 var tracking_scale_multiplier: float = 1.0
 
 var _is_updating: bool = false
+var _runtime_virtual_window_height_override: float = 0.0
 
 func _enter_tree() -> void:
 	# This ensures the values calculate the moment the node is loaded in the editor
@@ -92,6 +93,28 @@ func _sync_virtual_window_height_to_physical() -> void:
 
 func _update_scale_multiplier() -> void:
 	if physical_height_meters > 0:
-		tracking_scale_multiplier = virtual_window_height / physical_height_meters
+		tracking_scale_multiplier = get_virtual_window_height_meters() / physical_height_meters
 	else:
 		tracking_scale_multiplier = 1.0
+
+func set_runtime_virtual_window_height_override(height_meters: float) -> void:
+	var next_height := maxf(height_meters, 0.0)
+	if is_equal_approx(_runtime_virtual_window_height_override, next_height):
+		return
+	_runtime_virtual_window_height_override = next_height
+	_update_scale_multiplier()
+
+func get_virtual_window_height_meters() -> float:
+	if _runtime_virtual_window_height_override > 0.0:
+		return _runtime_virtual_window_height_override
+	return virtual_window_height
+
+func get_virtual_window_width_meters() -> float:
+	if physical_height_meters <= 0.0:
+		return 0.0
+	return physical_width_meters * get_tracking_scale_multiplier()
+
+func get_tracking_scale_multiplier() -> float:
+	if physical_height_meters > 0.0:
+		return get_virtual_window_height_meters() / physical_height_meters
+	return 1.0

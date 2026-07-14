@@ -8,6 +8,7 @@
 [ext_resource type="Script" uid="uid://754lm5ou3rhb" path="res://screen_scaling.gd" id="8_trn2v"]
 [ext_resource type="PackedScene" uid="uid://bqye210twle25" path="res://Views/Tilt Ball Box/View.tscn" id="9_j4qnp"]
 [ext_resource type="Script" uid="uid://cox3vlamhlmri" path="res://view_switcher.gd" id="9_vs123"]
+[ext_resource type="Resource" path="res://Views/view_catalog.tres" id="9_catalog"]
 [ext_resource type="Texture2D" uid="uid://uxll5j232eg8" path="res://aruco_marker_0.png" id="10_aruco_0"]
 [ext_resource type="Script" uid="uid://dgllwkw8ksktv" path="res://monitor_frame_outline.gd" id="10_qgpa4"]
 [ext_resource type="Texture2D" uid="uid://wtfpc740cgej" path="res://aruco_marker_1.png" id="11_aruco_1"]
@@ -149,12 +150,11 @@ script = ExtResource("9_vs123")
 fallback_directional_light_path = NodePath("../Light")
 fallback_world_environment_path = NodePath("../WorldEnvironment")
 window_center_path = NodePath("../Player/MonitorFrame")
+viewer_camera_path = NodePath("../Player/Head_Cam")
 current_view_scene = ExtResource("9_j4qnp")
-explicit_view_scene_paths = PackedStringArray()
-camera_reactive_debug_status = "Off"
-current_view_name = "test_box.tscn"
+view_catalog = ExtResource("9_catalog")
+current_view_name = "Tilt Ball Box"
 
-<<<<<<< HEAD
 [node name="EnhancedGraphicsEnvironment" type="WorldEnvironment" parent="View" unique_id=1992688370]
 
 [node name="EnhancedGraphicsKeyLight" type="DirectionalLight3D" parent="View" unique_id=666534515]
@@ -164,17 +164,6 @@ visible = false
 visible = false
 
 [node name="EnhancedGraphicsRimLight" type="DirectionalLight3D" parent="View" unique_id=1817373885]
-=======
-[node name="EnhancedGraphicsEnvironment" type="WorldEnvironment" parent="View" unique_id=1364561941]
-
-[node name="EnhancedGraphicsKeyLight" type="DirectionalLight3D" parent="View" unique_id=1879213950]
-visible = false
-
-[node name="EnhancedGraphicsFillLight" type="DirectionalLight3D" parent="View" unique_id=1260318199]
-visible = false
-
-[node name="EnhancedGraphicsRimLight" type="DirectionalLight3D" parent="View" unique_id=887733895]
->>>>>>> 929072e (ball view proper scaling (but ball scaling broken I think))
 visible = false
 
 [node name="ArUcoPreloader" type="ResourcePreloader" parent="." unique_id=1836254719]

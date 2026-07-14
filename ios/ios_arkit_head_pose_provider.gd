@@ -21,6 +21,8 @@ var _tracker: Object
 var _started: bool = false
 var _last_pose: Transform3D = Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, 0.35))
 var _last_status: Dictionary = {}
+var _last_refresh_frame: int = -1
+var _last_tracking_active: bool = false
 
 func _ready() -> void:
 	_resolve_tracker()
@@ -31,6 +33,7 @@ func _process(_delta: float) -> void:
 	_refresh_latest_pose()
 
 func start_tracking() -> bool:
+	_last_refresh_frame = -1
 	_resolve_tracker()
 	if _tracker == null:
 		_started = false
@@ -50,15 +53,12 @@ func stop_tracking() -> void:
 		elif _tracker.has_method("stop"):
 			_tracker.call("stop")
 	_started = false
+	_last_tracking_active = false
+	_last_refresh_frame = -1
 
 func is_tracking_active() -> bool:
-	if _tracker == null:
-		return use_editor_simulation and not OS.has_feature("ios")
-	if _tracker.has_method("is_tracking"):
-		return bool(_tracker.call("is_tracking"))
-	if _tracker.has_method("is_face_tracked"):
-		return bool(_tracker.call("is_face_tracked"))
-	return _started
+	_refresh_latest_pose()
+	return _last_tracking_active
 
 func get_tracking_state() -> int:
 	if is_tracking_active():
@@ -111,11 +111,22 @@ func _native_start_result_is_ok(value: Variant) -> bool:
 	return true
 
 func _refresh_latest_pose() -> void:
+	var frame := Engine.get_process_frames()
+	if frame == _last_refresh_frame:
+		return
+	_last_refresh_frame = frame
 	_resolve_tracker()
 	if _tracker == null:
-		if use_editor_simulation and not OS.has_feature("ios"):
+		_last_tracking_active = use_editor_simulation and not OS.has_feature("ios")
+		if _last_tracking_active:
 			_last_pose = Transform3D(Basis.IDENTITY, simulated_position_meters)
 		return
+	if _tracker.has_method("is_tracking"):
+		_last_tracking_active = bool(_tracker.call("is_tracking"))
+	elif _tracker.has_method("is_face_tracked"):
+		_last_tracking_active = bool(_tracker.call("is_face_tracked"))
+	else:
+		_last_tracking_active = _started
 
 	if _tracker.has_method("get_tracking_status"):
 		var raw_status: Variant = _tracker.call("get_tracking_status")
