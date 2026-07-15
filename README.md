@@ -13,6 +13,11 @@ This project turns one or more displays into a tracked "window into a 3D world" 
 - OpenCV + ArUco for room / screen layout solving
 - a Python WebSocket bridge for multi-device sync
 
+Research references for future weather-driven scenes are tracked in
+[WEATHER_RESEARCH.md](WEATHER_RESEARCH.md), including the open-source
+[WeatherEdit](https://github.com/Jumponthemoon/WeatherEdit) 4D Gaussian weather
+pipeline.
+
 The current user-facing flow is:
 
 1. start the bridge / web server / tracker
