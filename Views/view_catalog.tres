@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ViewCatalog" load_steps=26 format=3]
+[gd_resource type="Resource" script_class="ViewCatalog" load_steps=27 format=3]
 
 [ext_resource type="Script" path="res://view_catalog.gd" id="1_catalog"]
 [ext_resource type="Script" path="res://view_descriptor.gd" id="2_descriptor"]
@@ -93,6 +93,18 @@ thumbnail_path = "res://Views/Rainy City Window/thumbnail.png"
 lighting_ownership = 2
 performance_tier = 1
 expected_node_budget = 220
+preferred_scale_handling = 1
+
+[sub_resource type="Resource" id="View_medieval_storm"]
+script = ExtResource("2_descriptor")
+title = "Medieval Storm Window"
+scene_path = "res://Views/Medieval Storm Window/View.tscn"
+category = "Living Windows"
+thumbnail_path = "res://Views/Medieval Storm Window/thumbnail.png"
+available_on_mobile = false
+lighting_ownership = 2
+performance_tier = 2
+expected_node_budget = 1800
 preferred_scale_handling = 1
 
 [sub_resource type="Resource" id="View_archive"]
@@ -214,4 +226,4 @@ performance_tier = 1
 
 [resource]
 script = ExtResource("1_catalog")
-views = [SubResource("View_test_box"), SubResource("View_point_cloud"), SubResource("View_construction"), SubResource("View_crab"), SubResource("View_dragon"), SubResource("View_fight"), SubResource("View_fish"), SubResource("View_neon"), SubResource("View_rain"), SubResource("View_rainy_city"), SubResource("View_archive"), SubResource("View_crystal"), SubResource("View_city"), SubResource("View_planetarium"), SubResource("View_floater"), SubResource("View_isometric"), SubResource("View_flat"), SubResource("View_smoker"), SubResource("View_shallow"), SubResource("View_spaceship"), SubResource("View_tilt_box"), SubResource("View_tilt_maze"), SubResource("View_spring")]
+views = [SubResource("View_test_box"), SubResource("View_point_cloud"), SubResource("View_construction"), SubResource("View_crab"), SubResource("View_dragon"), SubResource("View_fight"), SubResource("View_fish"), SubResource("View_neon"), SubResource("View_rain"), SubResource("View_rainy_city"), SubResource("View_medieval_storm"), SubResource("View_archive"), SubResource("View_crystal"), SubResource("View_city"), SubResource("View_planetarium"), SubResource("View_floater"), SubResource("View_isometric"), SubResource("View_flat"), SubResource("View_smoker"), SubResource("View_shallow"), SubResource("View_spaceship"), SubResource("View_tilt_box"), SubResource("View_tilt_maze"), SubResource("View_spring")]

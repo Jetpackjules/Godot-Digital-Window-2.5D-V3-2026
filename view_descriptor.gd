@@ -20,6 +20,9 @@ enum PerformanceTier {
 @export_file("*.tscn") var scene_path: String = ""
 @export var category: String = "Showcase"
 @export_file("*.png", "*.jpg", "*.webp", "*.svg") var thumbnail_path: String = ""
+@export_group("Availability")
+@export var available_on_mobile: bool = true
+@export_group("")
 @export_enum("Legacy Auto", "Viewer Managed", "Scene Managed", "Hybrid") var lighting_ownership: int = LightingOwnership.LEGACY_AUTO
 @export_group("Performance")
 @export_enum("Light", "Medium", "Heavy", "Extreme") var performance_tier: int = PerformanceTier.MEDIUM

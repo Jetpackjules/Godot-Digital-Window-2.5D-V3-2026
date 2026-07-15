@@ -1,0 +1,114 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://Views/Medieval Storm Window/medieval_storm_window.gd" id="1_window"]
+[ext_resource type="Script" path="res://view_bounds.gd" id="2_bounds"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/medieval_storm_window_shell.gltf" id="3_shell"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/storm_backdrop.gdshader" id="4_storm"]
+
+[sub_resource type="Environment" id="Environment_storm"]
+background_mode = 1
+background_color = Color(0.0015, 0.003, 0.008, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.13, 0.17, 0.24, 1)
+ambient_light_energy = 0.44
+reflected_light_source = 2
+tonemap_mode = 3
+tonemap_exposure = 1.08
+ssao_enabled = true
+ssao_radius = 0.085
+ssao_intensity = 1.45
+ssil_enabled = true
+ssil_radius = 0.11
+ssil_intensity = 0.62
+glow_enabled = true
+glow_intensity = 0.34
+glow_strength = 0.72
+glow_bloom = 0.08
+fog_enabled = true
+fog_light_color = Color(0.075, 0.105, 0.16, 1)
+fog_light_energy = 0.34
+fog_density = 0.018
+fog_height = -0.17
+fog_height_density = 1.8
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_storm"]
+shader = ExtResource("4_storm")
+shader_parameter/storm_brightness = 0.86
+shader_parameter/lightning_activity = 0.32
+
+[sub_resource type="QuadMesh" id="QuadMesh_storm"]
+material = SubResource("ShaderMaterial_storm")
+size = Vector2(0.72, 0.43)
+
+[node name="Medieval Storm Window" type="Node3D"]
+script = ExtResource("1_window")
+
+[node name="ViewBounds" type="Node3D" parent="."]
+script = ExtResource("2_bounds")
+bounds_width_meters = 0.587
+bounds_height_meters = 0.33
+show_preview_in_game = false
+preview_color = Color(0.18, 0.68, 1, 0.8)
+
+[node name="ScreenPlaneFront" type="Marker3D" parent="."]
+
+[node name="StoneShell" parent="." instance=ExtResource("3_shell")]
+position = Vector3(0, -0.165, 0)
+scale = Vector3(0.09171875, 0.09171875, 0.09171875)
+
+[node name="GaussianLandscapeAnchor" type="Marker3D" parent="."]
+position = Vector3(0, 0, -0.34)
+
+[node name="RainVolumeAnchor" type="Marker3D" parent="."]
+position = Vector3(0, 0, -0.17)
+
+[node name="OptionalGlassPlaneAnchor" type="Marker3D" parent="."]
+position = Vector3(0, 0, -0.012)
+
+[node name="StormBackdrop" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0, -0.36)
+cast_shadow = 0
+gi_mode = 0
+material_override = SubResource("ShaderMaterial_storm")
+mesh = SubResource("QuadMesh_storm")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_storm")
+
+[node name="ColdStoneKey" type="OmniLight3D" parent="."]
+position = Vector3(-0.22, 0.11, 0.16)
+light_color = Color(0.50, 0.66, 1, 1)
+light_energy = 3.15
+light_indirect_energy = 0.62
+omni_range = 0.78
+omni_attenuation = 1.18
+shadow_enabled = true
+shadow_bias = 0.025
+
+[node name="WarmStoneFill" type="OmniLight3D" parent="."]
+position = Vector3(0.24, -0.08, 0.12)
+light_color = Color(1, 0.48, 0.24, 1)
+light_energy = 1.72
+light_indirect_energy = 0.45
+omni_range = 0.68
+omni_attenuation = 1.42
+shadow_enabled = false
+
+[node name="StormRearLight" type="OmniLight3D" parent="."]
+position = Vector3(-0.08, 0.08, -0.20)
+light_color = Color(0.25, 0.46, 1, 1)
+light_energy = 2.1
+light_indirect_energy = 0.52
+omni_range = 0.62
+omni_attenuation = 1.28
+shadow_enabled = false
+
+[node name="StoneReflectionProbe" type="ReflectionProbe" parent="."]
+position = Vector3(0, 0, -0.085)
+intensity = 0.32
+max_distance = 0.72
+size = Vector3(0.64, 0.38, 0.58)
+interior = true
+ambient_mode = 1
+ambient_color = Color(0.08, 0.11, 0.17, 1)
+ambient_color_energy = 0.38
