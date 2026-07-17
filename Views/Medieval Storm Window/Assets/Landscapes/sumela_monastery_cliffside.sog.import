@@ -1,0 +1,15 @@
+[remap]
+
+importer="gaussian.splat.importer"
+importer_version=6
+type="Resource"
+uid="uid://xp867umksqxn"
+path="res://.godot/imported/sumela_monastery_cliffside.sog-d8dcee963c50117a0f599c33b99183ff.res"
+
+[deps]
+
+source_file="res://Views/Medieval Storm Window/Assets/Landscapes/sumela_monastery_cliffside.sog"
+dest_files=["res://.godot/imported/sumela_monastery_cliffside.sog-d8dcee963c50117a0f599c33b99183ff.res"]
+
+[params]
+

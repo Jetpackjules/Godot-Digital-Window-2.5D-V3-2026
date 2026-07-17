@@ -1,37 +1,15 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene format=3 uid="uid://k646bl474u7e"]
 
-[ext_resource type="Script" path="res://Views/Medieval Storm Window/medieval_storm_window.gd" id="1_window"]
-[ext_resource type="Script" path="res://view_bounds.gd" id="2_bounds"]
-[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/medieval_storm_window_shell.gltf" id="3_shell"]
-[ext_resource type="Shader" path="res://Views/Medieval Storm Window/storm_backdrop.gdshader" id="4_storm"]
-
-[sub_resource type="Environment" id="Environment_storm"]
-background_mode = 1
-background_color = Color(0.0015, 0.003, 0.008, 1)
-ambient_light_source = 2
-ambient_light_color = Color(0.13, 0.17, 0.24, 1)
-ambient_light_energy = 0.44
-reflected_light_source = 2
-tonemap_mode = 3
-tonemap_exposure = 1.08
-ssao_enabled = true
-ssao_radius = 0.085
-ssao_intensity = 1.45
-ssil_enabled = true
-ssil_radius = 0.11
-ssil_intensity = 0.62
-glow_enabled = true
-glow_intensity = 0.34
-glow_strength = 0.72
-glow_bloom = 0.08
-fog_enabled = true
-fog_light_color = Color(0.075, 0.105, 0.16, 1)
-fog_light_energy = 0.34
-fog_density = 0.018
-fog_height = -0.17
-fog_height_density = 1.8
+[ext_resource type="Script" uid="uid://c11cnq6ktv32d" path="res://Views/Medieval Storm Window/medieval_storm_window.gd" id="1_window"]
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="2_bounds"]
+[ext_resource type="PackedScene" uid="uid://ciaoq7w1ycyvv" path="res://Views/Medieval Storm Window/Assets/medieval_storm_window_shell.gltf" id="3_shell"]
+[ext_resource type="Shader" uid="uid://bqakcbjx821ex" path="res://Views/Medieval Storm Window/storm_backdrop.gdshader" id="4_storm"]
+[ext_resource type="Script" uid="uid://uvogfbl5xt0i" path="res://addons/gdgs/runtime/compositor/gaussian_compositor_effect.gd" id="5_gaussian_compositor"]
+[ext_resource type="Resource" path="res://Views/Medieval Storm Window/Assets/Landscapes/Previews/sovinec_castle_gaussian_preview.res" id="5_xijk1"]
+[ext_resource type="Script" uid="uid://c6n0nn5lt187j" path="res://addons/gdgs/runtime/nodes/gaussian_splat_node.gd" id="6_gaussian_node"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_storm"]
+render_priority = 0
 shader = ExtResource("4_storm")
 shader_parameter/storm_brightness = 0.86
 shader_parameter/lightning_activity = 0.32
@@ -40,75 +18,205 @@ shader_parameter/lightning_activity = 0.32
 material = SubResource("ShaderMaterial_storm")
 size = Vector2(0.72, 0.43)
 
-[node name="Medieval Storm Window" type="Node3D"]
-script = ExtResource("1_window")
+[sub_resource type="Environment" id="Environment_storm"]
+background_mode = 1
+background_color = Color(0.0015, 0.003, 0.008, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.13, 0.17, 0.24, 1)
+ambient_light_energy = 0.2
+reflected_light_source = 2
+tonemap_mode = 3
+tonemap_exposure = 0.72
+ssao_enabled = true
+ssao_radius = 0.085
+ssao_intensity = 1.45
+ssil_enabled = true
+ssil_radius = 0.11
+ssil_intensity = 0.62
+glow_enabled = true
+glow_intensity = 0.12
+glow_strength = 0.48
+glow_bloom = 0.04
+fog_enabled = true
+fog_light_color = Color(0.075, 0.105, 0.16, 1)
+fog_light_energy = 0.34
+fog_density = 0.018
+fog_height = -0.17
+fog_height_density = 1.8
 
-[node name="ViewBounds" type="Node3D" parent="."]
+[sub_resource type="CompositorEffect" id="CompositorEffect_gaussian"]
+resource_local_to_scene = true
+resource_name = ""
+enabled = true
+effect_callback_type = 3
+access_resolved_color = false
+access_resolved_depth = true
+needs_motion_vectors = false
+needs_normal_roughness = false
+script = ExtResource("5_gaussian_compositor")
+alpha_cutoff = 0.012
+depth_bias = 0.02
+depth_test_min_alpha = 0.04
+depth_capture_alpha = 0.42
+runtime_min_projected_splat_radius = 0.4
+runtime_min_splat_opacity = 0.01
+
+[sub_resource type="Compositor" id="Compositor_gaussian"]
+compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_gaussian")])
+
+[node name="Medieval Storm Window" type="Node3D" unique_id=1688713746]
+script = ExtResource("1_window")
+landscape_choice = 2
+editor_point_proxy_size = 2.0
+runtime_min_projected_splat_radius = 0.4
+runtime_min_splat_opacity = 0.01
+
+[node name="ViewBounds" type="Node3D" parent="." unique_id=292394816]
+visible = false
 script = ExtResource("2_bounds")
-bounds_width_meters = 0.587
-bounds_height_meters = 0.33
-show_preview_in_game = false
 preview_color = Color(0.18, 0.68, 1, 0.8)
 
-[node name="ScreenPlaneFront" type="Marker3D" parent="."]
+[node name="ScreenPlaneFront" type="Marker3D" parent="." unique_id=1046442301]
 
-[node name="StoneShell" parent="." instance=ExtResource("3_shell")]
-position = Vector3(0, -0.165, 0)
-scale = Vector3(0.09171875, 0.09171875, 0.09171875)
+[node name="StoneShell" parent="." unique_id=614998998 instance=ExtResource("3_shell")]
+transform = Transform3D(0.09171875, 0, 0, 0, 0.09171875, 0, 0, 0, 0.09171875, 0, -0.165, 0)
 
-[node name="GaussianLandscapeAnchor" type="Marker3D" parent="."]
-position = Vector3(0, 0, -0.34)
+[node name="GaussianLandscapeAnchor" type="Marker3D" parent="." unique_id=279803817]
+editor_description = "Editor-owned landscape placement. Choose Landscape Choice on the scene root, then move/rotate/scale the selected named child. Runtime switching preserves these transforms."
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.34)
 
-[node name="RainVolumeAnchor" type="Marker3D" parent="."]
-position = Vector3(0, 0, -0.17)
+[node name="CochemImperialCastle" type="Node3D" parent="GaussianLandscapeAnchor" unique_id=2138884104]
+editor_description = "Cochem Imperial Castle, Germany by Dok11. CC BY 4.0. Source: https://superspl.at/scene/9b18007e. This node's Transform is the authored placement and is never overwritten by the selector."
+transform = Transform3D(0.0192, 0, 0, 0, 0, 0.0192, 0, 0.0192, 0, 0.0717, 0.0285, 0)
+visible = false
+metadata/source_url = "https://superspl.at/scene/9b18007e"
+metadata/creator_url = "https://superspl.at/user?id=dok11"
+metadata/license = "CC BY 4.0"
 
-[node name="OptionalGlassPlaneAnchor" type="Marker3D" parent="."]
-position = Vector3(0, 0, -0.012)
+[node name="GaussianSplat" type="VisualInstance3D" parent="GaussianLandscapeAnchor/CochemImperialCastle" unique_id=1898431284]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(-1, -8.742278e-08, 0, 8.742278e-08, -1, 0, 0, 0, 1, 0, 0, 0)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = true
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("6_gaussian_node")
 
-[node name="StormBackdrop" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0, -0.36)
+[node name="SumelaMonasteryCliffside" type="Node3D" parent="GaussianLandscapeAnchor" unique_id=1028096288]
+editor_description = "Sumela Monastery Cliffside by Dok11. CC BY 4.0. Source: https://superspl.at/scene/5f03cdcb. This node's Transform is the authored placement and is never overwritten by the selector."
+transform = Transform3D(0.01056, 0, 0, 0, 0, 0.01056, 0, 0.01056, 0, -0.0604, -0.0117, 0)
+visible = false
+metadata/source_url = "https://superspl.at/scene/5f03cdcb"
+metadata/creator_url = "https://superspl.at/user?id=dok11"
+metadata/license = "CC BY 4.0"
+
+[node name="GaussianSplat" type="VisualInstance3D" parent="GaussianLandscapeAnchor/SumelaMonasteryCliffside" unique_id=2070719165]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(-1, -8.742278e-08, 0, 8.742278e-08, -1, 0, 0, 0, 1, 0, 0, 0)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = true
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("6_gaussian_node")
+
+[node name="SovinecCastle" type="Node3D" parent="GaussianLandscapeAnchor" unique_id=1917118583]
+editor_description = "Sovinec Castle by Pavel Matousek. CC BY 4.0. Source: https://superspl.at/scene/0f5e0540. This node's Transform is the authored placement and is never overwritten by the selector."
+transform = Transform3D(0.01186, 0, 0, 0, 0, 0.01186, 0, 0.01186, 0, -0.0029, -0.0195, 0)
+metadata/source_url = "https://superspl.at/scene/0f5e0540"
+metadata/creator_url = "https://superspl.at/user?id=matousekfoto2"
+metadata/license = "CC BY 4.0"
+
+[node name="GaussianSplat" type="VisualInstance3D" parent="GaussianLandscapeAnchor/SovinecCastle" unique_id=977439645]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(-1, -8.742278e-08, 0, 8.742278e-08, -1, 0, 0, 0, 1, 0, 0, 0)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = true
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("6_gaussian_node")
+gaussian = ExtResource("5_xijk1")
+metadata/_gdgs_hide_editor_gizmo = true
+
+[node name="RainVolumeAnchor" type="Marker3D" parent="." unique_id=1625086679]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.17)
+
+[node name="OptionalGlassPlaneAnchor" type="Marker3D" parent="." unique_id=51587648]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.012)
+
+[node name="StormBackdrop" type="MeshInstance3D" parent="." unique_id=453375749]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.36)
+visible = false
+material_override = SubResource("ShaderMaterial_storm")
 cast_shadow = 0
 gi_mode = 0
-material_override = SubResource("ShaderMaterial_storm")
 mesh = SubResource("QuadMesh_storm")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=660521128]
 environment = SubResource("Environment_storm")
+compositor = SubResource("Compositor_gaussian")
 
-[node name="ColdStoneKey" type="OmniLight3D" parent="."]
-position = Vector3(-0.22, 0.11, 0.16)
-light_color = Color(0.50, 0.66, 1, 1)
-light_energy = 3.15
-light_indirect_energy = 0.62
-omni_range = 0.78
-omni_attenuation = 1.18
+[node name="ColdStoneKey" type="OmniLight3D" parent="." unique_id=352890007]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.22, 0.11, 0.16)
+light_color = Color(0.72, 0.8, 1, 1)
+light_energy = 0.24
+light_indirect_energy = 0.18
 shadow_enabled = true
 shadow_bias = 0.025
+omni_range = 0.78
+omni_attenuation = 1.18
 
-[node name="WarmStoneFill" type="OmniLight3D" parent="."]
-position = Vector3(0.24, -0.08, 0.12)
-light_color = Color(1, 0.48, 0.24, 1)
-light_energy = 1.72
-light_indirect_energy = 0.45
+[node name="WarmStoneFill" type="OmniLight3D" parent="." unique_id=358643428]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24, -0.08, 0.12)
+light_color = Color(1, 0.72, 0.52, 1)
+light_energy = 0.14
+light_indirect_energy = 0.12
 omni_range = 0.68
 omni_attenuation = 1.42
-shadow_enabled = false
 
-[node name="StormRearLight" type="OmniLight3D" parent="."]
-position = Vector3(-0.08, 0.08, -0.20)
-light_color = Color(0.25, 0.46, 1, 1)
-light_energy = 2.1
-light_indirect_energy = 0.52
+[node name="StormRearLight" type="OmniLight3D" parent="." unique_id=2098727636]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.08, 0.08, -0.2)
+light_color = Color(0.42, 0.58, 1, 1)
+light_energy = 0.22
+light_indirect_energy = 0.16
 omni_range = 0.62
 omni_attenuation = 1.28
-shadow_enabled = false
 
-[node name="StoneReflectionProbe" type="ReflectionProbe" parent="."]
-position = Vector3(0, 0, -0.085)
+[node name="StoneReflectionProbe" type="ReflectionProbe" parent="." unique_id=839971461]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.085)
 intensity = 0.32
 max_distance = 0.72
 size = Vector3(0.64, 0.38, 0.58)
 interior = true
-ambient_mode = 1
 ambient_color = Color(0.08, 0.11, 0.17, 1)
 ambient_color_energy = 0.38
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=124856058]
+transform = Transform3D(0.9847136, 3.4866563e-09, 0.17418095, 0.13344795, 0.6426673, -0.7544338, -0.11194043, 0.76614535, 0.63284326, 0, -0.050464645, -0.32128483)
+near = 0.001

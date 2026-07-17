@@ -1,0 +1,15 @@
+[remap]
+
+importer="gaussian.splat.importer"
+importer_version=6
+type="Resource"
+uid="uid://cbn4bgtk8vtqv"
+path="res://.godot/imported/sovinec_castle_gaussian_lod.ply-0bdeabdc2302c979e5c7727f2e20a9b6.res"
+
+[deps]
+
+source_file="res://Views/Medieval Storm Window/Assets/Landscapes/Previews/sovinec_castle_gaussian_lod.ply"
+dest_files=["res://.godot/imported/sovinec_castle_gaussian_lod.ply-0bdeabdc2302c979e5c7727f2e20a9b6.res"]
+
+[params]
+

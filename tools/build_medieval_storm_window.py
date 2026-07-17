@@ -39,7 +39,7 @@ OPENING_BOTTOM = 0.30
 OPENING_SPRING = 2.00
 OPENING_TOP = 2.98
 REVEAL_DEPTH = 0.82
-MODULE_CENTERS = (-0.94, 0.94)
+MODULE_CENTERS = (-1.88, 0.0, 1.88)
 SOURCE_WINDOW_HEIGHT = 3.18
 SOURCE_WINDOW_DEPTH = 0.16
 SOURCE_WINDOW_BOTTOM = 0.16
@@ -447,14 +447,18 @@ def build_shell() -> list[bpy.types.Object]:
 
     created.extend(import_gothic_window_modules())
 
-    center_pier = create_box(
-        "Shared Center Pier",
-        (0.0, 0.15, 1.66),
-        (0.02, 0.28, 3.18),
-        carved_material,
-        0.045,
-        5,
-    )
+    shared_piers: list[bpy.types.Object] = []
+    for pier_index, (left_center, right_center) in enumerate(zip(MODULE_CENTERS, MODULE_CENTERS[1:]), start=1):
+        pier = create_box(
+            f"Shared Stone Seam {pier_index}",
+            ((left_center + right_center) * 0.5, 0.15, 1.66),
+            (0.02, 0.28, 3.18),
+            carved_material,
+            0.01,
+            3,
+        )
+        apply_world_scale_box_uv(pier)
+        shared_piers.append(pier)
     bottom_course = create_box(
         "Continuous Bottom Stone Course",
         (0.0, 0.18, 0.13),
@@ -471,10 +475,9 @@ def build_shell() -> list[bpy.types.Object]:
         0.035,
         4,
     )
-    apply_world_scale_box_uv(center_pier)
     apply_world_scale_box_uv(bottom_course)
     apply_world_scale_box_uv(top_course)
-    created.extend((center_pier, bottom_course, top_course))
+    created.extend((*shared_piers, bottom_course, top_course))
     return created
 
 
@@ -520,7 +523,7 @@ def setup_preview(shell_objects: list[bpy.types.Object]) -> None:
     camera = bpy.data.objects.new("Preview Camera", camera_data)
     bpy.context.collection.objects.link(camera)
     camera.location = (0.0, -7.4, 1.86)
-    camera_data.lens = 58.0
+    camera_data.lens = 42.0
     camera_data.sensor_width = 36.0
     point_camera(camera, Vector((0.0, 0.35, 1.78)))
     bpy.context.scene.camera = camera

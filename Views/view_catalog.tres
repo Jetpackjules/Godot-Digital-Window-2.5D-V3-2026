@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="ViewCatalog" load_steps=27 format=3]
+[gd_resource type="Resource" script_class="ViewCatalog" format=3 uid="uid://b57el07qkkvlx"]
 
-[ext_resource type="Script" path="res://view_catalog.gd" id="1_catalog"]
-[ext_resource type="Script" path="res://view_descriptor.gd" id="2_descriptor"]
+[ext_resource type="Script" uid="uid://3c0qlmn7yr6j" path="res://view_catalog.gd" id="1_catalog"]
+[ext_resource type="Script" uid="uid://b1ysxo1sp7uhh" path="res://view_descriptor.gd" id="2_descriptor"]
 
 [sub_resource type="Resource" id="View_test_box"]
 script = ExtResource("2_descriptor")
@@ -37,7 +37,6 @@ scene_path = "res://Views/Crab Stab/View.tscn"
 category = "Characters"
 thumbnail_path = "res://Views/Crab Stab/crabe_with_minespear_0.png"
 lighting_ownership = 1
-performance_tier = 1
 
 [sub_resource type="Resource" id="View_dragon"]
 script = ExtResource("2_descriptor")
@@ -73,7 +72,6 @@ scene_path = "res://Views/Box Neon Gallery/View.tscn"
 category = "Procedural Boxes"
 thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
 lighting_ownership = 1
-performance_tier = 1
 
 [sub_resource type="Resource" id="View_rain"]
 script = ExtResource("2_descriptor")
@@ -91,7 +89,6 @@ scene_path = "res://Views/Rainy City Window/View.tscn"
 category = "Living Windows"
 thumbnail_path = "res://Views/Rainy City Window/thumbnail.png"
 lighting_ownership = 2
-performance_tier = 1
 expected_node_budget = 220
 preferred_scale_handling = 1
 
@@ -114,7 +111,6 @@ scene_path = "res://Views/Box Archive Tunnel/View.tscn"
 category = "Procedural Boxes"
 thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
 lighting_ownership = 1
-performance_tier = 1
 
 [sub_resource type="Resource" id="View_crystal"]
 script = ExtResource("2_descriptor")
@@ -147,7 +143,6 @@ performance_tier = 2
 script = ExtResource("2_descriptor")
 title = "Floater"
 scene_path = "res://Views/Floater/View.tscn"
-category = "Showcase"
 thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
 lighting_ownership = 1
 performance_tier = 2
@@ -222,8 +217,7 @@ scene_path = "res://Views/Spring Surface/View.tscn"
 category = "Interactive"
 thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
 lighting_ownership = 3
-performance_tier = 1
 
 [resource]
 script = ExtResource("1_catalog")
-views = [SubResource("View_test_box"), SubResource("View_point_cloud"), SubResource("View_construction"), SubResource("View_crab"), SubResource("View_dragon"), SubResource("View_fight"), SubResource("View_fish"), SubResource("View_neon"), SubResource("View_rain"), SubResource("View_rainy_city"), SubResource("View_medieval_storm"), SubResource("View_archive"), SubResource("View_crystal"), SubResource("View_city"), SubResource("View_planetarium"), SubResource("View_floater"), SubResource("View_isometric"), SubResource("View_flat"), SubResource("View_smoker"), SubResource("View_shallow"), SubResource("View_spaceship"), SubResource("View_tilt_box"), SubResource("View_tilt_maze"), SubResource("View_spring")]
+views = Array[ExtResource("2_descriptor")]([SubResource("View_test_box"), SubResource("View_point_cloud"), SubResource("View_construction"), SubResource("View_crab"), SubResource("View_dragon"), SubResource("View_fight"), SubResource("View_fish"), SubResource("View_neon"), SubResource("View_rain"), SubResource("View_rainy_city"), SubResource("View_medieval_storm"), SubResource("View_archive"), SubResource("View_crystal"), SubResource("View_city"), SubResource("View_planetarium"), SubResource("View_floater"), SubResource("View_isometric"), SubResource("View_flat"), SubResource("View_smoker"), SubResource("View_shallow"), SubResource("View_spaceship"), SubResource("View_tilt_box"), SubResource("View_tilt_maze"), SubResource("View_spring")])

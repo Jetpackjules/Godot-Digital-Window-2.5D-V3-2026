@@ -1,0 +1,15 @@
+[remap]
+
+importer="gaussian.splat.importer"
+importer_version=6
+type="Resource"
+uid="uid://bq3q12cvviolg"
+path="res://.godot/imported/cochem_imperial_castle_gaussian_lod.ply-9b10428677ded37909dfbe3084517089.res"
+
+[deps]
+
+source_file="res://Views/Medieval Storm Window/Assets/Landscapes/Previews/cochem_imperial_castle_gaussian_lod.ply"
+dest_files=["res://.godot/imported/cochem_imperial_castle_gaussian_lod.ply-9b10428677ded37909dfbe3084517089.res"]
+
+[params]
+
