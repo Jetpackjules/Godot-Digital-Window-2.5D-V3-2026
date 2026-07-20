@@ -14,15 +14,12 @@ layout(set = 0, binding = 3) uniform sampler2D scene_depth_tex;
 
 layout(push_constant, std430) uniform Params {
     vec2 screen_size;
-    vec2 gsplat_size;
     float alpha_cutoff;
     float depth_bias;
     float depth_test_min_alpha;
     float debug_view;
     float use_scene_depth;
     float _pad0;
-    float _pad1;
-    float _pad2;
     mat4 inv_projection;
 } p;
 
@@ -70,14 +67,9 @@ void main() {
     }
 
     vec4 scene_color = imageLoad(scene_tex, pixel);
-    ivec2 gsplat_pixel = clamp(
-        ivec2((vec2(pixel) + vec2(0.5)) * p.gsplat_size / p.screen_size),
-        ivec2(0),
-        ivec2(p.gsplat_size) - ivec2(1)
-    );
-    vec4 gsplat_color = imageLoad(gsplat_tex, gsplat_pixel);
+    vec4 gsplat_color = imageLoad(gsplat_tex, pixel);
     float gsplat_alpha = gsplat_color.a;
-    float gsplat_view_depth = imageLoad(gsplat_depth_tex, gsplat_pixel).r;
+    float gsplat_view_depth = imageLoad(gsplat_depth_tex, pixel).r;
     bool has_gsplat_depth = gsplat_view_depth < INVALID_DEPTH;
 
     bool has_scene_depth = false;

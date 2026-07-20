@@ -1,0 +1,57 @@
+[gd_scene format=3 uid="uid://dgkh2ny7ejrva"]
+
+[ext_resource type="Script" uid="uid://uvogfbl5xt0i" path="res://addons/gdgs/runtime/compositor/gaussian_compositor_effect.gd" id="1_compositor"]
+[ext_resource type="Script" uid="uid://c6n0nn5lt187j" path="res://addons/gdgs/runtime/nodes/gaussian_splat_node.gd" id="2_node"]
+[ext_resource type="Resource" uid="uid://b0px0lda2pvl5" path="res://Views/Medieval Storm Window/Assets/Landscapes/Sumela Monastery Cliffside.sog" id="3_mvo2y"]
+[ext_resource type="Script" uid="uid://b6tnvuantr4e3" path="res://Views/GDGS Upstream Sample/upstream_sample_runtime.gd" id="4_runtime"]
+
+[sub_resource type="Environment" id="Environment_demo"]
+background_mode = 1
+background_color = Color(0.055, 0.065, 0.085, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.5, 0.55, 0.65, 1)
+ambient_light_energy = 0.35
+
+[sub_resource type="CompositorEffect" id="CompositorEffect_gaussian"]
+resource_local_to_scene = false
+resource_name = ""
+enabled = true
+effect_callback_type = 3
+access_resolved_color = false
+access_resolved_depth = true
+needs_motion_vectors = false
+needs_normal_roughness = false
+script = ExtResource("1_compositor")
+
+[sub_resource type="Compositor" id="Compositor_gaussian"]
+compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_gaussian")])
+
+[node name="GDGS Upstream Sample" type="Node3D" unique_id=98941385]
+script = ExtResource("4_runtime")
+
+[node name="GaussianSplat" type="VisualInstance3D" parent="." unique_id=1754675159]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(-1, -8.742278e-08, 0, 8.742278e-08, -1, 0, 0, 0, 1, 0, 0, 0)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = true
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("2_node")
+gaussian = ExtResource("3_mvo2y")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1873400118]
+environment = SubResource("Environment_demo")
+compositor = SubResource("Compositor_gaussian")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1444723425]
+transform = Transform3D(-0.7333148, 2.731811e-09, 0.6798893, -0.059539914, 0.9961581, -0.06421854, -0.6772772, -0.08757296, -0.7304975, -3.0874093, 3.139903, -8.326092)
+current = true

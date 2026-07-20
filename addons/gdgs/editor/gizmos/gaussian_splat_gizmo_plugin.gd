@@ -4,7 +4,6 @@ class_name GaussianSplatGizmoPlugin
 
 const DEFAULT_POINT_SIZE := 2.0
 const DEFAULT_COLOR := Color(0.2, 0.8, 1.0)
-const HIDDEN_META := "_gdgs_hide_editor_gizmo"
 
 var _material: StandardMaterial3D
 
@@ -24,14 +23,13 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 	var node := gizmo.get_node_3d()
 	if node == null:
 		return
-	if bool(node.get_meta(HIDDEN_META, false)):
-		return
 	var gaussian: GaussianResource = node.gaussian
 	if gaussian == null:
 		return
 	var positions: PackedVector3Array = gaussian.xyz
 	if positions.is_empty():
 		return
+
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = positions

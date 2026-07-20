@@ -1,8 +1,8 @@
 [remap]
 
 importer="gaussian.splat.importer"
-importer_version=6
-type="Resource"
+importer_version=5
+type="GaussianResource"
 uid="uid://cbn4bgtk8vtqv"
 path="res://.godot/imported/sovinec_castle_gaussian_lod.ply-0bdeabdc2302c979e5c7727f2e20a9b6.res"
 

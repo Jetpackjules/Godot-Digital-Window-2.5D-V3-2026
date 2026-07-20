@@ -1,8 +1,8 @@
 [remap]
 
 importer="gaussian.splat.importer"
-importer_version=6
-type="Resource"
+importer_version=5
+type="GaussianResource"
 uid="uid://c0nipgp46hq5m"
 path="res://.godot/imported/cochem_official_120k.ply-ddfbe3cb579fbbbcafa2766c2bfd6324.res"
 

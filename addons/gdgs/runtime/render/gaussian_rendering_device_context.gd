@@ -111,11 +111,6 @@ func create_pipeline(block_dimensions: Array, descriptor_sets: Array, shader: RI
 		var sets := descriptor_sets if descriptor_set_overwrites.is_empty() else descriptor_set_overwrites
 		assert(block_dimensions.size() == 3 or block_dimensions_overwrite_buffer.is_valid(), "Must specify block dimensions or use dispatch indirect.")
 		assert(sets.size() >= 1, "Must specify at least one descriptor set.")
-		if not pipeline.is_valid():
-			return
-		for descriptor_set in sets:
-			if not (descriptor_set as RID).is_valid():
-				return
 
 		var rd := context.device
 		rd.compute_list_bind_compute_pipeline(compute_list, pipeline)

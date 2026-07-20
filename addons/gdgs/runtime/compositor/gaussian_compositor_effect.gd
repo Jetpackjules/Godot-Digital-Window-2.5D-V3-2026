@@ -26,22 +26,6 @@ enum DebugView {
 @export_range(0.0, 1.0, 0.001) var depth_bias := 0.05
 @export_range(0.0, 1.0, 0.001) var depth_test_min_alpha := 0.05
 @export_range(0.0, 1.0, 0.001) var depth_capture_alpha = 0.5
-@export_group("Editor Performance")
-@export var adaptive_editor_render_scale := true
-@export_range(0.1, 1.0, 0.05) var editor_moving_render_scale := 0.25
-@export_range(0.1, 1.0, 0.05) var editor_idle_render_scale := 0.65
-@export_range(0.05, 1.0, 0.05, "suffix:s") var editor_idle_delay := 0.25
-@export_range(0.0, 64.0, 1.0, "suffix:px") var editor_max_projected_splat_radius := 16.0
-@export_group("Runtime Performance")
-@export_range(0, 2_500_000, 50_000) var runtime_max_rendered_gaussians := 0
-@export_range(0.0, 4.0, 0.05, "suffix:px") var runtime_min_projected_splat_radius := 0.0
-@export_range(0.0, 1.0, 0.001) var runtime_min_splat_opacity := 0.0
-@export_range(0.0, 128.0, 1.0, "suffix:px") var runtime_max_projected_splat_radius := 64.0
-@export var adaptive_runtime_render_scale := false
-@export_range(0.1, 1.0, 0.05) var runtime_moving_render_scale := 0.55
-@export_range(0.1, 1.0, 0.05) var runtime_idle_render_scale := 0.85
-@export_range(0.05, 1.0, 0.05, "suffix:s") var runtime_idle_delay := 0.2
-@export_group("")
 @export_enum("Compositor", "Direct Texture") var display_mode: int:
 	set(value):
 		_display_mode = clampi(value, DisplayMode.COMPOSITOR, DisplayMode.DIRECT_TEXTURE)
@@ -59,14 +43,12 @@ var fallback_depth_texture: RID
 
 var _display_mode := DisplayMode.COMPOSITOR
 var _direct_texture_resource: Texture2DRD
+var _direct_depth_texture_resource: Texture2DRD
 var _overlay_mutex := Mutex.new()
 var _overlay_sync_queued := false
 var _overlay_pending_visible := false
 var _overlay_pending_texture_rid := RID()
-var _last_camera_transform := Transform3D()
-var _last_camera_projection := Projection()
-var _last_camera_motion_msec := 0
-var _has_camera_sample := false
+var _overlay_pending_depth_texture_rid := RID()
 
 func _init() -> void:
 	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
@@ -81,11 +63,15 @@ func _notification(what: int) -> void:
 	_overlay_sync_queued = false
 	_overlay_pending_visible = false
 	_overlay_pending_texture_rid = RID()
+	_overlay_pending_depth_texture_rid = RID()
 	_overlay_mutex.unlock()
 
 	if _direct_texture_resource != null:
 		_direct_texture_resource.texture_rd_rid = RID()
 		_direct_texture_resource = null
+	if _direct_depth_texture_resource != null:
+		_direct_depth_texture_resource.texture_rd_rid = RID()
+		_direct_depth_texture_resource = null
 
 	var main_loop := Engine.get_main_loop()
 	if main_loop is SceneTree:
@@ -142,18 +128,13 @@ func _render_callback(_effect_callback_type: int, render_data: RenderData) -> vo
 		var camera_data := _get_camera_data(scene_data, view)
 		if camera_data.is_empty():
 			continue
-		var gaussian_size := _get_gaussian_render_size(size, camera_data)
 
 		var gsplat_result: Dictionary = manager.render_for_compositor(
-			gaussian_size,
+			size,
 			camera_data["transform"],
 			camera_data["projection"],
 			camera_data["world_position"],
-			_get_depth_capture_alpha(),
-			editor_max_projected_splat_radius if Engine.is_editor_hint() else runtime_max_projected_splat_radius,
-			0.0 if Engine.is_editor_hint() else runtime_min_projected_splat_radius,
-			0.0 if Engine.is_editor_hint() else runtime_min_splat_opacity,
-			0 if Engine.is_editor_hint() else runtime_max_rendered_gaussians
+			_get_depth_capture_alpha()
 		)
 		if gsplat_result.is_empty():
 			continue
@@ -164,7 +145,7 @@ func _render_callback(_effect_callback_type: int, render_data: RenderData) -> vo
 			continue
 
 		if is_direct_texture_mode:
-			_queue_direct_texture_overlay_state(true, gsplat_texture)
+			_queue_direct_texture_overlay_state(true, gsplat_texture, gsplat_depth_texture)
 			direct_texture_visible = true
 			break
 
@@ -184,15 +165,11 @@ func _render_callback(_effect_callback_type: int, render_data: RenderData) -> vo
 		var push_constants := PackedFloat32Array([
 			size.x,
 			size.y,
-			gaussian_size.x,
-			gaussian_size.y,
 			alpha_cutoff,
 			depth_bias,
 			depth_test_min_alpha,
 			float(debug_view),
 			1.0 if use_scene_depth else 0.0,
-			0.0,
-			0.0,
 			0.0
 		] + _projection_to_column_major_floats(camera_data["projection"].inverse()))
 
@@ -238,34 +215,6 @@ func _render_callback(_effect_callback_type: int, render_data: RenderData) -> vo
 		_queue_direct_texture_overlay_state(false, RID())
 	elif not is_direct_texture_mode:
 		_queue_direct_texture_overlay_state(false, RID())
-
-func _get_gaussian_render_size(viewport_size: Vector2i, camera_data: Dictionary) -> Vector2i:
-	var editor_context := Engine.is_editor_hint()
-	var adaptive_enabled := adaptive_editor_render_scale if editor_context else adaptive_runtime_render_scale
-	if not adaptive_enabled:
-		return viewport_size
-
-	var camera_transform: Transform3D = camera_data["transform"]
-	var camera_projection: Projection = camera_data["projection"]
-	var now := Time.get_ticks_msec()
-	if not _has_camera_sample:
-		_has_camera_sample = true
-		_last_camera_motion_msec = now
-	elif not camera_transform.is_equal_approx(_last_camera_transform) or camera_projection != _last_camera_projection:
-		_last_camera_motion_msec = now
-	_last_camera_transform = camera_transform
-	_last_camera_projection = camera_projection
-
-	var idle_delay := editor_idle_delay if editor_context else runtime_idle_delay
-	var moving_scale := editor_moving_render_scale if editor_context else runtime_moving_render_scale
-	var idle_scale := editor_idle_render_scale if editor_context else runtime_idle_render_scale
-	var idle_msec := int(maxf(idle_delay, 0.05) * 1000.0)
-	var scale := idle_scale if now - _last_camera_motion_msec >= idle_msec else moving_scale
-	scale = clampf(scale, 0.1, 1.0)
-	return Vector2i(
-		maxi(1, int(roundi(viewport_size.x * scale))),
-		maxi(1, int(roundi(viewport_size.y * scale)))
-	)
 
 func _get_camera_data(scene_data: RenderSceneDataRD, view: int) -> Dictionary:
 	if scene_data == null:
@@ -343,14 +292,20 @@ func _create_fallback_depth_texture() -> RID:
 		[PackedFloat32Array([1.0]).to_byte_array()]
 	)
 
-func _queue_direct_texture_overlay_state(visible: bool, texture_rid: RID) -> void:
-	var next_visible := visible and texture_rid.is_valid()
+func _queue_direct_texture_overlay_state(visible: bool, texture_rid: RID, depth_texture_rid: RID = RID()) -> void:
+	var next_visible := visible and texture_rid.is_valid() and depth_texture_rid.is_valid()
 	var next_texture_rid := texture_rid if next_visible else RID()
+	var next_depth_texture_rid := depth_texture_rid if next_visible else RID()
 
 	_overlay_mutex.lock()
-	var state_changed := _overlay_pending_visible != next_visible or _overlay_pending_texture_rid != next_texture_rid
+	var state_changed := (
+		_overlay_pending_visible != next_visible
+		or _overlay_pending_texture_rid != next_texture_rid
+		or _overlay_pending_depth_texture_rid != next_depth_texture_rid
+	)
 	_overlay_pending_visible = next_visible
 	_overlay_pending_texture_rid = next_texture_rid
+	_overlay_pending_depth_texture_rid = next_depth_texture_rid
 	var should_queue := state_changed and not _overlay_sync_queued
 	if should_queue:
 		_overlay_sync_queued = true
@@ -362,10 +317,12 @@ func _queue_direct_texture_overlay_state(visible: bool, texture_rid: RID) -> voi
 func _sync_direct_texture_overlay() -> void:
 	var pending_visible := false
 	var pending_texture_rid := RID()
+	var pending_depth_texture_rid := RID()
 
 	_overlay_mutex.lock()
 	pending_visible = _overlay_pending_visible
 	pending_texture_rid = _overlay_pending_texture_rid
+	pending_depth_texture_rid = _overlay_pending_depth_texture_rid
 	_overlay_sync_queued = false
 	_overlay_mutex.unlock()
 
@@ -374,11 +331,13 @@ func _sync_direct_texture_overlay() -> void:
 		return
 
 	var texture := _ensure_direct_texture_resource()
-	if texture == null:
+	var depth_texture := _ensure_direct_depth_texture_resource()
+	if texture == null or depth_texture == null:
 		return
 
 	texture.texture_rd_rid = pending_texture_rid if pending_visible else RID()
-	overlay.visible = pending_visible and pending_texture_rid.is_valid()
+	depth_texture.texture_rd_rid = pending_depth_texture_rid if pending_visible else RID()
+	overlay.visible = pending_visible and pending_texture_rid.is_valid() and pending_depth_texture_rid.is_valid()
 
 func _ensure_direct_texture_overlay() -> MeshInstance3D:
 	var overlay := _get_direct_texture_overlay()
@@ -418,12 +377,22 @@ func _configure_direct_texture_overlay(overlay: MeshInstance3D) -> void:
 	material.shader = DIRECT_TEXTURE_SHADER
 	material.render_priority = 127
 	material.set_shader_parameter("render_texture", _ensure_direct_texture_resource())
+	material.set_shader_parameter("gaussian_depth_texture", _ensure_direct_depth_texture_resource())
+	material.set_shader_parameter("alpha_cutoff", alpha_cutoff)
+	material.set_shader_parameter("depth_bias", depth_bias)
+	material.set_shader_parameter("depth_test_min_alpha", depth_test_min_alpha)
 	overlay.set_surface_override_material(0, material)
 
 func _ensure_direct_texture_resource() -> Texture2DRD:
 	if _direct_texture_resource == null:
 		_direct_texture_resource = Texture2DRD.new()
 	return _direct_texture_resource
+
+
+func _ensure_direct_depth_texture_resource() -> Texture2DRD:
+	if _direct_depth_texture_resource == null:
+		_direct_depth_texture_resource = Texture2DRD.new()
+	return _direct_depth_texture_resource
 
 func _get_direct_texture_overlay() -> MeshInstance3D:
 	var tree := _get_scene_tree()
@@ -435,6 +404,9 @@ func _free_direct_texture_overlay() -> void:
 	if _direct_texture_resource != null:
 		_direct_texture_resource.texture_rd_rid = RID()
 		_direct_texture_resource = null
+	if _direct_depth_texture_resource != null:
+		_direct_depth_texture_resource.texture_rd_rid = RID()
+		_direct_depth_texture_resource = null
 
 	var overlay := _get_direct_texture_overlay()
 	if overlay != null:

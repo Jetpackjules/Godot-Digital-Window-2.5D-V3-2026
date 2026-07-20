@@ -1,0 +1,134 @@
+[gd_scene format=3 uid="uid://clp3brct54xhy"]
+
+[ext_resource type="Script" uid="uid://dgmtg0fidgyr4" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/window_shell_bakeoff.gd" id="1_script"]
+[ext_resource type="PackedScene" uid="uid://ciaoq7w1ycyvv" path="res://Views/Medieval Storm Window/Assets/medieval_storm_window_shell.gltf" id="2_baseline"]
+[ext_resource type="PackedScene" uid="uid://2gspetnq01oi" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/artec_gothic_window_shell.glb" id="3_artec"]
+[ext_resource type="PackedScene" uid="uid://b0e0iok3ngy4" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/ai_gothic_window_relief.glb" id="4_ai"]
+[ext_resource type="PackedScene" uid="uid://vtprebo2k0mx" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/ai_gothic_window_dark_relief.glb" id="5_ai_dark"]
+[ext_resource type="PackedScene" uid="uid://bxwrym62gqlos" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/ai_gothic_window_framic_dark_relief.glb" id="6_ai_framic"]
+
+[sub_resource type="StandardMaterial3D" id="Material_backdrop"]
+shading_mode = 0
+albedo_color = Color(0.001, 0.001, 0.0015, 1)
+
+[sub_resource type="QuadMesh" id="Quad_backdrop"]
+material = SubResource("Material_backdrop")
+size = Vector2(8, 5)
+
+[sub_resource type="StandardMaterial3D" id="Material_floor"]
+albedo_color = Color(0.055, 0.047, 0.038, 1)
+roughness = 0.96
+
+[sub_resource type="PlaneMesh" id="Plane_floor"]
+material = SubResource("Material_floor")
+size = Vector2(9, 6)
+
+[sub_resource type="Environment" id="Environment_bakeoff"]
+background_mode = 1
+background_color = Color(0.003, 0.004, 0.006, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.17, 0.19, 0.23, 1)
+ambient_light_energy = 0.62
+reflected_light_source = 2
+tonemap_mode = 2
+
+[sub_resource type="StyleBoxFlat" id="Style_panel"]
+content_margin_left = 14.0
+content_margin_top = 10.0
+content_margin_right = 14.0
+content_margin_bottom = 10.0
+bg_color = Color(0.015, 0.018, 0.025, 0.84)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.36, 0.4, 0.48, 0.45)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[node name="Window Shell Bakeoff" type="Node3D" unique_id=735641158]
+script = ExtResource("1_script")
+
+[node name="Variants" type="Node3D" parent="." unique_id=1611248686]
+
+[node name="CurrentBaseline" parent="Variants" unique_id=1117649891 instance=ExtResource("2_baseline")]
+visible = false
+
+[node name="ArtecScan" parent="Variants" unique_id=1160453333 instance=ExtResource("3_artec")]
+visible = false
+
+[node name="AIRelief" parent="Variants" unique_id=2056633047 instance=ExtResource("4_ai")]
+
+[node name="DarkOpeningsRelief" parent="Variants" unique_id=225348677 instance=ExtResource("5_ai_dark")]
+visible = false
+
+[node name="FramicForegroundRelief" parent="Variants" unique_id=721213268 instance=ExtResource("6_ai_framic")]
+visible = false
+
+[node name="BlackBackdrop" type="MeshInstance3D" parent="." unique_id=471828138]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, -1.05)
+mesh = SubResource("Quad_backdrop")
+
+[node name="StoneFloor" type="MeshInstance3D" parent="." unique_id=66362421]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.01, -0.4)
+mesh = SubResource("Plane_floor")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=670894176]
+environment = SubResource("Environment_bakeoff")
+
+[node name="CoolKey" type="DirectionalLight3D" parent="." unique_id=882114817]
+transform = Transform3D(0.88294756, 0.24179573, -0.4024157, 0, 0.8571673, 0.5150381, 0.46947157, -0.4547516, 0.7568338, 0, 0, 0)
+light_color = Color(0.78, 0.84, 1, 1)
+light_energy = 1.35
+shadow_enabled = true
+directional_shadow_max_distance = 18.0
+
+[node name="WarmGrazingFill" type="OmniLight3D" parent="." unique_id=754243564]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.7, 2.5, 3.1)
+light_color = Color(1, 0.76, 0.56, 1)
+light_energy = 3.2
+shadow_enabled = true
+omni_range = 8.0
+
+[node name="ColdRevealFill" type="OmniLight3D" parent="." unique_id=480899498]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.6, 1.9, 1.4)
+light_color = Color(0.55, 0.67, 1, 1)
+light_energy = 0.7
+omni_range = 6.0
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=184123572]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, 5.25)
+current = true
+fov = 39.0
+near = 0.03
+far = 50.0
+
+[node name="Interface" type="CanvasLayer" parent="." unique_id=114142159]
+
+[node name="Margin" type="MarginContainer" parent="Interface" unique_id=295512373]
+offset_left = 18.0
+offset_top = 18.0
+offset_right = 590.0
+offset_bottom = 94.0
+
+[node name="Panel" type="PanelContainer" parent="Interface/Margin" unique_id=900444782]
+layout_mode = 2
+theme_override_styles/panel = SubResource("Style_panel")
+
+[node name="Rows" type="VBoxContainer" parent="Interface/Margin/Panel" unique_id=1034689702]
+layout_mode = 2
+theme_override_constants/separation = 3
+
+[node name="Variant" type="Label" parent="Interface/Margin/Panel/Rows" unique_id=1220438872]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 18
+text = "3 - Original AI PBR relief (10 cm front + 72 cm reveals)"
+
+[node name="Instructions" type="Label" parent="Interface/Margin/Panel/Rows" unique_id=971180567]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.66, 0.7, 0.78, 1)
+theme_override_font_sizes/font_size = 13
+text = "1 / 2 / 3 / 4 / 5 or arrow keys to compare - black exterior - no glass"

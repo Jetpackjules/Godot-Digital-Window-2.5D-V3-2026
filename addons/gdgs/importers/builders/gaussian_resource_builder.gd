@@ -105,8 +105,8 @@ static func build(canonical: Dictionary) -> Dictionary:
 
 	var resource = GaussianResourceScript.new()
 	resource.point_count = count
+	resource.point_data_float = points
 	resource.point_data_byte = points.to_byte_array()
-	resource.point_data_float = PackedFloat32Array()
 	resource.xyz = xyz
 	resource.aabb = AABB(aabb_min_v, aabb_max_v - aabb_min_v) if count > 0 else AABB()
 

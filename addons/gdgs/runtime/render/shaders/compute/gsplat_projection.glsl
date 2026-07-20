@@ -82,11 +82,11 @@ layout (std430, set = 0, binding = 7) restrict readonly buffer InstanceTransform
 };
 
 layout (std140, set = 0, binding = 8) restrict uniform Uniforms {
-	vec4 camera_pos_time;
-	ivec4 dimensions_counts; // xy = texture size, z = point count, w = sort capacity
-	// x = max radius, y = min radius, z = min opacity, w = retained sample fraction.
-	vec4 splat_limits;
-	vec4 reserved;
+	vec3 camera_pos;
+	float time;
+	ivec2 dims; // Texture size
+	int point_count;
+	int _uniform_pad0;
 };
 
 layout(push_constant) restrict readonly uniform PushConstants {
@@ -159,39 +159,11 @@ uvec4 get_rect(in vec2 image_pos, in float radius, in uvec2 grid_size) {
 		clamp(ceil((image_pos + radius) / TILE_SIZE), vec2(0), grid_size));
 }
 
-bool reserve_sort_elements(in uint count, out uint offset) {
-	const uint capacity = uint(dimensions_counts.w);
-	uint current = sort_buffer_size;
-	while (current < capacity && count <= capacity - current) {
-		const uint previous = atomicCompSwap(sort_buffer_size, current, current + count);
-		if (previous == current) {
-			offset = current;
-			return true;
-		}
-		current = previous;
-	}
-	return false;
-}
-
-uint hash_u32(uint value) {
-	value ^= value >> 16;
-	value *= 0x7feb352du;
-	value ^= value >> 15;
-	value *= 0x846ca68bu;
-	value ^= value >> 16;
-	return value;
-}
-
 void main() {
 	const int id = int(gl_GlobalInvocationID.x);
-	const ivec2 dims = dimensions_counts.xy;
 	const uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
 
-	if (id >= dimensions_counts.z) return;
-	if (splat_limits.w < 1.0) {
-		const float sample_value = float(hash_u32(uint(id))) / 4294967295.0;
-		if (sample_value >= splat_limits.w) return;
-	}
+	if (id >= uint(point_count)) return;
 	
 	barrier();
 	uvec2 instance_data = splat_instance_data[id];
@@ -218,12 +190,11 @@ void main() {
 	}
 	
 	// --- GAUSSIAN PROJECTION ---
-	float splat_time = camera_pos_time.w - splat.time;
+	float splat_time = time - splat.time;
 	float time_factor = ease_out_cubic(clamp(splat_time, 0, 1));
 	float time_factor_late = ease_out_cubic(clamp(splat_time - 0.35, 0, 1));
 
 	float splat_opacity = splat.opacity * time_factor_late*time_factor_late;
-	if (splat_opacity < splat_limits.z) return;
 	float splat_scale = mix(2.0, 1.0, time_factor_late);
 
 	const vec3 covariance = project_covariance(world_covariance, splat_scale, view_pos.xyz, dims);
@@ -241,18 +212,14 @@ void main() {
 	// fewer screen tiles. This has the effect of making the image *slightly* brighter while
 	// minimizing perceptible tile artifacts.
 	float radius = pow(splat_opacity, 0.2) * 2.5*sqrt(max(eigenvalues.x, eigenvalues.y));
-	if (radius < splat_limits.y) return;
-	if (splat_limits.x > 0.0) {
-		radius = min(radius, splat_limits.x);
-	}
 	uvec4 rect_bounds = get_rect(image_pos, radius, grid_size);
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
 	if (num_tiles_touched == 0 /*|| num_tiles_touched > grid_size.x*grid_size.y/3*/) return;
 
-	uint sort_buffer_offset;
-	if (!reserve_sort_elements(num_tiles_touched, sort_buffer_offset)) return;
-	vec3 view_dir = normalize(world_pos.xyz - camera_pos_time.xyz);
+	const uint buffer_size = atomicAdd(sort_buffer_size, num_tiles_touched);
+	uint sort_buffer_offset = buffer_size;
+	vec3 view_dir = normalize(world_pos.xyz - camera_pos);
 
 	RasterizeData data;
 	data.image_pos = image_pos;

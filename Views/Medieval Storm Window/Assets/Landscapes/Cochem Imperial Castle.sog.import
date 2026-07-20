@@ -1,0 +1,15 @@
+[remap]
+
+importer="gaussian.splat.importer"
+importer_version=5
+type="Resource"
+uid="uid://bwd3ox85qecky"
+path="res://.godot/imported/Cochem Imperial Castle.sog-bc684419b693540e352de729f174525c.res"
+
+[deps]
+
+source_file="res://Views/Medieval Storm Window/Assets/Landscapes/Cochem Imperial Castle.sog"
+dest_files=["res://.godot/imported/Cochem Imperial Castle.sog-bc684419b693540e352de729f174525c.res"]
+
+[params]
+

@@ -32,12 +32,6 @@ class RenderState:
 	var camera_push_constants := PackedByteArray()
 	var camera_world_position := Vector3.ZERO
 	var depth_capture_alpha := 0.5
-	var max_projected_splat_radius := 0.0
-	var min_projected_splat_radius := 0.0
-	var min_splat_opacity := 0.0
-	var retained_sample_fraction := 1.0
-	var max_sort_elements := 0
-	var sort_point_capacity := 0
 	var needs_gpu_rebuild := true
 	var needs_splat_upload := false
 	var needs_instance_upload := false
@@ -83,7 +77,7 @@ func mark_all_render_states_needs_instance_upload(value: bool) -> void:
 	for state in _render_states.values():
 		state.needs_instance_upload = value
 
-func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_count: int, sort_point_capacity: int) -> void:
+func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_count: int) -> void:
 	cleanup_state(state)
 	if point_count <= 0:
 		return
@@ -97,10 +91,8 @@ func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_
 	state.shaders["boundaries"] = state.context.load_shader(SHADER_PATH_BOUNDARIES)
 	state.shaders["render"] = state.context.load_shader(SHADER_PATH_RENDER)
 
-	state.sort_point_capacity = clampi(sort_point_capacity, 1, point_count)
-	var num_sort_elements_max: int = state.sort_point_capacity * MAX_SORT_ELEMENTS_PER_SPLAT
-	state.max_sort_elements = num_sort_elements_max
-	var num_partitions: int = (num_sort_elements_max + PARTITION_SIZE - 1) / PARTITION_SIZE
+	var num_sort_elements_max := point_count * MAX_SORT_ELEMENTS_PER_SPLAT
+	var num_partitions := (num_sort_elements_max + PARTITION_SIZE - 1) / PARTITION_SIZE
 	var block_dims := PackedInt32Array()
 	block_dims.resize(6)
 	block_dims.fill(1)
@@ -117,9 +109,7 @@ func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_
 	state.descriptors["sort_values"] = state.context.create_storage_buffer(num_sort_elements_max * 4 * 2)
 	state.descriptors["splat_instance_ids"] = state.context.create_storage_buffer(point_count * 4 * 2)
 	state.descriptors["instance_transforms"] = state.context.create_storage_buffer(instance_count * 16 * BYTES_PER_FLOAT)
-	# Godot reports the compiled std140 projection block as 64 bytes on Metal.
-	# Keep the CPU allocation aligned to that reflected shader size.
-	state.descriptors["uniforms"] = state.context.create_uniform_buffer(16 * 4)
+	state.descriptors["uniforms"] = state.context.create_uniform_buffer(8 * 4)
 	state.descriptors["tile_bounds"] = state.context.create_storage_buffer(state.tile_dims.x * state.tile_dims.y * 2 * 4)
 	state.descriptors["tile_splat_pos"] = state.context.create_storage_buffer(4 * 4)
 	state.descriptors["render_texture"] = state.context.create_texture(state.texture_size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)

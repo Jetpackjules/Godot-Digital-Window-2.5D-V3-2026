@@ -46,11 +46,7 @@ func render_for_compositor(
 	camera_transform: Transform3D,
 	camera_projection: Projection,
 	camera_world_position: Vector3,
-	depth_capture_alpha: float = 0.5,
-	max_projected_splat_radius: float = 0.0,
-	min_projected_splat_radius: float = 0.0,
-	min_splat_opacity: float = 0.0,
-	max_rendered_gaussians: int = 0
+	depth_capture_alpha: float = 0.5
 ) -> Dictionary:
 	return _renderer.render_for_compositor(
 		_gpu_state_cache,
@@ -59,11 +55,7 @@ func render_for_compositor(
 		camera_transform,
 		camera_projection,
 		camera_world_position,
-		depth_capture_alpha,
-		max_projected_splat_radius,
-		min_projected_splat_radius,
-		min_splat_opacity,
-		max_rendered_gaussians
+		depth_capture_alpha
 	)
 
 func _cleanup_on_render_thread() -> void:

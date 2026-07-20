@@ -4,6 +4,7 @@ class_name GaussianRenderer
 
 const RenderingDeviceContext := preload("res://addons/gdgs/runtime/render/gaussian_rendering_device_context.gd")
 const RADIX := 256
+const MAX_SORT_ELEMENTS_PER_SPLAT := 10
 
 func render_for_compositor(
 	state_cache: GaussianGpuStateCache,
@@ -12,11 +13,7 @@ func render_for_compositor(
 	camera_transform: Transform3D,
 	camera_projection: Projection,
 	camera_world_position: Vector3,
-	depth_capture_alpha: float = 0.5,
-	max_projected_splat_radius: float = 0.0,
-	min_projected_splat_radius: float = 0.0,
-	min_splat_opacity: float = 0.0,
-	max_rendered_gaussians: int = 0
+	depth_capture_alpha: float = 0.5
 ) -> Dictionary:
 	state_cache.flush_pending_cleanup()
 
@@ -31,26 +28,11 @@ func render_for_compositor(
 	_update_camera_from_transform(state, camera_transform, camera_projection)
 	state.camera_world_position = camera_world_position
 	state.depth_capture_alpha = clampf(depth_capture_alpha, 0.0, 1.0)
-	state.max_projected_splat_radius = maxf(max_projected_splat_radius, 0.0)
-	state.min_projected_splat_radius = maxf(min_projected_splat_radius, 0.0)
-	state.min_splat_opacity = clampf(min_splat_opacity, 0.0, 1.0)
-	var requested_sort_capacity := point_count if max_rendered_gaussians <= 0 else mini(point_count, max_rendered_gaussians)
-	requested_sort_capacity = maxi(requested_sort_capacity, 1)
-	state.retained_sample_fraction = minf(1.0, float(requested_sort_capacity) / float(point_count))
-	if state.sort_point_capacity != requested_sort_capacity:
-		state.sort_point_capacity = requested_sort_capacity
-		state.needs_gpu_rebuild = true
 
 	var unique_data_size := scene_registry.get_point_data_byte().size()
 
 	if state.context == null or state.needs_gpu_rebuild:
-		state_cache.rebuild_gpu_state(
-			state,
-			point_count,
-			unique_data_size,
-			scene_registry.get_instance_count(),
-			requested_sort_capacity
-		)
+		state_cache.rebuild_gpu_state(state, point_count, unique_data_size, scene_registry.get_instance_count())
 	if state.context == null:
 		return {}
 
@@ -82,17 +64,9 @@ func _rasterize_state(state, point_count: int) -> void:
 		state.texture_size.x,
 		state.texture_size.y,
 		point_count,
-		state.max_sort_elements,
-		state.max_projected_splat_radius,
-		state.min_projected_splat_radius,
-		state.min_splat_opacity,
-		state.retained_sample_fraction,
-		0.0,
-		0.0,
-		0.0,
-		0.0
+		0
 	])
-	state.context.device.buffer_update(state.descriptors["uniforms"].rid, 0, 16 * 4, uniforms)
+	state.context.device.buffer_update(state.descriptors["uniforms"].rid, 0, 8 * 4, uniforms)
 	state.context.device.buffer_clear(state.descriptors["histogram"].rid, 0, 4 + 4 * RADIX * 4)
 	state.context.device.buffer_clear(state.descriptors["tile_bounds"].rid, 0, state.tile_dims.x * state.tile_dims.y * 2 * 4)
 
@@ -104,8 +78,8 @@ func _rasterize_state(state, point_count: int) -> void:
 	for radix_shift_pass in range(4):
 		var sort_push_constant := RenderingDeviceContext.create_push_constant([
 			radix_shift_pass,
-			state.max_sort_elements * (radix_shift_pass % 2),
-			state.max_sort_elements * (1 - (radix_shift_pass % 2)),
+			point_count * MAX_SORT_ELEMENTS_PER_SPLAT * (radix_shift_pass % 2),
+			point_count * MAX_SORT_ELEMENTS_PER_SPLAT * (1 - (radix_shift_pass % 2)),
 			0
 		])
 		state.pipelines["radix_sort_upsweep"].call(state.context, compute_list, sort_push_constant, [], state.descriptors["grid_dimensions"].rid, 0)
