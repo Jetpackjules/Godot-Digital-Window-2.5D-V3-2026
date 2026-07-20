@@ -48,5 +48,6 @@ native/realsense_shared_memory/bin/*.lib
 native/realsense_shared_memory/bin/*.ilk
 native/realsense_shared_memory/bin/*.pdb
 native/realsense_shared_memory/bin/~*.dll
+native/realsense_shared_memory/bin/~*.TMP
 native/realsense_shared_memory/*.pdb
 native/realsense_shared_memory/godot-cpp/
