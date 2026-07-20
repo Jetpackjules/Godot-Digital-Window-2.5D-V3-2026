@@ -27,7 +27,10 @@ uniform float wall_recess_depth = 0.018;
 // *back* side instead of pulling the whole ledge rearward.
 uniform float ledge_y_start = 0.50;
 uniform float ledge_column_edge = 0.78;
-uniform float ledge_back_trim = 0.09;
+// This is the rear depth of the columns in the generated local mesh.  The
+// ledge rear faces are clamped here, leaving a thin cap instead of the former
+// full-depth shelf.
+uniform float ledge_back_plane = -0.025;
 uniform float stone_scale = 7.5;
 uniform float brick_scale = 1.5;
 // The centre stays weathered, cool stone; only the existing outermost faces
@@ -43,8 +46,9 @@ void vertex() {
 	VERTEX.z -= outer_wall * wall_recess_depth;
 	float horizontal_ledge = smoothstep(ledge_y_start, ledge_y_start + 0.035, abs(VERTEX.y));
 	float inside_window = 1.0 - smoothstep(ledge_column_edge - 0.03, ledge_column_edge, abs(VERTEX.x));
-	float rear_surface = 1.0 - smoothstep(-0.08, 0.025, VERTEX.z);
-	VERTEX.z += horizontal_ledge * inside_window * rear_surface * ledge_back_trim;
+	float rear_surface = 1.0 - smoothstep(-0.04, 0.025, VERTEX.z);
+	float trimmed_rear_z = max(VERTEX.z, ledge_back_plane);
+	VERTEX.z = mix(VERTEX.z, trimmed_rear_z, horizontal_ledge * inside_window * rear_surface);
 	object_position = VERTEX;
 	object_normal = NORMAL;
 }
