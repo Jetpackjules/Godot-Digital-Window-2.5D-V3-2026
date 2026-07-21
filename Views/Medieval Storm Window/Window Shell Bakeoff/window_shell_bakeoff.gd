@@ -21,6 +21,7 @@ uniform sampler2D roughness_texture : repeat_enable, filter_linear_mipmap;
 uniform sampler2D height_texture : repeat_enable, filter_linear_mipmap;
 uniform float normal_strength = 1.0;
 uniform float height_displacement = 0.0;
+uniform float roughness_multiplier = 1.0;
 
 void vertex() {
 	float height = texture(height_texture, UV).r - 0.5;
@@ -29,7 +30,7 @@ void vertex() {
 
 void fragment() {
 	ALBEDO = texture(albedo_texture, UV).rgb;
-	ROUGHNESS = texture(roughness_texture, UV).r;
+	ROUGHNESS = clamp(texture(roughness_texture, UV).r * roughness_multiplier, 0.0, 1.0);
 	NORMAL_MAP = texture(normal_texture, UV).rgb;
 	NORMAL_MAP_DEPTH = normal_strength;
 }
@@ -46,9 +47,11 @@ const VARIANT_NAMES := [
 @export_enum("Current baseline", "Free Artec scan", "Original AI relief", "Dark interior / oversized arches", "Four-arch dark foreground") var starting_variant := 2
 
 var _dark_openings_normal_strength := 1.0
-var _dark_openings_height_displacement := 0.0
+var _dark_openings_height_displacement := 0.03
+var _dark_openings_roughness_multiplier := 1.0
 var _framic_foreground_normal_strength := 1.0
-var _framic_foreground_height_displacement := 0.0
+var _framic_foreground_height_displacement := 0.03
+var _framic_foreground_roughness_multiplier := 1.0
 
 @export_category("Dark Openings Relief - PBR Tuning")
 @export_range(0.0, 100.0, 0.01, "or_greater") var dark_openings_normal_strength: float:
@@ -63,6 +66,12 @@ var _framic_foreground_height_displacement := 0.0
 	set(value):
 		_dark_openings_height_displacement = value
 		_queue_relief_refresh()
+@export_range(0.0, 100.0, 0.01, "or_greater") var dark_openings_roughness_multiplier: float:
+	get:
+		return _dark_openings_roughness_multiplier
+	set(value):
+		_dark_openings_roughness_multiplier = value
+		_queue_relief_refresh()
 
 @export_category("Framic Foreground Relief - PBR Tuning")
 @export_range(0.0, 100.0, 0.01, "or_greater") var framic_foreground_normal_strength: float:
@@ -76,6 +85,12 @@ var _framic_foreground_height_displacement := 0.0
 		return _framic_foreground_height_displacement
 	set(value):
 		_framic_foreground_height_displacement = value
+		_queue_relief_refresh()
+@export_range(0.0, 100.0, 0.01, "or_greater") var framic_foreground_roughness_multiplier: float:
+	get:
+		return _framic_foreground_roughness_multiplier
+	set(value):
+		_framic_foreground_roughness_multiplier = value
 		_queue_relief_refresh()
 
 @onready var _variants: Array[Node3D] = [
@@ -152,8 +167,10 @@ func _refresh_relief_materials() -> void:
 		_framic_foreground_material = _make_relief_material(FRAMIC_ALBEDO, FRAMIC_NORMAL, FRAMIC_ROUGHNESS, FRAMIC_HEIGHT)
 	_dark_openings_material.set_shader_parameter("normal_strength", dark_openings_normal_strength)
 	_dark_openings_material.set_shader_parameter("height_displacement", dark_openings_height_displacement)
+	_dark_openings_material.set_shader_parameter("roughness_multiplier", dark_openings_roughness_multiplier)
 	_framic_foreground_material.set_shader_parameter("normal_strength", framic_foreground_normal_strength)
 	_framic_foreground_material.set_shader_parameter("height_displacement", framic_foreground_height_displacement)
+	_framic_foreground_material.set_shader_parameter("roughness_multiplier", framic_foreground_roughness_multiplier)
 	_apply_material_recursive(dark_node, _dark_openings_material)
 	_apply_material_recursive(framic_node, _framic_foreground_material)
 
