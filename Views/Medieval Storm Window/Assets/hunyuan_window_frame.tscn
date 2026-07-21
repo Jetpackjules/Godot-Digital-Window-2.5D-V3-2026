@@ -1,0 +1,16 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://dx6oolblk52do" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/HunyuanTests/framic_bright_hunyuan_shape_only.glb" id="1_hunyuan"]
+[ext_resource type="Script" uid="uid://hry5dx7buhbs" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/hunyuan_framic_mesh_test.gd" id="2_material"]
+
+[node name="HunyuanWindowFrame" type="Node3D"]
+editor_description = "Reusable Hunyuan gothic window foreground. Material controls are on this node; it intentionally has no test camera, floor, or lights."
+script = ExtResource("2_material")
+normal_boost = 50.57
+micro_displacement = 0.002
+enable_side_masonry = false
+enable_cinematic_dark_framing = true
+enable_contact_shadows = false
+
+[node name="HunyuanShapeOnly" parent="." instance=ExtResource("1_hunyuan")]
+transform = Transform3D(2.7, 0, 0, 0, 2.7, 0, 0, 0, 2.7, 0, 0, 0)

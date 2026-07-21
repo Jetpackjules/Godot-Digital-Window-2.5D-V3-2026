@@ -207,24 +207,38 @@ func _queue_material_refresh() -> void:
 
 
 func _apply_lighting_profile() -> void:
-	var environment: Environment = $WorldEnvironment.environment
+	var lighting_root: Node = self
+	var is_standalone_test := get_node_or_null("WorldEnvironment") != null
+	if not is_standalone_test and get_parent() != null:
+		lighting_root = get_parent()
+	var environment_node := lighting_root.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	var environment: Environment = environment_node.environment if environment_node != null else null
 	if environment != null:
 		environment.ssao_enabled = enable_contact_shadows
 		environment.ssao_radius = 1.25
 		environment.ssao_intensity = 2.1
 		environment.ssao_power = 1.45
+	var key := lighting_root.get_node_or_null("Key") as Light3D
+	var rim := lighting_root.get_node_or_null("Rim") as Light3D
+	var warm_fill := lighting_root.get_node_or_null("WarmFill") as Light3D
+	if not is_standalone_test:
+		key = lighting_root.get_node_or_null("ColdStoneKey") as Light3D
+		rim = lighting_root.get_node_or_null("StormRearLight") as Light3D
+		warm_fill = lighting_root.get_node_or_null("WarmStoneFill") as Light3D
+	if key == null or rim == null or warm_fill == null:
+		return
 	if enable_cinematic_dark_framing:
-		$Key.light_energy = 0.92
-		$Rim.light_energy = 0.28
-		$WarmFill.light_energy = 0.62
+		key.light_energy = 0.92 if is_standalone_test else 0.16
+		rim.light_energy = 0.28 if is_standalone_test else 0.10
+		warm_fill.light_energy = 0.62 if is_standalone_test else 0.07
 		if environment != null:
-			environment.ambient_light_energy = 0.16
+			environment.ambient_light_energy = 0.16 if is_standalone_test else 0.10
 	else:
-		$Key.light_energy = 1.35
-		$Rim.light_energy = 0.8
-		$WarmFill.light_energy = 2.25
+		key.light_energy = 1.35 if is_standalone_test else 0.24
+		rim.light_energy = 0.8 if is_standalone_test else 0.22
+		warm_fill.light_energy = 2.25 if is_standalone_test else 0.14
 		if environment != null:
-			environment.ambient_light_energy = 0.52
+			environment.ambient_light_energy = 0.52 if is_standalone_test else 0.20
 
 
 func _apply_proof_material(node: Node) -> void:

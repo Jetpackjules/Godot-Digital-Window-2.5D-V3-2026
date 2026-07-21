@@ -1,15 +1,18 @@
 [gd_scene format=3 uid="uid://yglfhhaf66aa"]
 
 [ext_resource type="PackedScene" uid="uid://dx6oolblk52do" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/HunyuanTests/framic_bright_hunyuan_shape_only.glb" id="1_hunyuan"]
-[ext_resource type="Script" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/hunyuan_framic_mesh_test.gd" id="2_script"]
+[ext_resource type="Script" uid="uid://hry5dx7buhbs" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/hunyuan_framic_mesh_test.gd" id="2_script"]
 
 [sub_resource type="Environment" id="Environment_test"]
 background_mode = 1
 background_color = Color(0.012, 0.016, 0.024, 1)
 ambient_light_source = 3
 ambient_light_color = Color(0.16, 0.2, 0.29, 1)
-ambient_light_energy = 0.52
+ambient_light_energy = 0.16
 tonemap_mode = 2
+ssao_radius = 1.25
+ssao_intensity = 2.1
+ssao_power = 1.45
 
 [sub_resource type="StandardMaterial3D" id="Material_floor"]
 albedo_color = Color(0.025, 0.032, 0.045, 1)
@@ -21,6 +24,11 @@ size = Vector2(9, 7)
 
 [node name="Hunyuan Framic Mesh Test" type="Node3D" unique_id=1573037288]
 script = ExtResource("2_script")
+normal_boost = 50.57
+micro_displacement = 0.002
+enable_side_masonry = false
+enable_cinematic_dark_framing = true
+enable_contact_shadows = false
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=445704614]
 environment = SubResource("Environment_test")
@@ -35,20 +43,20 @@ mesh = SubResource("Plane_floor")
 [node name="Key" type="DirectionalLight3D" parent="." unique_id=95362498]
 transform = Transform3D(0.8480481, 0.3545852, -0.39380676, 0, 0.7431448, 0.6691306, 0.52991927, -0.56745493, 0.63022256, 0, 0, 0)
 light_color = Color(0.67, 0.78, 1, 1)
-light_energy = 1.35
+light_energy = 0.92
 shadow_enabled = true
 directional_shadow_max_distance = 30.0
 
 [node name="Rim" type="OmniLight3D" parent="." unique_id=1321774101]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1.1, 1.5)
 light_color = Color(0.21, 0.32, 0.62, 1)
-light_energy = 0.8
+light_energy = 0.28
 omni_range = 8.0
 
 [node name="WarmFill" type="OmniLight3D" parent="." unique_id=1469911314]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.6, 1, 2.4)
 light_color = Color(1, 0.56, 0.28, 1)
-light_energy = 2.25
+light_energy = 0.62
 omni_range = 7.0
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1263650089]

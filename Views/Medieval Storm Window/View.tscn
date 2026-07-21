@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://uvogfbl5xt0i" path="res://addons/gdgs/runtime/compositor/gaussian_compositor_effect.gd" id="4_gaussian_compositor"]
 [ext_resource type="Script" uid="uid://c6n0nn5lt187j" path="res://addons/gdgs/runtime/nodes/gaussian_splat_node.gd" id="5_gaussian_node"]
 [ext_resource type="Resource" uid="uid://b0px0lda2pvl5" path="res://Views/Medieval Storm Window/Assets/Landscapes/Sumela Monastery Cliffside.sog" id="6_sumela"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/hunyuan_window_frame.tscn" id="7_hunyuan_frame"]
 
 [sub_resource type="Environment" id="Environment_window"]
 background_mode = 1
@@ -52,6 +53,11 @@ preview_color = Color(0.18, 0.68, 1, 0.8)
 
 [node name="StoneShell" parent="." unique_id=614998998 instance=ExtResource("3_shell")]
 transform = Transform3D(0.09171875, 0, 0, 0, 0.09171875, 0, 0, 0, 0.09171875, 0, -0.165, 0)
+visible = false
+
+[node name="HunyuanWindowFrame" parent="." unique_id=1817184118 instance=ExtResource("7_hunyuan_frame")]
+editor_description = "Active foreground frame. This replaces the old StoneShell; adjust its PBR toggles by selecting this node."
+transform = Transform3D(0.111, 0, 0, 0, 0.111, 0, 0, 0, 0.111, 0, 0.006, -0.05)
 
 [node name="GaussianLandscape" type="Node3D" parent="." unique_id=1028096288]
 editor_description = "Minimal upstream GDGS placement for the full Sumela Monastery SOG. Move, rotate, or scale this node to frame the landscape behind the window."
