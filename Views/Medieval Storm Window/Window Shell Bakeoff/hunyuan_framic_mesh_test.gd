@@ -6,6 +6,16 @@ const STONE_NORMAL := preload("res://Views/Medieval Storm Window/Assets/medieval
 const STONE_ROUGHNESS := preload("res://Views/Medieval Storm Window/Assets/medieval_blocks_03_rough_2k.jpg")
 
 var proof_material: ShaderMaterial
+var _normal_boost := 0.8
+var _material_refresh_queued := false
+
+@export_category("Triplanar Stone PBR - Live Controls")
+@export_range(0.0, 100.0, 0.01, "or_greater") var normal_boost: float:
+	get:
+		return _normal_boost
+	set(value):
+		_normal_boost = value
+		_queue_material_refresh()
 
 const PBR_TRIPLANAR_SHADER := """
 shader_type spatial;
@@ -33,6 +43,7 @@ uniform float ledge_column_edge = 0.78;
 uniform float ledge_back_plane = -0.025;
 uniform float stone_scale = 7.5;
 uniform float brick_scale = 1.5;
+uniform float normal_boost = 0.8;
 // The centre stays weathered, cool stone; only the existing outermost faces
 // receive the warmer, larger masonry treatment.  No extra box geometry is
 // created for either treatment.
@@ -88,7 +99,7 @@ void fragment() {
 	ALBEDO = color * mix(stone_tint, brick_tint, side);
 	ROUGHNESS = clamp(tri_roughness(object_position, local_n, scale) * 0.9 + 0.08, 0.0, 1.0);
 	vec3 detail = tri_normal_detail(object_position, local_n, scale);
-	NORMAL = normalize(NORMAL + detail * 0.13);
+	NORMAL = normalize(NORMAL + detail * normal_boost);
 }
 """
 
@@ -102,6 +113,7 @@ func _ready() -> void:
 
 
 func _ensure_proof_material() -> void:
+	_material_refresh_queued = false
 	if proof_material == null:
 		var shader := Shader.new()
 		shader.code = PBR_TRIPLANAR_SHADER
@@ -110,7 +122,15 @@ func _ensure_proof_material() -> void:
 		proof_material.set_shader_parameter("stone_albedo", STONE_ALBEDO)
 		proof_material.set_shader_parameter("stone_normal", STONE_NORMAL)
 		proof_material.set_shader_parameter("stone_roughness", STONE_ROUGHNESS)
+	proof_material.set_shader_parameter("normal_boost", normal_boost)
 	_apply_proof_material($HunyuanShapeOnly)
+
+
+func _queue_material_refresh() -> void:
+	if not is_inside_tree() or _material_refresh_queued:
+		return
+	_material_refresh_queued = true
+	call_deferred("_ensure_proof_material")
 
 
 func _apply_proof_material(node: Node) -> void:
