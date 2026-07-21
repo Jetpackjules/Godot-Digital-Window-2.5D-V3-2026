@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://b0e0iok3ngy4" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/ai_gothic_window_relief.glb" id="4_ai"]
 [ext_resource type="PackedScene" uid="uid://vtprebo2k0mx" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/ai_gothic_window_dark_relief.glb" id="5_ai_dark"]
 [ext_resource type="PackedScene" uid="uid://bxwrym62gqlos" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/Assets/ai_gothic_window_framic_dark_relief.glb" id="6_ai_framic"]
+[ext_resource type="Script" path="res://Views/Medieval Storm Window/Window Shell Bakeoff/relief_pbr_tuning.gd" id="7_relief_tuning"]
 
 [sub_resource type="StandardMaterial3D" id="Material_backdrop"]
 shading_mode = 0
@@ -50,6 +51,7 @@ corner_radius_bottom_left = 8
 
 [node name="Window Shell Bakeoff" type="Node3D" unique_id=735641158]
 script = ExtResource("1_script")
+starting_variant = 4
 
 [node name="Variants" type="Node3D" parent="." unique_id=1611248686]
 
@@ -63,9 +65,19 @@ visible = false
 
 [node name="DarkOpeningsRelief" parent="Variants" unique_id=225348677 instance=ExtResource("5_ai_dark")]
 visible = false
+script = ExtResource("7_relief_tuning")
+texture_set = 0
+normal_boost = 3.0
+height_displacement = 0.03
+roughness_multiplier = 1.0
 
 [node name="FramicForegroundRelief" parent="Variants" unique_id=721213268 instance=ExtResource("6_ai_framic")]
 visible = false
+script = ExtResource("7_relief_tuning")
+texture_set = 1
+normal_boost = 17.19
+height_displacement = 0.03
+roughness_multiplier = 1.0
 
 [node name="BlackBackdrop" type="MeshInstance3D" parent="." unique_id=471828138]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, -1.05)
