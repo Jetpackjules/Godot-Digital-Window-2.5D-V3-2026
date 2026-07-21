@@ -23,7 +23,7 @@ var _material_refresh_queued := false
 		_normal_boost = value
 		_queue_material_refresh()
 
-@export var enable_micro_displacement := true:
+@export var enable_micro_displacement := false:
 	set(value):
 		enable_micro_displacement = value
 		_queue_material_refresh()
