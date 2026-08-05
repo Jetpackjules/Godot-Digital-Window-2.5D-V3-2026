@@ -46,7 +46,12 @@ func render_for_compositor(
 	camera_transform: Transform3D,
 	camera_projection: Projection,
 	camera_world_position: Vector3,
-	depth_capture_alpha: float = 0.5
+	depth_capture_alpha: float = 0.5,
+	gaussian_refresh_rate_hz: float = 60.0,
+	adaptive_frame_pacing_enabled: bool = true,
+	early_occlusion_enabled: bool = true,
+	early_occlusion_depth_texture: RID = RID(),
+	early_occlusion_depth_bias: float = 0.03
 ) -> Dictionary:
 	return _renderer.render_for_compositor(
 		_gpu_state_cache,
@@ -55,7 +60,12 @@ func render_for_compositor(
 		camera_transform,
 		camera_projection,
 		camera_world_position,
-		depth_capture_alpha
+		depth_capture_alpha,
+		gaussian_refresh_rate_hz,
+		adaptive_frame_pacing_enabled,
+		early_occlusion_enabled,
+		early_occlusion_depth_texture,
+		early_occlusion_depth_bias
 	)
 
 func _cleanup_on_render_thread() -> void:

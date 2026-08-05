@@ -246,6 +246,7 @@ func _ready() -> void:
 		_sync_fallback_world_environment()
 		_apply_view_scale(true)
 		_sync_screen_plane_reference()
+		_apply_renderer_profile()
 		_sync_enhanced_graphics()
 		return
 
@@ -560,6 +561,7 @@ func _instantiate_view(packed_scene: PackedScene, resource_load_ms: float = 0.0,
 	_sync_view_bounds_preview()
 	_apply_view_scale(true)
 	_sync_screen_plane_reference()
+	_apply_renderer_profile()
 	_sync_fallback_directional_light()
 	_sync_enhanced_graphics()
 	_sync_fallback_world_environment()
@@ -683,6 +685,16 @@ func _schedule_adjacent_scene_cache() -> void:
 	if current_index < 0 and _active_view_scene_path != "":
 		current_index = _find_view_index_for_scene_path(_active_view_scene_path)
 	if current_index < 0:
+		return
+	# A Heavy view already owns substantial CPU/GPU and streaming resources.
+	# Do not perform unrelated neighboring-scene I/O behind it: threaded scene
+	# completion still has a main-thread handoff and was producing visible cold
+	# cache stalls in the Gaussian runtime. Requested view changes remain async.
+	var current_descriptor := get_available_view_descriptor(current_index)
+	if (
+		current_descriptor != null
+		and current_descriptor.performance_tier >= ViewDescriptor.PerformanceTier.HEAVY
+	):
 		return
 	for offset in [1, -1]:
 		var adjacent_index := wrapi(current_index + int(offset), 0, _available_views.size())
@@ -1082,7 +1094,10 @@ func _process_automatic_graphics_profile(delta: float) -> void:
 		_auto_profile_good_samples += 1
 	else:
 		_auto_profile_good_samples = 0
-	var maximum_auto_profile := GRAPHICS_PROFILE_QUALITY if OS.has_feature("ios") else GRAPHICS_PROFILE_SHOWCASE
+	# Showcase is an explicit stress/beauty mode, not an automatic destination.
+	# Auto-promoting into it can create a quality/performance loop: high FPS
+	# selects Showcase, Showcase drops FPS, then Auto falls back and repeats.
+	var maximum_auto_profile := GRAPHICS_PROFILE_QUALITY
 	if _auto_profile_good_samples >= 3 and _effective_graphics_profile < maximum_auto_profile:
 		_effective_graphics_profile += 1
 		_auto_profile_good_samples = 0
@@ -1118,6 +1133,8 @@ func _apply_renderer_profile() -> void:
 			msaa = Viewport.MSAA_4X
 			shadow_atlas_size = 4096
 			lod_threshold = 1.0
+			var refresh_rate := DisplayServer.screen_get_refresh_rate()
+			target_fps = clampi(roundi(refresh_rate), 60, 120) if refresh_rate > 0.0 else 120
 		GRAPHICS_PROFILE_SHOWCASE:
 			render_scale = 1.0
 			msaa = Viewport.MSAA_8X
@@ -1125,6 +1142,12 @@ func _apply_renderer_profile() -> void:
 			lod_threshold = 0.6
 			var refresh_rate := DisplayServer.screen_get_refresh_rate()
 			target_fps = clampi(roundi(refresh_rate), 60, 120) if refresh_rate > 0.0 else 120
+	# Raster Gaussians are already analytically antialiased in their fragment
+	# shader. Multisampling millions of transparent splat quads multiplies fill
+	# cost without changing their visible quality. This also matches the smooth
+	# editor viewport path. Keep MSAA available for all non-Gaussian views.
+	if _current_view_uses_raster_gaussians():
+		msaa = Viewport.MSAA_DISABLED
 	viewport.scaling_3d_scale = render_scale
 	viewport.msaa_3d = msaa
 	viewport.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
@@ -1133,6 +1156,19 @@ func _apply_renderer_profile() -> void:
 	viewport.mesh_lod_threshold = lod_threshold
 	RenderingServer.directional_shadow_atlas_set_size(shadow_atlas_size, false)
 	Engine.max_fps = target_fps
+
+
+func _current_view_uses_raster_gaussians() -> bool:
+	if str(ProjectSettings.get_setting("gdgs/rendering/backend", "Auto")) != "Raster":
+		return false
+	if _instantiated_view == null or not is_instance_valid(_instantiated_view):
+		return false
+	return not _instantiated_view.find_children(
+		"*",
+		"GaussianSplatNode",
+		true,
+		false
+	).is_empty()
 
 
 func _ensure_enhanced_graphics_nodes() -> void:

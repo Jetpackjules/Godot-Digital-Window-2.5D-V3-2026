@@ -26,6 +26,10 @@ enum DebugView {
 @export_range(0.0, 1.0, 0.001) var depth_bias := 0.05
 @export_range(0.0, 1.0, 0.001) var depth_test_min_alpha := 0.05
 @export_range(0.0, 1.0, 0.001) var depth_capture_alpha = 0.5
+@export_range(1.0, 240.0, 1.0, "or_greater", "suffix: Hz") var gaussian_refresh_rate_hz := 60.0
+@export var adaptive_frame_pacing_enabled := true
+@export var early_occlusion_enabled := true
+@export_range(0.0, 1.0, 0.001, "suffix:m") var early_occlusion_depth_bias := 0.03
 @export_enum("Compositor", "Direct Texture") var display_mode: int:
 	set(value):
 		_display_mode = clampi(value, DisplayMode.COMPOSITOR, DisplayMode.DIRECT_TEXTURE)
@@ -128,13 +132,19 @@ func _render_callback(_effect_callback_type: int, render_data: RenderData) -> vo
 		var camera_data := _get_camera_data(scene_data, view)
 		if camera_data.is_empty():
 			continue
+		var scene_depth_tex: RID = _get_scene_depth_texture(scene_buffers, view)
 
 		var gsplat_result: Dictionary = manager.render_for_compositor(
 			size,
 			camera_data["transform"],
 			camera_data["projection"],
 			camera_data["world_position"],
-			_get_depth_capture_alpha()
+			_get_depth_capture_alpha(),
+			gaussian_refresh_rate_hz,
+			adaptive_frame_pacing_enabled,
+			early_occlusion_enabled,
+			scene_depth_tex,
+			early_occlusion_depth_bias
 		)
 		if gsplat_result.is_empty():
 			continue
@@ -154,7 +164,6 @@ func _render_callback(_effect_callback_type: int, render_data: RenderData) -> vo
 			continue
 
 		var use_scene_depth := _debug_view_needs_scene_depth(debug_view)
-		var scene_depth_tex: RID = _get_scene_depth_texture(scene_buffers, view)
 		if use_scene_depth and not scene_depth_tex.is_valid():
 			continue
 		if not scene_depth_tex.is_valid():

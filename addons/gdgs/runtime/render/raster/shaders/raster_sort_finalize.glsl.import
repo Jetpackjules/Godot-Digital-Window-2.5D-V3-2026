@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dnmthvqs8ivj8"
+path="res://.godot/imported/raster_sort_finalize.glsl-ddb6fdc44624b1aee2f65bb0f3be921b.res"
+
+[deps]
+
+source_file="res://addons/gdgs/runtime/render/raster/shaders/raster_sort_finalize.glsl"
+dest_files=["res://.godot/imported/raster_sort_finalize.glsl-ddb6fdc44624b1aee2f65bb0f3be921b.res"]
+
+[params]
+

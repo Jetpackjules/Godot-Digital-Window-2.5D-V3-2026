@@ -13,6 +13,8 @@ class NodeEntry:
 	var point_data_byte := PackedByteArray()
 	var model_transform: Transform3D = Transform3D.IDENTITY
 	var visible: bool = true
+	var instance_parameters := Vector3(1.0, 0.0, 0.0)
+	var world_clip_plane := Vector4.ZERO
 
 var _splat_nodes: Array[Node] = []
 var _node_entries: Dictionary = {}
@@ -22,6 +24,7 @@ var _point_data_byte := PackedByteArray()
 var _splat_instance_ids_byte := PackedByteArray()
 var _instance_count := 0
 var _instance_transforms_byte := PackedByteArray()
+var _instance_clip_planes_byte := PackedByteArray()
 
 func register_splat_node(node: Node) -> Dictionary:
 	if node == null or _splat_nodes.has(node):
@@ -61,6 +64,9 @@ func get_instance_count() -> int:
 func get_instance_transforms_byte() -> PackedByteArray:
 	return _instance_transforms_byte
 
+func get_instance_clip_planes_byte() -> PackedByteArray:
+	return _instance_clip_planes_byte
+
 func _sync_scene_resources(force_rebuild: bool) -> Dictionary:
 	_prune_splat_nodes()
 
@@ -68,6 +74,7 @@ func _sync_scene_resources(force_rebuild: bool) -> Dictionary:
 	var merged_point_data := PackedByteArray()
 	var merged_instance_ids := PackedInt32Array()
 	var merged_instance_transforms := PackedFloat32Array()
+	var merged_instance_clip_planes := PackedFloat32Array()
 	var total_point_count := 0
 	var next_instance_index := 0
 	
@@ -103,7 +110,14 @@ func _sync_scene_resources(force_rebuild: bool) -> Dictionary:
 			node_instance_ids[i * 2 + 1] = resource_start_index + i # y: Which raw splat data to read
 
 		merged_instance_ids.append_array(node_instance_ids)
-		merged_instance_transforms.append_array(_transform_to_column_major_packed_floats(entry.model_transform, entry.visible))
+		merged_instance_transforms.append_array(_transform_to_column_major_packed_floats(
+			entry.model_transform,
+			entry.visible,
+			entry.instance_parameters
+		))
+		merged_instance_clip_planes.append_array(_vector4_to_packed_floats(
+			entry.world_clip_plane
+		))
 
 		total_point_count += entry.point_count
 		next_instance_index += 1
@@ -118,6 +132,7 @@ func _sync_scene_resources(force_rebuild: bool) -> Dictionary:
 		_splat_instance_ids_byte = PackedByteArray()
 		_instance_count = 0
 		_instance_transforms_byte = PackedByteArray()
+		_instance_clip_planes_byte = PackedByteArray()
 		return _change_result(true, false, false, false)
 
 	var count_changed := total_point_count != _point_count
@@ -125,16 +140,27 @@ func _sync_scene_resources(force_rebuild: bool) -> Dictionary:
 	var instance_ids_size_changed := merged_instance_ids_byte.size() != _splat_instance_ids_byte.size()
 	var instance_count_changed := next_instance_index != _instance_count
 	var instance_transforms_size_changed := merged_instance_transforms_byte.size() != _instance_transforms_byte.size()
+	var merged_instance_clip_planes_byte := merged_instance_clip_planes.to_byte_array()
+	var instance_clip_planes_size_changed := (
+		merged_instance_clip_planes_byte.size() != _instance_clip_planes_byte.size()
+	)
 
 	_point_count = total_point_count
 	_point_data_byte = merged_point_data
 	_splat_instance_ids_byte = merged_instance_ids_byte
 	_instance_count = next_instance_index
 	_instance_transforms_byte = merged_instance_transforms_byte
+	_instance_clip_planes_byte = merged_instance_clip_planes_byte
 
 	return _change_result(
 		false,
-		force_rebuild or count_changed or point_data_size_changed or instance_ids_size_changed or instance_count_changed or instance_transforms_size_changed,
+		force_rebuild
+			or count_changed
+			or point_data_size_changed
+			or instance_ids_size_changed
+			or instance_count_changed
+			or instance_transforms_size_changed
+			or instance_clip_planes_size_changed,
 		true,
 		true
 	)
@@ -149,17 +175,28 @@ func _sync_node_transform(node: Node) -> Dictionary:
 
 	var model_transform := _get_node_transform(node)
 	var model_visible := _get_node_visibility(node)
-	if entry.model_transform == model_transform and entry.visible == model_visible:
+	var instance_parameters := _get_node_instance_parameters(node)
+	var world_clip_plane := _get_node_world_clip_plane(node)
+	if (
+		entry.model_transform == model_transform
+		and entry.visible == model_visible
+		and entry.instance_parameters == instance_parameters
+		and entry.world_clip_plane.is_equal_approx(world_clip_plane)
+	):
 		return {}
 
 	entry.model_transform = model_transform
 	entry.visible = model_visible
+	entry.instance_parameters = instance_parameters
+	entry.world_clip_plane = world_clip_plane
 	if entry.instance_index < 0 or _instance_count <= 0:
 		return {}
 
 	var instance_transforms_byte := _build_instance_transforms_byte()
+	var instance_clip_planes_byte := _build_instance_clip_planes_byte()
 	var size_changed := instance_transforms_byte.size() != _instance_transforms_byte.size()
 	_instance_transforms_byte = instance_transforms_byte
+	_instance_clip_planes_byte = instance_clip_planes_byte
 
 	return _change_result(false, size_changed, false, true)
 
@@ -167,6 +204,8 @@ func _build_node_entry(node: Node, instance_index: int) -> NodeEntry:
 	var entry := NodeEntry.new()
 	entry.model_transform = _get_node_transform(node)
 	entry.visible = _get_node_visibility(node)
+	entry.instance_parameters = _get_node_instance_parameters(node)
+	entry.world_clip_plane = _get_node_world_clip_plane(node)
 
 	var gaussian: Resource = node.get("gaussian")
 	if gaussian == null:
@@ -198,8 +237,26 @@ func _build_instance_transforms_byte() -> PackedByteArray:
 		var entry: NodeEntry = _node_entries.get(node.get_instance_id(), null)
 		if entry == null or entry.point_count <= 0 or entry.instance_index < 0:
 			continue
-		transforms.append_array(_transform_to_column_major_packed_floats(entry.model_transform, entry.visible))
+		transforms.append_array(_transform_to_column_major_packed_floats(
+			entry.model_transform,
+			entry.visible,
+			entry.instance_parameters
+		))
 	return transforms.to_byte_array()
+
+func _build_instance_clip_planes_byte() -> PackedByteArray:
+	if _instance_count <= 0:
+		return PackedByteArray()
+
+	var planes := PackedFloat32Array()
+	for node in _splat_nodes:
+		if not is_instance_valid(node):
+			continue
+		var entry: NodeEntry = _node_entries.get(node.get_instance_id(), null)
+		if entry == null or entry.point_count <= 0 or entry.instance_index < 0:
+			continue
+		planes.append_array(_vector4_to_packed_floats(entry.world_clip_plane))
+	return planes.to_byte_array()
 
 func _get_node_transform(node: Node) -> Transform3D:
 	if node is Node3D:
@@ -211,12 +268,42 @@ func _get_node_visibility(node: Node) -> bool:
 		return (node as Node3D).is_visible_in_tree()
 	return true
 
-func _transform_to_column_major_packed_floats(transform: Transform3D, visibility: bool) -> PackedFloat32Array:
+func _get_node_instance_parameters(node: Node) -> Vector3:
+	if node != null and node.has_method("get_gdgs_instance_parameters"):
+		var value: Variant = node.call("get_gdgs_instance_parameters")
+		if value is Vector3:
+			return value
+	return Vector3(1.0, 0.0, 0.0)
+
+func _get_node_world_clip_plane(node: Node) -> Vector4:
+	if node == null or not node.has_method("get_gdgs_world_clip_plane_parameters"):
+		return Vector4.ZERO
+	var parameters: Variant = node.call("get_gdgs_world_clip_plane_parameters")
+	if not (parameters is Dictionary) or not bool(parameters.get("enabled", false)):
+		return Vector4.ZERO
+	var plane: Plane = parameters.get("plane", Plane(Vector3.FORWARD, 0.0))
+	var normal := plane.normal
+	var normal_length := normal.length()
+	if normal_length <= 0.000001:
+		return Vector4.ZERO
+	normal /= normal_length
+	var distance := plane.d / normal_length
+	var margin := maxf(float(parameters.get("margin", 0.0)), 0.0)
+	return Vector4(normal.x, normal.y, normal.z, -distance - margin)
+
+func _vector4_to_packed_floats(value: Vector4) -> PackedFloat32Array:
+	return PackedFloat32Array([value.x, value.y, value.z, value.w])
+
+func _transform_to_column_major_packed_floats(
+	transform: Transform3D,
+	visibility: bool,
+	instance_parameters: Vector3 = Vector3(1.0, 0.0, 0.0)
+) -> PackedFloat32Array:
 	return PackedFloat32Array([
 		transform.basis.x[0], transform.basis.x[1], transform.basis.x[2], 1.0 if visibility else 0.0,
-		transform.basis.y[0], transform.basis.y[1], transform.basis.y[2], 0.0,
-		transform.basis.z[0], transform.basis.z[1], transform.basis.z[2], 0.0,
-		transform.origin.x, transform.origin.y, transform.origin.z, 1.0
+		transform.basis.y[0], transform.basis.y[1], transform.basis.y[2], instance_parameters.x,
+		transform.basis.z[0], transform.basis.z[1], transform.basis.z[2], instance_parameters.y,
+		transform.origin.x, transform.origin.y, transform.origin.z, instance_parameters.z
 	])
 
 func _prune_splat_nodes() -> void:

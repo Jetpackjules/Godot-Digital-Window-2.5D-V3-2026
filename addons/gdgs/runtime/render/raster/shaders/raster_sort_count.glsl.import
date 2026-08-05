@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://ct045q7l7k5dh"
+path="res://.godot/imported/raster_sort_count.glsl-cbc9fc1bd48da9a537dd763b7228215a.res"
+
+[deps]
+
+source_file="res://addons/gdgs/runtime/render/raster/shaders/raster_sort_count.glsl"
+dest_files=["res://.godot/imported/raster_sort_count.glsl-cbc9fc1bd48da9a537dd763b7228215a.res"]
+
+[params]
+

@@ -13,7 +13,7 @@ config_version=5
 config/name="2.5D window V3"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
-run/max_fps=60
+run/max_fps=120
 config/icon="res://Assets/AppIcons/Icon-512.png"
 run/main_scene.iphone_window="res://ios/IPhoneWindow.tscn"
 
@@ -27,6 +27,7 @@ DeviceMotion="*res://device_motion_service.gd"
 window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/vsync/vsync_mode=0
 
 [editor_plugins]
 
@@ -35,6 +36,10 @@ enabled=PackedStringArray("res://addons/gdgs/plugin.cfg")
 [filesystem]
 
 import/blender/enabled=false
+
+[gdgs]
+
+rendering/backend="Raster"
 
 [input]
 
@@ -77,7 +82,6 @@ ui_down={
 
 [rendering]
 
-rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
 lights_and_shadows/positional_shadow/soft_shadow_filter_quality=4

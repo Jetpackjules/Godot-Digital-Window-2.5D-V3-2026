@@ -16,6 +16,8 @@
 [ext_resource type="Texture2D" uid="uid://c2m5aisglqfl2" path="res://aruco_marker_3.png" id="13_aruco_3"]
 [ext_resource type="Texture2D" uid="uid://c7iq4svdpw7al" path="res://aruco_marker_4.png" id="14_aruco_4"]
 [ext_resource type="Texture2D" uid="uid://cld4ndxevjr6" path="res://aruco_marker_5.png" id="15_aruco_5"]
+[ext_resource type="PackedScene" path="res://ios/IPhoneSettingsUI.tscn" id="16_settings_ui"]
+[ext_resource type="Script" path="res://desktop_settings_runtime.gd" id="17_desktop_settings"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_a202f"]
 size = Vector2(20, 20)
@@ -179,3 +181,13 @@ light_energy = 0.34
 resources = [PackedStringArray("aruco_0", "aruco_1", "aruco_2", "aruco_3", "aruco_4", "aruco_5"), [ExtResource("10_aruco_0"), ExtResource("11_aruco_1"), ExtResource("12_aruco_2"), ExtResource("13_aruco_3"), ExtResource("14_aruco_4"), ExtResource("15_aruco_5")]]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1741922490]
+
+[node name="DesktopSettingsRuntime" type="Node" parent="."]
+script = ExtResource("17_desktop_settings")
+settings_ui_path = NodePath("../UI/DesktopSettingsUI")
+view_switcher_path = NodePath("../View")
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 50
+
+[node name="DesktopSettingsUI" parent="UI" instance=ExtResource("16_settings_ui")]

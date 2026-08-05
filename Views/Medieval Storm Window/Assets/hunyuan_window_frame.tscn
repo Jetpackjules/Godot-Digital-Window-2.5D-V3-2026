@@ -6,9 +6,14 @@
 [node name="HunyuanWindowFrame" type="Node3D"]
 editor_description = "Reusable Hunyuan gothic window foreground. Material controls are on this node; it intentionally has no test camera, floor, or lights."
 script = ExtResource("2_material")
-normal_boost = 50.57
+normal_boost = 0.57
 micro_displacement = 0.002
-enable_side_masonry = false
+enable_side_masonry = true
+sill_normal_strength = 1.8
+sill_relief_contrast = 1.45
+sill_grazing_light_strength = 0.1
+silhouette_rim_strength = 0.14
+reveal_bounce_strength = 0.035
 enable_cinematic_dark_framing = true
 enable_contact_shadows = false
 

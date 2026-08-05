@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://fal4ppmhire2"
+path="res://.godot/imported/raster_sort_scatter.glsl-8db30cd28abe2aa39b9b52b0e0c8520c.res"
+
+[deps]
+
+source_file="res://addons/gdgs/runtime/render/raster/shaders/raster_sort_scatter.glsl"
+dest_files=["res://.godot/imported/raster_sort_scatter.glsl-8db30cd28abe2aa39b9b52b0e0c8520c.res"]
+
+[params]
+

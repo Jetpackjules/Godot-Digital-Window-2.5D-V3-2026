@@ -20,6 +20,14 @@ static func snapshot(resource: Object) -> Dictionary:
 	var point_count_value: Variant = resource.get("point_count")
 	var xyz_value: Variant = resource.get("xyz")
 	var point_data_value: Variant = resource.get("point_data_float")
+	if (
+		typeof(point_data_value) == TYPE_PACKED_FLOAT32_ARRAY
+		and (point_data_value as PackedFloat32Array).is_empty()
+		and _has_property(resource, &"point_data_byte")
+	):
+		var byte_value: Variant = resource.get("point_data_byte")
+		if typeof(byte_value) == TYPE_PACKED_BYTE_ARRAY:
+			point_data_value = (byte_value as PackedByteArray).to_float32_array()
 	var aabb_value: Variant = resource.get("aabb")
 	if typeof(point_count_value) != TYPE_INT:
 		return _failure("Gaussian point_count must be an integer.")

@@ -1,0 +1,55 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_frame_v5.gd" id="1_script"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_v7.gdshader" id="2_front_shader"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v9_projected_2x.png" id="3_plate"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_normal.png" id="4_normal"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_roughness.png" id="5_roughness"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_projected_v9.glb" id="6_structure"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_return_v6.gdshader" id="7_return_shader"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_closure_v6.gdshader" id="8_closure_shader"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_front"]
+resource_local_to_scene = true
+shader = ExtResource("2_front_shader")
+shader_parameter/plate_texture = ExtResource("3_plate")
+shader_parameter/stone_normal = ExtResource("4_normal")
+shader_parameter/stone_roughness = ExtResource("5_roughness")
+shader_parameter/brightness = 0.92
+shader_parameter/normal_strength = 0.42
+shader_parameter/emission_mix = 0.62
+shader_parameter/alpha_scissor = 0.18
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_pillar_front"]
+resource_local_to_scene = true
+shader = ExtResource("2_front_shader")
+shader_parameter/plate_texture = ExtResource("3_plate")
+shader_parameter/stone_normal = ExtResource("4_normal")
+shader_parameter/stone_roughness = ExtResource("5_roughness")
+shader_parameter/brightness = 0.92
+shader_parameter/normal_strength = 0.42
+shader_parameter/emission_mix = 0.62
+shader_parameter/alpha_scissor = 0.18
+shader_parameter/force_opaque = true
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_return"]
+resource_local_to_scene = true
+shader = ExtResource("7_return_shader")
+shader_parameter/stone_colour = Color(0.03, 0.027, 0.026, 1)
+shader_parameter/brightness = 0.36
+shader_parameter/edge_lift = 0.1
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_closure"]
+resource_local_to_scene = true
+shader = ExtResource("8_closure_shader")
+shader_parameter/closure_colour = Color(0.004, 0.004, 0.005, 1)
+
+[node name="ProjectedWindowFrameV9" type="Node3D"]
+editor_description = "V9 preserves V8 as a fallback. The corrected pillars are unchanged; the sill is now a closed stepped ledge, all authored openings have depth, and the surrounding top/side masonry is a closed body with image-derived arch and roof-V moulding."
+script = ExtResource("1_script")
+projected_material = SubResource("ShaderMaterial_front")
+pillar_projected_material = SubResource("ShaderMaterial_pillar_front")
+aperture_return_material = SubResource("ShaderMaterial_return")
+concealed_closure_material = SubResource("ShaderMaterial_closure")
+
+[node name="Structure3D" parent="." instance=ExtResource("6_structure")]

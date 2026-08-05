@@ -176,12 +176,12 @@ performance_tier = 2
 
 [sub_resource type="Resource" id="View_shallow"]
 script = ExtResource("2_descriptor")
-title = "Shallow Box"
-scene_path = "res://Views/shallow_box.tscn"
+title = "Pit"
+scene_path = "res://Views/Pit/pit.tscn"
 category = "Diagnostics"
 thumbnail_path = "res://Assets/AppIcons/Icon-512.png"
-lighting_ownership = 1
-performance_tier = 0
+lighting_ownership = 2
+performance_tier = 1
 
 [sub_resource type="Resource" id="View_spaceship"]
 script = ExtResource("2_descriptor")

@@ -23,11 +23,18 @@ class DeletionQueue:
 
 class Descriptor:
 	var rid: RID
+	var rids: Array[RID] = []
 	var type: RenderingDevice.UniformType
 
 	func _init(rid_: RID, type_: RenderingDevice.UniformType) -> void:
 		rid = rid_
+		rids = [rid_]
 		type = type_
+
+	static func sampler_with_texture(sampler: RID, texture: RID) -> Descriptor:
+		var descriptor := Descriptor.new(texture, RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE)
+		descriptor.rids = [sampler, texture]
+		return descriptor
 
 var device: RenderingDevice
 var deletion_queue := DeletionQueue.new()
@@ -88,15 +95,29 @@ func create_texture(
 	return Descriptor.new(deletion_queue.push(device.texture_create(texture_format, view, data)), RenderingDevice.UNIFORM_TYPE_IMAGE)
 
 func create_descriptor_set(descriptors: Array, shader: RID, descriptor_set_index: int = 0) -> RID:
+	return deletion_queue.push(_create_descriptor_set(descriptors, shader, descriptor_set_index))
+
+func get_cached_descriptor_set(descriptors: Array, shader: RID, descriptor_set_index: int = 0) -> RID:
+	var uniforms := _create_uniforms(descriptors)
+	return UniformSetCacheRD.get_cache(shader, descriptor_set_index, uniforms)
+
+func _create_descriptor_set(descriptors: Array, shader: RID, descriptor_set_index: int) -> RID:
+	return device.uniform_set_create(_create_uniforms(descriptors), shader, descriptor_set_index)
+
+func _create_uniforms(descriptors: Array) -> Array[RDUniform]:
 	var uniforms: Array[RDUniform] = []
 	for i in range(descriptors.size()):
 		var descriptor: Descriptor = descriptors[i]
 		var uniform := RDUniform.new()
 		uniform.uniform_type = descriptor.type
 		uniform.binding = i
-		uniform.add_id(descriptor.rid)
+		for descriptor_rid in descriptor.rids:
+			uniform.add_id(descriptor_rid)
 		uniforms.push_back(uniform)
-	return deletion_queue.push(device.uniform_set_create(uniforms, shader, descriptor_set_index))
+	return uniforms
+
+func create_sampler() -> RID:
+	return deletion_queue.push(device.sampler_create(RDSamplerState.new()))
 
 func create_pipeline(block_dimensions: Array, descriptor_sets: Array, shader: RID) -> Callable:
 	var pipeline := deletion_queue.push(device.compute_pipeline_create(shader))

@@ -86,7 +86,15 @@ layout (std140, set = 0, binding = 8) restrict uniform Uniforms {
 	float time;
 	ivec2 dims; // Texture size
 	int point_count;
-	int _uniform_pad0;
+	int early_occlusion_enabled;
+	mat4 inverse_projection_matrix;
+	vec4 occlusion_params; // x = depth bias; yzw reserved
+};
+
+layout(set = 0, binding = 9) uniform sampler2D scene_depth_texture;
+
+layout(std430, set = 0, binding = 10) restrict readonly buffer InstanceClipPlanesBuffer {
+	vec4 instance_world_clip_planes[];
 };
 
 layout(push_constant) restrict readonly uniform PushConstants {
@@ -159,6 +167,45 @@ uvec4 get_rect(in vec2 image_pos, in float radius, in uvec2 grid_size) {
 		clamp(ceil((image_pos + radius) / TILE_SIZE), vec2(0), grid_size));
 }
 
+float get_scene_view_depth(in vec2 uv, out bool has_scene_depth) {
+	float raw_depth = textureLod(scene_depth_texture, clamp(uv, vec2(0.0), vec2(1.0)), 0.0).r;
+	if (raw_depth <= 0.0) {
+		has_scene_depth = false;
+		return 0.0;
+	}
+	vec4 view = inverse_projection_matrix * vec4(uv * 2.0 - 1.0, raw_depth, 1.0);
+	view.xyz /= view.w;
+	has_scene_depth = true;
+	return -view.z;
+}
+
+bool fully_occluded_by_scene(in vec2 image_pos, in float radius, in float splat_view_depth) {
+	if (early_occlusion_enabled == 0) {
+		return false;
+	}
+	vec2 uv = image_pos / vec2(max(dims - 1, ivec2(1)));
+	vec2 uv_radius = vec2(radius) / vec2(max(dims - 1, ivec2(1)));
+	const vec2 sample_offsets[9] = vec2[](
+		vec2(0.0, 0.0),
+		vec2(-0.72, -0.72),
+		vec2(0.72, -0.72),
+		vec2(-0.72, 0.72),
+		vec2(0.72, 0.72),
+		vec2(-0.95, 0.0),
+		vec2(0.95, 0.0),
+		vec2(0.0, -0.95),
+		vec2(0.0, 0.95)
+	);
+	for (int i = 0; i < 9; ++i) {
+		bool has_scene_depth = false;
+		float scene_view_depth = get_scene_view_depth(uv + sample_offsets[i] * uv_radius, has_scene_depth);
+		if (!has_scene_depth || splat_view_depth <= scene_view_depth + occlusion_params.x) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void main() {
 	const int id = int(gl_GlobalInvocationID.x);
 	const uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
@@ -173,15 +220,49 @@ void main() {
 	const Splat splat = splat_buffer[unique_splat_index];
 	mat4 model_matrix = instance_model_matrices[instance_id];
 
-	// --- VISIBILITY ---
+	// --- VISIBILITY / PER-INSTANCE WEATHER PARAMETERS ---
+	// GDGS affine matrices do not otherwise use their bottom row. Weather nodes
+	// store opacity, fall speed, and wind there so these controls remain cheap.
 	float is_visible = model_matrix[0][3];
+	float instance_weather_opacity = model_matrix[1][3];
+	float instance_weather_speed = model_matrix[2][3];
+	float instance_weather_wind = model_matrix[3][3];
 	if (is_visible < 0.5) return;
 	model_matrix[0][3] = 0.0;
+	model_matrix[1][3] = 0.0;
+	model_matrix[2][3] = 0.0;
+	model_matrix[3][3] = 1.0;
+
+	// Procedural rain and snow are genuine Gaussians. Their seed lives in the
+	// existing time field and their kind in the previously unused padding float.
+	// They loop only inside their node-local volume, which the authored view puts
+	// wholly behind the window plane. Accumulation (kind 3) remains spatially
+	// static, but uses speed as reveal progress and wind as reveal softness.
+	float weather_kind = splat._pad;
+	bool is_falling_rain = weather_kind > 0.5 && weather_kind < 1.5;
+	bool is_falling_snow = weather_kind > 1.5 && weather_kind < 2.5;
+	bool is_snow_accumulation = weather_kind > 2.5 && weather_kind < 3.5;
+	bool is_weather = weather_kind > 0.5;
+	vec3 local_position = splat.position;
+	if (is_falling_rain || is_falling_snow) {
+		float speed_scale = is_falling_rain ? 0.52 : 0.105;
+		float phase = fract(local_position.y + 0.5 - time * instance_weather_speed * speed_scale);
+		local_position.y = phase - 0.5;
+		float drift_speed = is_falling_rain ? 1.7 : 0.62;
+		float drift_scale = is_falling_rain ? 0.022 : 0.070;
+		local_position.x += sin(time * drift_speed + splat.time * 6.2831853)
+			* instance_weather_wind * drift_scale;
+	}
 	
 	// --- FRUSTUM CULLING ---
 	mat3 object_linear = mat3(model_matrix);
 	mat3 world_covariance = object_linear * DECODE_COVARIANCE(splat.covariance) * transpose(object_linear);
-	vec4 world_pos = model_matrix * vec4(splat.position, 1.0);
+	vec4 world_pos = model_matrix * vec4(local_position, 1.0);
+	// A zero plane disables clipping. Otherwise reject the positive (interior)
+	// side before projection, tile expansion, and sorting.
+	if (dot(instance_world_clip_planes[instance_id], world_pos) > 0.0) {
+		return;
+	}
 	vec4 view_pos = view_matrix * world_pos;
 	vec4 clip_pos = projection_matrix * view_pos;
 	vec2 view_bounds = clip_pos.ww*1.2;
@@ -191,10 +272,24 @@ void main() {
 	
 	// --- GAUSSIAN PROJECTION ---
 	float splat_time = time - splat.time;
-	float time_factor = ease_out_cubic(clamp(splat_time, 0, 1));
-	float time_factor_late = ease_out_cubic(clamp(splat_time - 0.35, 0, 1));
+	float time_factor = is_weather ? 1.0 : ease_out_cubic(clamp(splat_time, 0, 1));
+	float time_factor_late = is_weather ? 1.0 : ease_out_cubic(clamp(splat_time - 0.35, 0, 1));
 
 	float splat_opacity = splat.opacity * time_factor_late*time_factor_late;
+	if (is_weather) {
+		splat_opacity *= max(instance_weather_opacity, 0.0);
+		if (is_snow_accumulation) {
+			float accumulation_progress = clamp(instance_weather_speed, 0.0, 1.0);
+			float reveal_softness = max(abs(instance_weather_wind), 0.0001);
+			float reveal = 1.0 - smoothstep(
+				accumulation_progress,
+				min(accumulation_progress + reveal_softness, 1.0001),
+				splat.time
+			);
+			reveal *= step(0.000001, accumulation_progress);
+			splat_opacity *= reveal;
+		}
+	}
 	float splat_scale = mix(2.0, 1.0, time_factor_late);
 
 	const vec3 covariance = project_covariance(world_covariance, splat_scale, view_pos.xyz, dims);
@@ -216,6 +311,7 @@ void main() {
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
 	if (num_tiles_touched == 0 /*|| num_tiles_touched > grid_size.x*grid_size.y/3*/) return;
+	if (fully_occluded_by_scene(image_pos, radius, -view_pos.z)) return;
 
 	const uint buffer_size = atomicAdd(sort_buffer_size, num_tiles_touched);
 	uint sort_buffer_offset = buffer_size;

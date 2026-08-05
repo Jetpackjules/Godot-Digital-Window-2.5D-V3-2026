@@ -1,0 +1,171 @@
+[gd_scene format=3 uid="uid://dlihxffbayiad"]
+
+[ext_resource type="Script" uid="uid://w06cxusyxkhq" path="res://view_bounds.gd" id="1_bounds"]
+[ext_resource type="Texture2D" uid="uid://77yuahld1ipp" path="res://Views/Pit/Assets/Concrete Brick Wall 001/concrete_brick_wall_001_diffuse_2k.jpg" id="2_diffuse"]
+[ext_resource type="Texture2D" uid="uid://camj2vb12vi65" path="res://Views/Pit/Assets/Concrete Brick Wall 001/concrete_brick_wall_001_nor_gl_2k.jpg" id="3_normal"]
+[ext_resource type="Texture2D" uid="uid://yr72wnsitndc" path="res://Views/Pit/Assets/Concrete Brick Wall 001/concrete_brick_wall_001_rough_2k.jpg" id="4_roughness"]
+[ext_resource type="Texture2D" uid="uid://d3jjpduuuxi7r" path="res://Views/Pit/Assets/Concrete Brick Wall 001/concrete_brick_wall_001_ao_2k.jpg" id="5_ao"]
+[ext_resource type="Texture2D" uid="uid://cd7ph2x8wiceh" path="res://Views/Pit/Assets/Concrete Brick Wall 001/concrete_brick_wall_001_disp_2k.jpg" id="6_displacement"]
+[ext_resource type="Script" uid="uid://bniiosxg5plo1" path="res://Views/Pit/pit.gd" id="7_pit"]
+
+[sub_resource type="Environment" id="Environment_pit"]
+background_mode = 1
+background_color = Color(0.0015, 0.0018, 0.0022, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.32, 0.345, 0.37, 1)
+ambient_light_energy = 0.16
+reflected_light_source = 2
+tonemap_mode = 2
+tonemap_exposure = 0.82
+tonemap_white = 1.55
+ssao_enabled = true
+ssao_radius = 1.4
+ssao_intensity = 2.2
+ssil_enabled = true
+ssil_radius = 1.0
+ssil_intensity = 0.35
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.1
+volumetric_fog_albedo = Color(0.008, 0.009, 0.011, 1)
+volumetric_fog_gi_inject = 0.0
+volumetric_fog_length = 32.0
+volumetric_fog_detail_spread = 1.4
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_concrete_side"]
+resource_local_to_scene = true
+resource_name = "Concrete Brick Wall 001 - Pit Sides"
+albedo_color = Color(0.48, 0.5, 0.54, 1)
+albedo_texture = ExtResource("2_diffuse")
+roughness = 0.9
+roughness_texture = ExtResource("4_roughness")
+roughness_texture_channel = 4
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("3_normal")
+ao_enabled = true
+ao_texture = ExtResource("5_ao")
+ao_texture_channel = 4
+heightmap_enabled = true
+heightmap_scale = 1.8
+heightmap_deep_parallax = true
+heightmap_min_layers = 8
+heightmap_max_layers = 20
+heightmap_texture = ExtResource("6_displacement")
+uv1_scale = Vector3(2, 12, 3)
+
+[sub_resource type="BoxMesh" id="BoxMesh_side"]
+resource_local_to_scene = true
+material = SubResource("StandardMaterial3D_concrete_side")
+size = Vector3(0.0001, 30.18, 4.68)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_concrete"]
+resource_local_to_scene = true
+resource_name = "Concrete Brick Wall 001 - Pit Vertical"
+albedo_color = Color(0.48, 0.5, 0.54, 1)
+albedo_texture = ExtResource("2_diffuse")
+roughness = 0.9
+roughness_texture = ExtResource("4_roughness")
+roughness_texture_channel = 4
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("3_normal")
+ao_enabled = true
+ao_texture = ExtResource("5_ao")
+ao_texture_channel = 4
+heightmap_enabled = true
+heightmap_scale = 1.8
+heightmap_deep_parallax = true
+heightmap_min_layers = 8
+heightmap_max_layers = 20
+heightmap_texture = ExtResource("6_displacement")
+uv1_scale = Vector3(3, 11, 3)
+
+[sub_resource type="BoxMesh" id="BoxMesh_vertical"]
+resource_local_to_scene = true
+material = SubResource("StandardMaterial3D_concrete")
+size = Vector3(8, 0.18, 30.18)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_abyss"]
+albedo_color = Color(0.0001, 0.0001, 0.00012, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_back"]
+material = SubResource("StandardMaterial3D_abyss")
+size = Vector3(8, 4.5, 0.12)
+
+[sub_resource type="FogMaterial" id="FogMaterial_depth"]
+resource_local_to_scene = true
+density = 0.18
+albedo = Color(0.0025, 0.003, 0.004, 1)
+edge_fade = 0.55
+
+[sub_resource type="FogMaterial" id="FogMaterial_abyss"]
+resource_local_to_scene = true
+density = 0.72
+albedo = Color(0, 0, 0, 1)
+edge_fade = 0.7
+
+[node name="Pit" type="Node3D" unique_id=1869701317]
+editor_description = "Concrete pit with two consistent brick layouts. Inspector: toggle Bricks Run Around Pit and adjust Environment Fog Density. Runtime: B flips brick direction; Up/Down change Environment.volumetric_fog_density."
+script = ExtResource("7_pit")
+environment_fog_density = 0.1
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1136901579]
+environment = SubResource("Environment_pit")
+
+[node name="Geometry" type="Node3D" parent="." unique_id=428221771]
+
+[node name="Left Wall" type="MeshInstance3D" parent="Geometry" unique_id=1800883101]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, -4.00005, 0, -15)
+mesh = SubResource("BoxMesh_side")
+
+[node name="Right Wall" type="MeshInstance3D" parent="Geometry" unique_id=1993831187]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 4.00005, 0, -15)
+mesh = SubResource("BoxMesh_side")
+
+[node name="Top Wall" type="MeshInstance3D" parent="Geometry" unique_id=656519658]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.34, -15)
+mesh = SubResource("BoxMesh_vertical")
+
+[node name="Bottom Wall" type="MeshInstance3D" parent="Geometry" unique_id=1824643644]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.34, -15)
+mesh = SubResource("BoxMesh_vertical")
+
+[node name="Abyss Cap" type="MeshInstance3D" parent="Geometry" unique_id=229165389]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -30.06)
+mesh = SubResource("BoxMesh_back")
+
+[node name="Contained Darkness" type="Node3D" parent="." unique_id=253204592]
+
+[node name="Depth Fade" type="FogVolume" parent="Contained Darkness" unique_id=1490648704]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -22.5)
+size = Vector3(7.9, 4.42, 15)
+material = SubResource("FogMaterial_depth")
+
+[node name="Abyss Fade" type="FogVolume" parent="Contained Darkness" unique_id=1671116654]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -27.5)
+size = Vector3(7.92, 4.44, 5)
+material = SubResource("FogMaterial_abyss")
+
+[node name="Entrance Spill" type="OmniLight3D" parent="." unique_id=54009606]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, -0.35)
+light_color = Color(1, 0.91, 0.8, 1)
+light_energy = 5.0
+light_indirect_energy = 0.45
+light_volumetric_fog_energy = 0.18
+shadow_enabled = true
+shadow_opacity = 0.72
+omni_range = 13.5
+omni_attenuation = 1.45
+
+[node name="Cool Depth Fill" type="OmniLight3D" parent="." unique_id=296900488]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8, 1.2, -7)
+light_color = Color(0.34, 0.43, 0.55, 1)
+light_energy = 0.38
+light_volumetric_fog_energy = 0.0
+omni_range = 8.0
+omni_attenuation = 2.0
+
+[node name="ViewBounds" type="Node3D" parent="." unique_id=98005259]
+script = ExtResource("1_bounds")
+bounds_width_meters = 8.0
+bounds_height_meters = 4.5

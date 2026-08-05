@@ -32,6 +32,8 @@ class RenderState:
 	var camera_push_constants := PackedByteArray()
 	var camera_world_position := Vector3.ZERO
 	var depth_capture_alpha := 0.5
+	var last_rasterize_usec := 0
+	var has_rasterized := false
 	var needs_gpu_rebuild := true
 	var needs_splat_upload := false
 	var needs_instance_upload := false
@@ -109,11 +111,28 @@ func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_
 	state.descriptors["sort_values"] = state.context.create_storage_buffer(num_sort_elements_max * 4 * 2)
 	state.descriptors["splat_instance_ids"] = state.context.create_storage_buffer(point_count * 4 * 2)
 	state.descriptors["instance_transforms"] = state.context.create_storage_buffer(instance_count * 16 * BYTES_PER_FLOAT)
-	state.descriptors["uniforms"] = state.context.create_uniform_buffer(8 * 4)
+	state.descriptors["instance_clip_planes"] = state.context.create_storage_buffer(instance_count * 4 * BYTES_PER_FLOAT)
+	# Keep this block at 128 bytes. Some D3D12 shader reflection paths round
+	# std140 blocks containing a mat4 up to the next 32-byte boundary.
+	state.descriptors["uniforms"] = state.context.create_uniform_buffer(32 * 4)
 	state.descriptors["tile_bounds"] = state.context.create_storage_buffer(state.tile_dims.x * state.tile_dims.y * 2 * 4)
 	state.descriptors["tile_splat_pos"] = state.context.create_storage_buffer(4 * 4)
 	state.descriptors["render_texture"] = state.context.create_texture(state.texture_size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	state.descriptors["depth_texture"] = state.context.create_texture(state.texture_size, RenderingDevice.DATA_FORMAT_R32_SFLOAT)
+	var fallback_depth_bytes := PackedFloat32Array([0.0]).to_byte_array()
+	var fallback_depth_data: Array[PackedByteArray] = [fallback_depth_bytes]
+	state.descriptors["occlusion_depth_fallback"] = state.context.create_texture(
+		Vector2i.ONE,
+		RenderingDevice.DATA_FORMAT_R32_SFLOAT,
+		0x18B,
+		RDTextureView.new(),
+		fallback_depth_data
+	)
+	state.descriptors["occlusion_sampler"] = state.context.create_sampler()
+	state.descriptors["occlusion_fallback"] = RenderingDeviceContext.Descriptor.sampler_with_texture(
+		state.descriptors["occlusion_sampler"],
+		state.descriptors["occlusion_depth_fallback"].rid
+	)
 
 	var projection_set: RID = state.context.create_descriptor_set([
 		state.descriptors["splats"],
@@ -124,7 +143,9 @@ func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_
 		state.descriptors["grid_dimensions"],
 		state.descriptors["splat_instance_ids"],
 		state.descriptors["instance_transforms"],
-		state.descriptors["uniforms"]
+		state.descriptors["uniforms"],
+		state.descriptors["occlusion_fallback"],
+		state.descriptors["instance_clip_planes"]
 	], state.shaders["projection"], 0)
 
 	var radix_upsweep_set: RID = state.context.create_descriptor_set([
@@ -167,6 +188,8 @@ func rebuild_gpu_state(state, point_count: int, unique_data_size: int, instance_
 	state.needs_gpu_rebuild = false
 	state.needs_splat_upload = true
 	state.needs_instance_upload = true
+	state.last_rasterize_usec = 0
+	state.has_rasterized = false
 
 func upload_splats(state, point_data_byte: PackedByteArray, splat_instance_ids_byte: PackedByteArray) -> void:
 	if state.context == null or point_data_byte.is_empty() or splat_instance_ids_byte.is_empty():
@@ -175,10 +198,19 @@ func upload_splats(state, point_data_byte: PackedByteArray, splat_instance_ids_b
 	state.context.device.buffer_update(state.descriptors["splat_instance_ids"].rid, 0, splat_instance_ids_byte.size(), splat_instance_ids_byte)
 	state.needs_splat_upload = false
 
-func upload_instance_transforms(state, instance_transforms_byte: PackedByteArray) -> void:
-	if state.context == null or instance_transforms_byte.is_empty():
+func upload_instance_transforms(
+	state,
+	instance_transforms_byte: PackedByteArray,
+	instance_clip_planes_byte: PackedByteArray
+) -> void:
+	if (
+		state.context == null
+		or instance_transforms_byte.is_empty()
+		or instance_clip_planes_byte.is_empty()
+	):
 		return
 	state.context.device.buffer_update(state.descriptors["instance_transforms"].rid, 0, instance_transforms_byte.size(), instance_transforms_byte)
+	state.context.device.buffer_update(state.descriptors["instance_clip_planes"].rid, 0, instance_clip_planes_byte.size(), instance_clip_planes_byte)
 	state.needs_instance_upload = false
 
 func cleanup_state(state) -> void:
@@ -193,6 +225,8 @@ func cleanup_state(state) -> void:
 	state.needs_gpu_rebuild = true
 	state.needs_splat_upload = true
 	state.needs_instance_upload = true
+	state.last_rasterize_usec = 0
+	state.has_rasterized = false
 
 func cleanup_all() -> void:
 	for state in _render_states.values():

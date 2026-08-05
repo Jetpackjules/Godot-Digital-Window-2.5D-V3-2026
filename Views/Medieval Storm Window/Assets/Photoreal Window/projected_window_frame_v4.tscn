@@ -1,0 +1,44 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_frame_v4.gd" id="1_script"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_v4.gdshader" id="2_shader"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_projected_2x.png" id="3_plate"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_normal.png" id="4_normal"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_roughness.png" id="5_roughness"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_projected_v4.glb" id="6_structure"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_reveal_v4.gdshader" id="7_reveal_shader"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Stone PBR/RabdentseRuins/rabdentse_ruins_wall_diff_2k.jpg" id="8_reveal_diff"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Stone PBR/RabdentseRuins/rabdentse_ruins_wall_nor_gl_2k.jpg" id="9_reveal_normal"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Stone PBR/RabdentseRuins/rabdentse_ruins_wall_rough_2k.jpg" id="10_reveal_rough"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_projected"]
+resource_local_to_scene = true
+shader = ExtResource("2_shader")
+shader_parameter/plate_texture = ExtResource("3_plate")
+shader_parameter/stone_normal = ExtResource("4_normal")
+shader_parameter/stone_roughness = ExtResource("5_roughness")
+shader_parameter/brightness = 0.92
+shader_parameter/normal_strength = 1.15
+shader_parameter/emission_mix = 0.58
+shader_parameter/alpha_scissor = 0.28
+shader_parameter/wetness_amount = 0.0
+shader_parameter/snow_cover_amount = 0.0
+shader_parameter/snow_color = Vector3(0.88, 0.93, 1)
+shader_parameter/relief_depth_scale = 2.25
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_reveal"]
+resource_local_to_scene = true
+shader = ExtResource("7_reveal_shader")
+shader_parameter/stone_texture = ExtResource("8_reveal_diff")
+shader_parameter/stone_normal = ExtResource("9_reveal_normal")
+shader_parameter/stone_roughness = ExtResource("10_reveal_rough")
+shader_parameter/relief_depth_scale = 2.25
+shader_parameter/brightness = 0.22
+
+[node name="ProjectedWindowFrame" type="Node3D"]
+editor_description = "V4 real projective-photo relief. The photographed columns, side stone, arches and sill are the 3D surface; there is no front billboard or duplicate support geometry. Experimental aperture reveals default off because the unified relief supplies the visible window surface. V3 remains hidden beside this node in View.tscn."
+script = ExtResource("1_script")
+projected_material = SubResource("ShaderMaterial_projected")
+aperture_reveal_material = SubResource("ShaderMaterial_reveal")
+
+[node name="Structure3D" parent="." instance=ExtResource("6_structure")]

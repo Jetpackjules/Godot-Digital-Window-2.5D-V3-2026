@@ -21,8 +21,32 @@ reveal, sill, and depth geometry.
 - Creator: https://polyhaven.com/humans
 - License: https://polyhaven.com/license
 
-The 2K diffuse, OpenGL normal, and roughness maps are used on the surrounding
-facade, deep reveals, sills, and stone courses.
+The 2K diffuse, OpenGL normal, and roughness maps remain as a subtle mineral
+variation source for the procedural rough-stone sill.
+
+## Rock 01
+
+"Rock 01" by Rob Tuytel is provided by Poly Haven under CC0.
+
+- Asset: https://polyhaven.com/a/rock_01
+- Creator: https://polyhaven.com/humans
+- License: https://polyhaven.com/license
+
+The 2K diffuse, OpenGL normal, and roughness maps provide restrained fine-grain
+stone detail on the carved columns. The material deliberately uses a weak
+normal response and no displacement so the columns remain smooth silhouettes.
+
+## Rabdentse Ruins Wall
+
+"Rabdentse Ruins Wall" by Amal Kumar is provided by Poly Haven under CC0.
+
+- Asset: https://polyhaven.com/a/rabdentse_ruins_wall
+- Creator: https://polyhaven.com/humans
+- License: https://polyhaven.com/license
+
+The 2K diffuse, OpenGL normal, roughness, and ambient-occlusion maps are used on
+the deep side reveals. Their scale and saturation are reduced in the Godot
+material so they read as broad, dark, timeworn fortress masonry.
 
 ## Cochem Imperial Castle, Germany
 
@@ -63,3 +87,21 @@ used under the MIT License. Its license is vendored at `addons/gdgs/LICENSE`.
 - Project: https://github.com/ReconWorldLab/godot-gaussian-splatting
 - Version: 2.2.0
 - License: https://github.com/ReconWorldLab/godot-gaussian-splatting/blob/gdgs_2.2.0/LICENSE
+
+## Procedural Gaussian weather references
+
+The outdoor falling-weather implementation is an original Godot/GDGS port of
+the procedural Gaussian-weather architecture published in the MIT-licensed
+PlayCanvas Engine. It uses the same high-level idea of deterministic looping
+weather Gaussians inside a bounded volume; it does not vendor PlayCanvas code.
+
+- Source reference: https://github.com/playcanvas/engine/blob/main/scripts/esm/gsplat/gsplat-weather.mjs
+- Procedural splat documentation: https://developer.playcanvas.com/user-manual/gaussian-splatting/building/procedural-splats/
+- License: https://github.com/playcanvas/engine/blob/main/LICENSE
+
+Snow accumulation is independently implemented from the algorithm described by
+Weather-Magician: Gaussian-normal initialization, local-plane filtering, and
+random tangent-plane densification. No Weather-Magician source code is included.
+
+- Project: https://weathermagician.github.io/
+- Paper: https://arxiv.org/abs/2505.19919

@@ -105,7 +105,10 @@ static func build(canonical: Dictionary) -> Dictionary:
 
 	var resource = GaussianResourceScript.new()
 	resource.point_count = count
-	resource.point_data_float = points
+	# point_data_byte is the exact byte representation of this 60-float struct.
+	# Persisting both arrays doubled every imported Gaussian resource. Collision
+	# reconstructs the float view lazily when it is explicitly requested.
+	resource.point_data_float = PackedFloat32Array()
 	resource.point_data_byte = points.to_byte_array()
 	resource.xyz = xyz
 	resource.aabb = AABB(aabb_min_v, aabb_max_v - aabb_min_v) if count > 0 else AABB()

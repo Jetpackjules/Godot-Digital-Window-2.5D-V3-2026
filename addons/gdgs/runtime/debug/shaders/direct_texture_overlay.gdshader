@@ -8,6 +8,8 @@ uniform sampler2D scene_depth_texture : hint_depth_texture, filter_nearest;
 uniform float alpha_cutoff = 0.01;
 uniform float depth_bias = 0.05;
 uniform float depth_test_min_alpha = 0.05;
+uniform float gaussian_fog_density = 0.0;
+uniform vec3 gaussian_fog_color : source_color = vec3(0.48, 0.53, 0.56);
 
 const float INVALID_DEPTH = 1e19;
 
@@ -56,9 +58,16 @@ void fragment() {
 	vec3 result = scene_color;
 	if (gaussian_alpha > alpha_cutoff && has_gaussian_depth && !depth_rejected) {
 		vec3 gaussian_straight = gaussian.rgb / max(gaussian_alpha, 1e-5);
-		vec3 gaussian_linear = srgb_to_linear(gaussian_straight) * gaussian_alpha;
+		vec3 gaussian_linear_straight = srgb_to_linear(gaussian_straight);
+
+		if (gaussian_fog_density > 0.0001) {
+			float fog_factor = 1.0 - exp(-max(gaussian_view_depth, 0.0) * gaussian_fog_density);
+			gaussian_linear_straight = mix(gaussian_linear_straight, gaussian_fog_color, clamp(fog_factor, 0.0, 0.94));
+		}
+		vec3 gaussian_linear = gaussian_linear_straight * gaussian_alpha;
 		result = gaussian_linear + scene_color * (1.0 - gaussian_alpha);
 	}
+
 	ALBEDO = result;
 	ALPHA = 1.0;
 }

@@ -5,21 +5,95 @@
 [ext_resource type="PackedScene" uid="uid://ciaoq7w1ycyvv" path="res://Views/Medieval Storm Window/Assets/medieval_storm_window_shell.gltf" id="3_shell"]
 [ext_resource type="Script" uid="uid://uvogfbl5xt0i" path="res://addons/gdgs/runtime/compositor/gaussian_compositor_effect.gd" id="4_gaussian_compositor"]
 [ext_resource type="Script" uid="uid://c6n0nn5lt187j" path="res://addons/gdgs/runtime/nodes/gaussian_splat_node.gd" id="5_gaussian_node"]
-[ext_resource type="Resource" uid="uid://b0px0lda2pvl5" path="res://Views/Medieval Storm Window/Assets/Landscapes/Sumela Monastery Cliffside.sog" id="6_sumela"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_window_frame_v3.tscn" id="7_framic_frame"]
 [ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/hunyuan_window_frame.tscn" id="7_hunyuan_frame"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/photoreal_window_frame.tscn" id="7_photoreal_frame"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_frame_v11.tscn" id="7_projected_frame"]
+[ext_resource type="Shader" uid="uid://cyhnbmi6yms1c" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_v7.gdshader" id="8_a7nju"]
+[ext_resource type="Script" uid="uid://d0442ja7g28su" path="res://addons/gdgs/runtime/nodes/gaussian_weather_splat_node.gd" id="8_weather_node"]
+[ext_resource type="Texture2D" uid="uid://cghb6kf026ye7" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v6_projected_2x.png" id="9_l06ro"]
+[ext_resource type="Texture2D" uid="uid://cgwrab0dsvh8j" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_normal.png" id="10_ja8o5"]
+[ext_resource type="Texture2D" uid="uid://cg3vljrk3uxwj" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/framic_arcade_v4_roughness.png" id="11_0ep03"]
+[ext_resource type="Shader" uid="uid://bs1pbo4antt6l" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_return_v6.gdshader" id="12_8nwcd"]
+[ext_resource type="Shader" uid="uid://bnimdbdj24av5" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/projected_window_closure_v6.gdshader" id="13_qxvqd"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_l14pm"]
+resource_local_to_scene = true
+render_priority = 0
+shader = ExtResource("8_a7nju")
+shader_parameter/plate_texture = ExtResource("9_l06ro")
+shader_parameter/stone_normal = ExtResource("10_ja8o5")
+shader_parameter/stone_roughness = ExtResource("11_0ep03")
+shader_parameter/brightness = 0.92
+shader_parameter/normal_strength = 1.15
+shader_parameter/emission_mix = 0.58
+shader_parameter/alpha_scissor = 0.28
+shader_parameter/wetness_amount = 0.0
+shader_parameter/snow_cover_amount = 0.0
+shader_parameter/snow_color = Color(0.88, 0.93, 1, 1)
+shader_parameter/geometry_only_debug = true
+shader_parameter/force_opaque = false
+shader_parameter/geometry_debug_colour = Color(0.42, 0.4, 0.37, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_jclo7"]
+resource_local_to_scene = true
+render_priority = 0
+shader = ExtResource("8_a7nju")
+shader_parameter/plate_texture = ExtResource("9_l06ro")
+shader_parameter/stone_normal = ExtResource("10_ja8o5")
+shader_parameter/stone_roughness = ExtResource("11_0ep03")
+shader_parameter/brightness = 0.92
+shader_parameter/normal_strength = 1.15
+shader_parameter/emission_mix = 0.58
+shader_parameter/alpha_scissor = 0.28
+shader_parameter/wetness_amount = 0.0
+shader_parameter/snow_cover_amount = 0.0
+shader_parameter/snow_color = Color(0.88, 0.93, 1, 1)
+shader_parameter/geometry_only_debug = true
+shader_parameter/force_opaque = true
+shader_parameter/geometry_debug_colour = Color(0.42, 0.4, 0.37, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_yua1r"]
+resource_local_to_scene = true
+render_priority = 0
+shader = ExtResource("12_8nwcd")
+shader_parameter/stone_colour = Color(0.03, 0.027, 0.026, 1)
+shader_parameter/brightness = 0.3
+shader_parameter/edge_lift = 0.1
+shader_parameter/geometry_only_debug = true
+shader_parameter/geometry_debug_colour = Color(0.42, 0.4, 0.37, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ch7fq"]
+resource_local_to_scene = true
+render_priority = 0
+shader = ExtResource("13_qxvqd")
+shader_parameter/closure_colour = Color(0.004, 0.004, 0.005, 1)
+shader_parameter/geometry_only_debug = true
+shader_parameter/geometry_debug_colour = Color(0.42, 0.4, 0.37, 1)
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_ely67"]
+sky_top_color = Color(0.12, 0.24, 0.42, 1)
+sky_horizon_color = Color(0.62, 0.72, 0.8, 1)
+ground_bottom_color = Color(0.08, 0.1, 0.12, 1)
+ground_horizon_color = Color(0.40919998, 0.4752, 0.528, 1)
+
+[sub_resource type="Sky" id="Sky_i0uup"]
+sky_material = SubResource("ProceduralSkyMaterial_ely67")
 
 [sub_resource type="Environment" id="Environment_window"]
-background_mode = 1
-background_color = Color(0.0015, 0.003, 0.008, 1)
+background_mode = 2
+background_color = Color(0.19, 0.21, 0.22, 1)
+background_energy_multiplier = 0.92
+sky = SubResource("Sky_i0uup")
 ambient_light_source = 2
-ambient_light_color = Color(0.13, 0.17, 0.24, 1)
-ambient_light_energy = 0.2
+ambient_light_color = Color(0.1, 0.14, 0.2, 1)
+ambient_light_energy = 0.075
 reflected_light_source = 2
 tonemap_mode = 3
-tonemap_exposure = 0.72
-ssao_enabled = true
-ssao_radius = 0.085
-ssao_intensity = 1.45
+tonemap_exposure = 0.8
+ssao_radius = 1.25
+ssao_intensity = 2.1
+ssao_power = 1.45
 ssil_enabled = true
 ssil_radius = 0.11
 ssil_intensity = 0.62
@@ -27,11 +101,17 @@ glow_enabled = true
 glow_intensity = 0.12
 glow_strength = 0.48
 glow_bloom = 0.04
+fog_enabled = true
+fog_light_color = Color(0.62, 0.72, 0.8, 1)
+fog_light_energy = 0.92
+fog_density = 0.001
+volumetric_fog_density = 0.0
+volumetric_fog_albedo = Color(0.62, 0.72, 0.8, 1)
 
 [sub_resource type="CompositorEffect" id="CompositorEffect_gaussian"]
 resource_local_to_scene = false
 resource_name = ""
-enabled = true
+enabled = false
 effect_callback_type = 3
 access_resolved_color = false
 access_resolved_depth = true
@@ -44,9 +124,26 @@ compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_gaus
 
 [node name="Medieval Storm Window" type="Node3D" unique_id=1688713746]
 script = ExtResource("1_window")
+selected_gaussian_path = "res://Views/Medieval Storm Window/Assets/Landscapes/Cochem Imperial Castle.sog"
+gaussian_performance_preset = 0
+gaussian_refresh_rate_hz = 60.0
+gaussian_diagnostics_enabled = true
+weather_preset = 6
+sky_top_color = Color(0.12, 0.24, 0.42, 1)
+sky_horizon_color = Color(0.62, 0.72, 0.8, 1)
+sky_ground_color = Color(0.08, 0.1, 0.12, 1)
+sky_energy = 0.92
+world_fog_density = 0.001
+gaussian_fog_density = 0.0
+snow_upward_normal_threshold = 0.74
+snow_planarity_threshold = 0.056
+snow_accumulation_radius = 0.38
+snow_accumulation_point_count = 216000
+gaussian_choice = 0
 
 [node name="ViewBounds" type="Node3D" parent="." unique_id=292394816]
 script = ExtResource("2_bounds")
+show_preview_in_editor = false
 preview_color = Color(0.18, 0.68, 1, 0.8)
 
 [node name="ScreenPlaneFront" type="Marker3D" parent="." unique_id=1046442301]
@@ -57,11 +154,34 @@ visible = false
 
 [node name="HunyuanWindowFrame" parent="." unique_id=1817184118 instance=ExtResource("7_hunyuan_frame")]
 editor_description = "Active foreground frame. This replaces the old StoneShell; adjust its PBR toggles by selecting this node."
-transform = Transform3D(0.111, 0, 0, 0, 0.111, 0, 0, 0, 0.111, 0, 0.006, -0.05)
+transform = Transform3D(0.116387025, 0, 0, 0, 0.111, 0, 0, 0, 0.111, 0, 0.006, -0.020960413)
+visible = false
+
+[node name="PhotorealWindowFrame" parent="." unique_id=1788924598 instance=ExtResource("7_photoreal_frame")]
+editor_description = "Preserved V2 layered photoreal fallback. Hide FramicWindowFrame and show this node to restore it exactly."
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.020960413)
+visible = false
+
+[node name="FramicWindowFrame" parent="." unique_id=726605231 instance=ExtResource("7_framic_frame")]
+editor_description = "Preserved V3 flat-front fallback. Show this and hide ProjectedWindowFrame to compare or restore it."
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.020960413)
+visible = false
+
+[node name="ProjectedWindowFrame" parent="." unique_id=418610184 instance=ExtResource("7_projected_frame")]
+editor_description = "Active V11 calibrated photo projection. The photographed front and corrected pillars are unchanged; the sill is level, the jambs and opening returns are square, and the upper arcade has a small clean forward projection. V10 remains available as projected_window_frame_v10.tscn."
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.008314844)
+normal_strength = 1.15
+photographed_light_mix = 0.58
+alpha_scissor = 0.28
+geometry_only_debug = true
+projected_material = SubResource("ShaderMaterial_l14pm")
+pillar_projected_material = SubResource("ShaderMaterial_jclo7")
+aperture_return_material = SubResource("ShaderMaterial_yua1r")
+concealed_closure_material = SubResource("ShaderMaterial_ch7fq")
 
 [node name="GaussianLandscape" type="Node3D" parent="." unique_id=1028096288]
 editor_description = "Minimal upstream GDGS placement for the full Sumela Monastery SOG. Move, rotate, or scale this node to frame the landscape behind the window."
-transform = Transform3D(0.25881907, 0, 0.9659258, 0, 1, 0, -0.9659258, 0, 0.25881907, 0, 0, -1)
+transform = Transform3D(0.25881898, -8.742278e-08, 0.9659258, -2.2626683e-08, -1, -8.444392e-08, 0.9659258, -9.419099e-15, -0.25881898, 0, -0.56551176, -3.4796476)
 metadata/source_url = "https://superspl.at/scene/5f03cdcb"
 metadata/creator_url = "https://superspl.at/user?id=dok11"
 metadata/license = "CC BY 4.0"
@@ -75,7 +195,7 @@ process_thread_group = 0
 physics_interpolation_mode = 0
 auto_translate_mode = 0
 editor_description = ""
-transform = Transform3D(0.07333148, -6.0383125e-09, 0.067988925, 0.005953983, -0.09961582, -0.006421855, 0.06772773, 0.00875729, -0.07304975, 0.33967778, -0.38463536, -0.3098251)
+transform = Transform3D(-5.9665203, 6.7286953e-07, -3.0149527, 4.6482944e-07, 6.685001, 5.7205443e-07, 3.0149527, 3.0093273e-07, -5.9665203, -86.54305, 11.892674, 38.112144)
 rotation_edit_mode = 0
 rotation_order = 2
 top_level = false
@@ -83,7 +203,74 @@ visible = true
 visibility_parent = NodePath("")
 layers = 1
 script = ExtResource("5_gaussian_node")
-gaussian = ExtResource("6_sumela")
+
+[node name="SnowAccumulation" type="VisualInstance3D" parent="GaussianLandscape" unique_id=1178862112]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(-5.9665203, 6.7286953e-07, -3.0149527, 4.6482944e-07, 6.685001, 5.7205443e-07, 3.0149527, 3.0093273e-07, -5.9665203, -86.54305, 11.892674, 38.112144)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = true
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("8_weather_node")
+weather_opacity = 0.0
+weather_wind = 0.018
+apply_model_orientation_correction = false
+
+[node name="GaussianWeather" type="Node3D" parent="." unique_id=1499945371]
+editor_description = "Outdoor-only procedural Gaussian precipitation. The volume is authored entirely behind the window plane."
+
+[node name="Rain" type="VisualInstance3D" parent="GaussianWeather" unique_id=1965797534]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(0.64, 0, 0, 0, 0.34, 0, 0, 0, 1.2, 0, 0.02, -0.75)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = false
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("8_weather_node")
+weather_opacity = 0.0
+weather_speed = 1.35
+weather_wind = 0.22
+apply_model_orientation_correction = false
+
+[node name="Snow" type="VisualInstance3D" parent="GaussianWeather" unique_id=1004361693]
+unique_name_in_owner = false
+process_mode = 0
+process_priority = 0
+process_physics_priority = 0
+process_thread_group = 0
+physics_interpolation_mode = 0
+auto_translate_mode = 0
+editor_description = ""
+transform = Transform3D(0.64, 0, 0, 0, 0.34, 0, 0, 0, 1.2, 0, 0.02, -0.75)
+rotation_edit_mode = 0
+rotation_order = 2
+top_level = false
+visible = false
+visibility_parent = NodePath("")
+layers = 1
+script = ExtResource("8_weather_node")
+weather_opacity = 0.0
+weather_speed = 0.72
+weather_wind = 0.65
+apply_model_orientation_correction = false
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=660521128]
 environment = SubResource("Environment_window")
@@ -91,8 +278,8 @@ compositor = SubResource("Compositor_gaussian")
 
 [node name="ColdStoneKey" type="OmniLight3D" parent="." unique_id=352890007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.22, 0.11, 0.16)
-light_color = Color(0.72, 0.8, 1, 1)
-light_energy = 0.24
+light_color = Color(0.78, 0.83, 0.86, 1)
+light_energy = 0.16
 light_indirect_energy = 0.18
 shadow_enabled = true
 shadow_bias = 0.025
@@ -102,16 +289,17 @@ omni_attenuation = 1.18
 [node name="WarmStoneFill" type="OmniLight3D" parent="." unique_id=358643428]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24, -0.08, 0.12)
 light_color = Color(1, 0.72, 0.52, 1)
-light_energy = 0.14
+light_energy = 0.018
 light_indirect_energy = 0.12
 omni_range = 0.68
 omni_attenuation = 1.42
 
 [node name="StormRearLight" type="OmniLight3D" parent="." unique_id=2098727636]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.08, 0.08, -0.2)
-light_color = Color(0.42, 0.58, 1, 1)
-light_energy = 0.22
+light_color = Color(0.68, 0.74, 0.78, 1)
+light_energy = 0.14
 light_indirect_energy = 0.16
+shadow_enabled = true
 omni_range = 0.62
 omni_attenuation = 1.28
 

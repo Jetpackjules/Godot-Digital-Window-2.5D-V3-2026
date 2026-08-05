@@ -24,7 +24,7 @@ size = Vector2(9, 7)
 
 [node name="Hunyuan Framic Mesh Test" type="Node3D" unique_id=1573037288]
 script = ExtResource("2_script")
-normal_boost = 50.57
+normal_boost = 0.57
 micro_displacement = 0.002
 enable_side_masonry = false
 enable_cinematic_dark_framing = true

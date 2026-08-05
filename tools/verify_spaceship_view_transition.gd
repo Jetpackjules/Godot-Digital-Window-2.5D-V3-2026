@@ -1,6 +1,6 @@
 extends SceneTree
 
-const SHALLOW_VIEW := "Shallow Box"
+const SHALLOW_VIEW := "Pit"
 const SPACESHIP_VIEW := "Spaceship"
 const MAXIMUM_LOAD_FRAMES := 1200
 
@@ -28,12 +28,12 @@ func _verify() -> void:
 
 	switcher.call("set_current_view_name", SHALLOW_VIEW)
 	if not await _wait_for_view(switcher, SHALLOW_VIEW):
-		_fail("Timed out loading Shallow Box")
+		_fail("Timed out loading Pit")
 		return
 
 	switcher.call("set_current_view_name", SPACESHIP_VIEW)
 	if str(switcher.call("get_current_view_name")) != SHALLOW_VIEW:
-		_fail("Spaceship replaced Shallow Box synchronously instead of loading in the background")
+		_fail("Spaceship replaced Pit synchronously instead of loading in the background")
 		return
 	if not bool(switcher.call("is_view_load_in_progress")):
 		_fail("Spaceship did not start a background transition")

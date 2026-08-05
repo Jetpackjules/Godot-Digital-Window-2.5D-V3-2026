@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://c2ccdtr3p3bf6"
+path="res://.godot/imported/raster_sort_prefix_add.glsl-df43aece912e4f8730fbef56815fe250.res"
+
+[deps]
+
+source_file="res://addons/gdgs/runtime/render/raster/shaders/raster_sort_prefix_add.glsl"
+dest_files=["res://.godot/imported/raster_sort_prefix_add.glsl-df43aece912e4f8730fbef56815fe250.res"]
+
+[params]
+

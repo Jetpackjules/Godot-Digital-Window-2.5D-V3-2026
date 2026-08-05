@@ -1,0 +1,98 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/photoreal_window_frame.gd" id="1_script"]
+[ext_resource type="Shader" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/photoreal_window_plate.gdshader" id="2_shader"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/photoreal_gothic_arcade_v2_3d.png" id="3_plate"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Stone PBR/RabdentseRuins/rabdentse_ruins_wall_diff_2k.jpg" id="4_stone"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Stone PBR/RabdentseRuins/rabdentse_ruins_wall_nor_gl_2k.jpg" id="5_normal"]
+[ext_resource type="Texture2D" path="res://Views/Medieval Storm Window/Assets/Stone PBR/RabdentseRuins/rabdentse_ruins_wall_rough_2k.jpg" id="6_rough"]
+[ext_resource type="PackedScene" path="res://Views/Medieval Storm Window/Assets/Photoreal Window/photoreal_gothic_arcade_structure_v2.glb" id="7_structure"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_front"]
+resource_local_to_scene = true
+shader = ExtResource("2_shader")
+shader_parameter/plate_texture = ExtResource("3_plate")
+shader_parameter/color_tint = Vector3(1, 1, 1)
+shader_parameter/brightness = 1.0
+shader_parameter/alpha_scissor = 0.35
+shader_parameter/wetness_amount = 0.0
+shader_parameter/snow_cover_amount = 0.0
+shader_parameter/snow_color = Color(0.88, 0.93, 1, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_rear"]
+resource_local_to_scene = true
+shader = ExtResource("2_shader")
+shader_parameter/plate_texture = ExtResource("3_plate")
+shader_parameter/color_tint = Vector3(0.11, 0.13, 0.15)
+shader_parameter/brightness = 1.0
+shader_parameter/alpha_scissor = 0.35
+shader_parameter/wetness_amount = 0.0
+shader_parameter/snow_cover_amount = 0.0
+shader_parameter/snow_color = Color(0.88, 0.93, 1, 1)
+
+[sub_resource type="QuadMesh" id="QuadMesh_plate"]
+size = Vector2(0.65, 0.365625)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial_returns"]
+resource_local_to_scene = true
+albedo_color = Color(0.24, 0.255, 0.27, 1)
+albedo_texture = ExtResource("4_stone")
+roughness = 0.92
+roughness_texture = ExtResource("6_rough")
+normal_enabled = true
+normal_scale = 0.24
+normal_texture = ExtResource("5_normal")
+uv1_scale = Vector3(3.2, 3.2, 3.2)
+uv1_triplanar = true
+
+[sub_resource type="BoxMesh" id="BoxMesh_side"]
+material = SubResource("StandardMaterial_returns")
+size = Vector3(0.03, 0.365625, 0.026)
+
+[sub_resource type="BoxMesh" id="BoxMesh_top"]
+material = SubResource("StandardMaterial_returns")
+size = Vector3(0.65, 0.025, 0.026)
+
+[sub_resource type="BoxMesh" id="BoxMesh_sill"]
+material = SubResource("StandardMaterial_returns")
+size = Vector3(0.65, 0.034, 0.032)
+
+[node name="PhotorealWindowFrame" type="Node3D"]
+editor_description = "Photographic front projection over exact opening reveals and five real profiled stone piers. The original HunyuanWindowFrame remains beside it as a hidden fallback."
+script = ExtResource("1_script")
+plate_brightness = 0.78
+enable_rear_shadow_layer = false
+depth_strength = 0.009
+
+[node name="RearShadowPlate" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0, -0.026)
+material_override = SubResource("ShaderMaterial_rear")
+mesh = SubResource("QuadMesh_plate")
+cast_shadow = 0
+
+[node name="StoneReturns" type="Node3D" parent="."]
+visible = false
+position = Vector3(0, 0, -0.013)
+
+[node name="LeftReturn" type="MeshInstance3D" parent="StoneReturns"]
+position = Vector3(-0.3225, 0, 0)
+mesh = SubResource("BoxMesh_side")
+
+[node name="RightReturn" type="MeshInstance3D" parent="StoneReturns"]
+position = Vector3(0.3225, 0, 0)
+mesh = SubResource("BoxMesh_side")
+
+[node name="TopReturn" type="MeshInstance3D" parent="StoneReturns"]
+position = Vector3(0, 0.1703, 0)
+mesh = SubResource("BoxMesh_top")
+
+[node name="SillReturn" type="MeshInstance3D" parent="StoneReturns"]
+position = Vector3(0, -0.1738, -0.003)
+mesh = SubResource("BoxMesh_sill")
+
+[node name="Structure3D" parent="." instance=ExtResource("7_structure")]
+
+[node name="FrontPlate" type="MeshInstance3D" parent="."]
+material_override = SubResource("ShaderMaterial_front")
+mesh = SubResource("QuadMesh_plate")
+cast_shadow = 0

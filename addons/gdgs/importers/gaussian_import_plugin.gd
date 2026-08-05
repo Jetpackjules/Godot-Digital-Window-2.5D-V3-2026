@@ -18,6 +18,9 @@ func _get_importer_name() -> String:
 	return "gaussian.splat.importer"
 
 func _get_format_version() -> int:
+	# Keep the upstream format version stable so changing the implementation does
+	# not force every large Gaussian in an existing project to reimport at once.
+	# Fresh and explicitly reimported resources use the lean representation.
 	return 5
 
 func _get_visible_name() -> String:
