@@ -4,7 +4,7 @@ Use this when handing the repo to another AI agent. The goal is to leave the des
 
 ## Copy/paste this prompt to the other agent
 
-> Work in this repository and launch the existing RealSense head-tracking stack for me. Preserve unrelated files and running processes. Follow `REALSENSE_HEADTRACKING_AGENT_RUNBOOK.md` exactly. Do the dependency and camera-health preflight, make sure the desktop Godot client is using WebSocket mode, start the bridge/tracker with the documented RealSense settings, launch the Godot main scene, and verify live tracking packets reach Godot. Do not say it is ready merely because a process started. Leave the stack and Godot running. Ask me only when physical camera/projector positioning or pressing the final calibration key requires me.
+> Work in this repository and launch the existing RealSense head-tracking stack for me. Preserve unrelated files and running processes. Follow `REALSENSE_HEADTRACKING_AGENT_RUNBOOK.md` exactly. Use the desktop-only default: start the WebSocket bridge and RealSense tracker without the web server, using the `fast60` stream profile, unless I explicitly ask for a browser/web client. Do the dependency and camera-health preflight, make sure the desktop Godot client is using WebSocket mode, launch the Godot main scene, and verify live tracking packets reach Godot. Do not say it is ready merely because a process started. Leave the stack and Godot running. Ask me only when physical camera/projector positioning or pressing the final calibration key requires me.
 
 ## Agent procedure
 
@@ -45,18 +45,36 @@ The current checkout may default to `use_websocket = false`, which is direct Ope
 
 ### 4. Start the RealSense stack
 
+The default is the local desktop flow: run the WebSocket bridge and RealSense tracker, but do not run the static web server. Use the web server only when the user explicitly asks for a browser client.
+
 Use a dedicated PowerShell terminal and leave it open:
 
 ```powershell
 $env:STEREO_SCREEN_SIZE_AUTO = "1"
 $env:REALSENSE_TRACKING_ENABLED = "1"
 $env:REALSENSE_TRACKING_MODE = "ml_fast"
-python launch_web_stack.py --no-web --camera-source realsense --realsense-stream-profile viewer30
+python launch_web_stack.py --no-web --camera-source realsense --realsense-stream-profile fast60
 ```
 
-This launches the UDP-to-WebSocket bridge on `127.0.0.1:8080` and the tracker with the RealSense. OpenTrack is not required for this direct RealSense route.
+This launches the UDP-to-WebSocket bridge on `127.0.0.1:8080` and the tracker with 640x480 depth and color at 60 FPS. It does not start `WEB_EXPORT/serve_godot.py`. OpenTrack is not required for this direct RealSense route.
 
 Use `ml_body_fast` instead of `ml_fast` if the camera mostly sees an angled head or upper body. In the focused tracker window, `m` cycles tracking modes, `n` toggles RealSense tracking, and `u` toggles smoothing.
+
+#### Stream-profile choices
+
+The launch flag controls the initial RealSense resolution and FPS:
+
+- `fast60`: 640x480 depth and color at 60 FPS. This is the default for lower-latency head tracking.
+- `viewer30`: 848x480 depth plus 1280x720 color at 30 FPS. Use when the extra image detail makes distant marker or head detection more reliable.
+- `highres30`: 1280x720 depth and color at 30 FPS. Use only when resolution matters more than latency and the USB connection is stable.
+
+The tracker keys change the detection algorithm and toggles; they do not change the camera stream FPS. The Unified Point Clouds and RealSense Point Cloud scene inspectors expose `realsense_stream_profile`; changing it sends a `realsense_restart` command because RealSense resolution/FPS are fixed when the pipeline starts. The normal Main settings overlay does not currently have a stream-profile control. For an ordinary head-tracking run, choose the profile in the launcher command and restart the stack to change it.
+
+If a browser client is explicitly requested, omit `--no-web`; that additionally starts the static web server on port `8000`:
+
+```powershell
+python launch_web_stack.py --camera-source realsense --realsense-stream-profile fast60
+```
 
 ### 5. Launch the Godot desktop client
 

@@ -93,7 +93,7 @@ Notes:
 
 ## Recommended Run Flow
 
-For an AI-agent handoff that launches the desktop client with RealSense head tracking and automatic projected-screen sizing, use [REALSENSE_HEADTRACKING_AGENT_RUNBOOK.md](REALSENSE_HEADTRACKING_AGENT_RUNBOOK.md).
+For an AI-agent handoff that launches the desktop client with RealSense head tracking and automatic projected-screen sizing, use [REALSENSE_HEADTRACKING_AGENT_RUNBOOK.md](REALSENSE_HEADTRACKING_AGENT_RUNBOOK.md). Its default is the local WebSocket bridge plus `fast60` RealSense tracking without the web server.
 
 Start everything together:
 
